@@ -1,8 +1,8 @@
-use walkdir::WalkDir;
-use lofty::probe::Probe;
-use lofty::prelude::*;
-use std::borrow::Cow;
 use crate::types::Song;
+use lofty::prelude::*;
+use lofty::probe::Probe;
+use std::borrow::Cow;
+use walkdir::WalkDir;
 
 pub fn scan_music_dir(dir: String) -> Vec<Song> {
     let mut songs = Vec::new();
@@ -25,25 +25,13 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
             None => continue,
         };
 
-        let title = tag
-            .title()
-            .unwrap_or(Cow::Borrowed("Unknown"))
-            .to_string();
+        let title = tag.title().unwrap_or(Cow::Borrowed("Unknown")).to_string();
 
-        let artist = tag
-            .artist()
-            .unwrap_or(Cow::Borrowed("Unknown"))
-            .to_string();
+        let artist = tag.artist().unwrap_or(Cow::Borrowed("Unknown")).to_string();
 
-        let album = tag
-            .album()
-            .unwrap_or(Cow::Borrowed("Unknown"))
-            .to_string();
+        let album = tag.album().unwrap_or(Cow::Borrowed("Unknown")).to_string();
 
-        let cover = tag
-            .pictures()
-            .first()
-            .map(|pic| pic.data().to_vec());
+        let cover = tag.pictures().first().map(|pic| pic.data().to_vec());
 
         songs.push(Song {
             path: path.to_string_lossy().to_string(),
