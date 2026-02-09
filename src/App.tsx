@@ -1,49 +1,65 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import { open } from "@tauri-apps/plugin-dialog";
+
+type Song = {
+  path: string;
+  title: string;
+  artist: string;
+  album: string;
+  cover?: number[] | null;
+};
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [songs, setSongs] = useState<Song[]>([]);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  async function loadSongs() {
+    const result = await invoke<Song[]>("scan_music", {
+      dir: "C:/Users/seafood/blacktape-lib"
+    });
+    setSongs(result);
   }
+
+  async function playSong(path: string) {
+    await invoke("play_song", { path });
+  }
+
+  async function pickFolder() {
+    const dir = await open({
+      directory: true,
+      multiple: false,
+    });
+
+    if (typeof dir === "string") {
+      const result = await invoke<Song[]>("scan_music", { dir });
+      setSongs(result);
+    }
+  }
+
 
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+      <h1>Welcome to Blacktape</h1>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <button onClick={pickFolder}>
+        Select music folder
+      </button>
+      <button onClick={loadSongs}>Scan music folder</button>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      <ul style={{ marginTop: 20 }}>
+        {songs.map((song, i) => (
+          <li
+            key={i}
+            style={{ cursor: "pointer", marginBottom: 8 }}
+            onClick={() => playSong(song.path)}
+          >
+            <strong>{song.title}</strong> — {song.artist}
+            <br />
+            <small>{song.album}</small>
+          </li>
+        ))}
+      </ul>
     </main>
   );
 }
