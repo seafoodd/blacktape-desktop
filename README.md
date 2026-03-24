@@ -20,4 +20,4 @@ npm run tauri dev
 Contributions are welcome, but I may not review or merge everything.
 
 ## License
-MIT
+[MIT](./LICENSE)
