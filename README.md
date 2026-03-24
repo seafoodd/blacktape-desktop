@@ -1,7 +1,23 @@
-# Tauri + React + Typescript
+# Blacktape
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A desktop music player that can download and organize music from different platforms.
 
-## Recommended IDE Setup
+## Features
+- Basic music player UI
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Status
+This is a personal project and is still in development. Things will change and break. 
+
+## Usage
+```
+git clone https://github.com/seafoodd/blacktape-desktop
+cd blacktape-desktop
+npm install
+npm run tauri dev
+```
+
+## Contributing
+Contributions are welcome, but I may not review or merge everything.
+
+## License
+MIT
