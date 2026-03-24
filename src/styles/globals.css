@@ -1,0 +1,39 @@
+body {
+    background-color: var(--color-background);
+    color: var(--color-text);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+p {
+    margin-bottom: var(--spacing-md);
+}
+
+a {
+    color: var(--color-primary);
+    transition: color 0.2s ease-in-out;
+}
+
+a:hover {
+    color: var(--color-secondary);
+}
+
+button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-sm);
+    background-color: var(--color-primary);
+    color: white;
+    transition: background-color 0.2s ease;
+}
+
+button:hover {
+    background-color: var(--color-secondary);
+}
