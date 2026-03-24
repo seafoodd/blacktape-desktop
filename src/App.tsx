@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  mediaControls,
-  PlaybackStatus,
-  RepeatMode,
-} from "tauri-plugin-media-api";
 import "./App.css";
 
 type Song = {
@@ -41,19 +36,10 @@ function App() {
       if (isDragging) return;
       const pos = await invoke<number>("get_position");
       setProgress(pos);
-      mediaControls.updatePosition(pos);
     }, 500);
 
     return () => clearInterval(interval);
   }, [currentSong, isDragging]);
-
-  async function ensureMediaSession() {
-    if (initialized) return;
-
-    await mediaControls.initialize("blacktape", "Blacktape");
-
-    setInitialized(true);
-  }
 
   async function loadSongs() {
     const result = await invoke<Song[]>("scan_music", {
@@ -63,26 +49,9 @@ function App() {
   }
 
   async function playSong(song: Song) {
-    await ensureMediaSession();
     setCurrentSong(song);
     setIsPlaying(true);
     await invoke("play_song", { path: song.path });
-
-    await mediaControls.updateNowPlaying(
-      {
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
-        artworkData: song.cover ? bytesToBase64(song.cover) : undefined,
-      },
-      {
-        status: PlaybackStatus.Playing,
-        position: 0,
-        shuffle: false,
-        repeatMode: RepeatMode.None,
-        playbackRate: 1.0,
-      },
-    );
   }
 
   async function pickFolder() {
@@ -109,11 +78,9 @@ function App() {
               if (isPlaying) {
                 await invoke("pause");
                 setIsPlaying(false);
-                mediaControls.pause();
               } else if (currentSong) {
                 await invoke("resume");
                 setIsPlaying(true);
-                mediaControls.play();
               }
             }}
           >

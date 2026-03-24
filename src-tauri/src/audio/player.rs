@@ -2,8 +2,8 @@ use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use std::{fs::File, time::Duration};
 
 pub struct AudioPlayer {
-    player: Player,
     _stream: MixerDeviceSink, // must keep alive
+    player: Player,
     duration: Option<Duration>,
 }
 

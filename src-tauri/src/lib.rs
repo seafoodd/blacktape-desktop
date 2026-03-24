@@ -54,7 +54,6 @@ fn get_is_paused(state: State<Mutex<AudioPlayer>>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_media::init())
         .manage(Mutex::new(AudioPlayer::new()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
