@@ -1,10 +1,12 @@
 use serde::Serialize;
+use std::time::Duration;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Song {
     pub path: String,
     pub title: String,
     pub artist: String,
     pub album: String,
+    pub duration: Duration,
     pub cover: Option<Vec<u8>>,
 }

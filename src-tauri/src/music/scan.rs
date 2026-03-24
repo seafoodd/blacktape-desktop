@@ -1,7 +1,6 @@
 use crate::types::Song;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use std::borrow::Cow;
 use walkdir::WalkDir;
 
 pub fn scan_music_dir(dir: String) -> Vec<Song> {
@@ -25,21 +24,22 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
             None => continue,
         };
 
-        let title = tag.title().unwrap_or(Cow::Borrowed("Unknown")).to_string();
-
-        let artist = tag.artist().unwrap_or(Cow::Borrowed("Unknown")).to_string();
-
-        let album = tag.album().unwrap_or(Cow::Borrowed("Unknown")).to_string();
-
-        let cover = tag.pictures().first().map(|pic| pic.data().to_vec());
-
-        songs.push(Song {
+        let song = Song {
             path: path.to_string_lossy().to_string(),
-            title,
-            artist,
-            album,
-            cover,
-        });
+            title: tag.title().map_or("Unknown".to_string(), |s| s.to_string()),
+            artist: tag
+                .artist()
+                .map_or("Unknown".to_string(), |s| s.to_string()),
+            album: tag.album().map_or("Unknown".to_string(), |s| s.to_string()),
+            cover: tag.pictures().first().map(|pic| pic.data().to_vec()),
+            duration: tagged_file.properties().duration(),
+        };
+        println!(
+            "----------------------------\n{}\n{}\n{}\n{:?}",
+            song.title, song.artist, song.album, song.duration
+        );
+
+        songs.push(song);
     }
 
     songs
