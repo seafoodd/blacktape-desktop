@@ -7,6 +7,7 @@ use souvlaki::MediaMetadata;
 use souvlaki::MediaPlayback;
 use souvlaki::MediaPosition;
 use souvlaki::PlatformConfig;
+use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::WebviewWindow;
 
@@ -15,40 +16,40 @@ pub struct MediaControls {
 }
 
 impl MediaControls {
-    pub fn new(window: &WebviewWindow) -> Self {
+    pub fn new(window: &WebviewWindow, app_handle: AppHandle) -> Self {
         #[cfg(not(target_os = "windows"))]
         let hwnd = None;
 
         #[cfg(target_os = "windows")]
         let hwnd = Some(window.hwnd().expect("Failed to receive HWND").0);
         let config = PlatformConfig {
-            dbus_name: "my_player",
-            display_name: "My Player",
+            dbus_name: "blacktape",
+            display_name: "Blacktape Desktop",
             hwnd,
         };
         let mut controls =
             SouvlakiMediaControls::new(config).expect("Failed to create MediaControls");
 
-        let window_clone = window.clone();
+        let app_handle_clone = app_handle.clone();
         controls
             .attach(move |event: MediaControlEvent| match event {
                 MediaControlEvent::Play => {
-                    let _ = window_clone.emit("media-play", ());
+                    let _ = app_handle_clone.emit("media-resume", ());
                 }
                 MediaControlEvent::Pause => {
-                    let _ = window_clone.emit("media-pause", ());
+                    let _ = app_handle_clone.emit("media-pause", ());
                 }
                 MediaControlEvent::Stop => {
-                    let _ = window_clone.emit("media-stop", ());
+                    let _ = app_handle_clone.emit("media-stop", ());
                 }
                 MediaControlEvent::Next => {
-                    let _ = window_clone.emit("media-next", ());
+                    let _ = app_handle_clone.emit("media-next", ());
                 }
                 MediaControlEvent::Previous => {
-                    let _ = window_clone.emit("media-previous", ());
+                    let _ = app_handle_clone.emit("media-previous", ());
                 }
                 MediaControlEvent::Toggle => {
-                    let _ = window_clone.emit("media-toggle", ());
+                    let _ = app_handle_clone.emit("media-toggle", ());
                 }
                 _ => {}
             })

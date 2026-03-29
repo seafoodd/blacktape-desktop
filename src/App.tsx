@@ -3,6 +3,8 @@ import PlayerControls from "./components/player-controls/PlayerControls";
 import { pickFolder } from "./shared/lib/dialog";
 import { useAudioStore } from "./shared/store/audioStore";
 import { scanMusic } from "./shared/lib/audio";
+import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -15,6 +17,18 @@ function App() {
     setSongs(loadedSongs);
   }
 
+  useEffect(() => {
+    const handleUnload = () => {
+      invoke("stop");
+    };
+
+    window.addEventListener("beforeunload", handleUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, []);
+
   return (
     <main className="container">
       <h1>Welcome to Blacktape</h1>
@@ -24,7 +38,6 @@ function App() {
       <button onClick={toggleTheme}>
         {theme === "light" ? "Switch to Dark" : "Switch to Light"}
       </button>
-
       {currentSong && <PlayerControls />}
 
       <ul style={{ marginTop: 20 }}>

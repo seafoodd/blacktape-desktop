@@ -2,11 +2,12 @@ import { create } from "zustand";
 import type { Song } from "../lib/audio";
 import {
   playSong as tauriPlay,
-  pause as tauriPause,
-  resume as tauriResume,
   seek as tauriSeek,
+  toggle as tauriToggle,
+  pause as tauriPause,
   getPosition,
 } from "../lib/audio";
+import { listen } from "@tauri-apps/api/event";
 
 interface AudioState {
   songs: Song[];
@@ -20,6 +21,7 @@ interface AudioState {
   setProgress: (value: number) => void;
   seek: (fraction: number) => Promise<void>;
   updateProgress: () => Promise<void>;
+  pause: () => Promise<void>;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
@@ -31,20 +33,21 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   setSongs: (songs) => set({ songs }),
 
   play: async (song) => {
-    set({ currentSong: song, isPlaying: true });
+    // set({ currentSong: song, isPlaying: true });
     await tauriPlay(song);
   },
 
   togglePlay: async () => {
-    const { isPlaying, currentSong } = get();
-    if (!currentSong) return;
-    if (isPlaying) {
-      await tauriPause();
-      set({ isPlaying: false });
-    } else {
-      await tauriResume();
-      set({ isPlaying: true });
-    }
+    // const { currentSong } = get();
+    // if (!currentSong) return;
+    console.log("togglePlay");
+    await tauriToggle();
+    // const isPaused = await tauriIsPaused();
+    // set({ isPlaying: !isPaused });
+  },
+
+  pause: async () => {
+    await tauriPause();
   },
 
   setProgress: (progress) => set({ progress }),
@@ -61,3 +64,15 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     set({ progress: pos });
   },
 }));
+
+if (typeof window !== "undefined") {
+  listen("player-state", (event) => {
+    const state: any = event.payload;
+    // console.log(state);
+    useAudioStore.setState({
+      isPlaying: state.is_playing,
+      currentSong: state.current_song,
+      progress: state.progress,
+    });
+  });
+}

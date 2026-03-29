@@ -19,8 +19,15 @@ export const pause = (): Promise<void> => invoke("pause");
 
 export const resume = (): Promise<void> => invoke("resume");
 
-export const seek = (fraction: number): Promise<void> =>
-  invoke("seek", { fraction });
+export const toggle = (): Promise<void> => invoke("toggle");
 
-export const getPosition = (): Promise<number> =>
-  invoke<number>("get_position");
+export const seek = (fraction: number): void => {
+  invoke("seek", { fraction });
+  resume();
+};
+export const getPosition = (): Promise<number> => {
+  return invoke<number>("get_position");
+};
+export const isPaused = (): Promise<boolean> => {
+  return invoke<boolean>("get_is_paused");
+};

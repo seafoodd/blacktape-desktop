@@ -5,27 +5,35 @@ use std::{
     io::Write,
     time::Duration,
 };
+use tauri::{AppHandle, Emitter};
 
-use crate::{audio::media_controls::MediaControls, types::Song};
+use crate::{
+    audio::media_controls::MediaControls,
+    types::{PlayerState, Song},
+};
 
 pub struct AudioPlayer {
     _stream: MixerDeviceSink, // must keep alive
     player: Player,
     duration: Option<Duration>,
     media_controls: MediaControls,
+    current_song: Option<Song>,
+    handle: AppHandle,
 }
 
 impl AudioPlayer {
-    pub fn new(media_controls: MediaControls) -> Self {
-        let handle =
+    pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
+        let stream =
             rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-        let player = rodio::Player::connect_new(&handle.mixer());
+        let player = rodio::Player::connect_new(&stream.mixer());
 
         Self {
-            _stream: handle,
+            _stream: stream,
             player,
             duration: None,
             media_controls,
+            current_song: None,
+            handle,
         }
     }
 
@@ -39,6 +47,7 @@ impl AudioPlayer {
         self.player.clear();
         self.player.append(source);
         self.player.play();
+        self.current_song = Some(song.clone());
 
         let uri = AudioPlayer::cover_file_uri(&song);
         println!("debug: {:#?}", uri);
@@ -49,23 +58,51 @@ impl AudioPlayer {
             duration: Some(song.duration),
             cover_url: uri.as_deref(),
         });
-        self.media_controls.play();
+        self.media_controls
+            .play()
+            .expect("Failed to resume media controls state");
+        self.emit_state();
     }
 
     pub fn pause(&mut self) {
         self.player.pause();
-        self.media_controls.pause();
+        self.media_controls
+            .pause()
+            .expect("Failed to pause media controls");
+        self.emit_state();
     }
 
     pub fn resume(&mut self) {
         self.player.play();
-        self.media_controls.play();
+        self.media_controls
+            .play()
+            .expect("Failed to resume media controls state");
+        self.emit_state();
     }
 
     pub fn stop(&mut self) {
         self.player.stop();
-        self.media_controls.stop();
+        self.media_controls
+            .stop()
+            .expect("Failed to stop media controls state");
         self.duration = None;
+        self.emit_state();
+    }
+
+    pub fn toggle(&mut self) {
+        if self.is_paused() {
+            self.resume();
+        } else {
+            self.pause();
+        }
+    }
+
+    pub fn next(&mut self) {
+        println!("NEXXXTTTT!!!! (unimplemented)")
+    }
+
+    pub fn previous(&mut self) {
+        println!("PREVIOUUS!!!! (unimplemented)")
     }
 
     pub fn seek(&self, fraction: f32) {
@@ -89,6 +126,24 @@ impl AudioPlayer {
 
     pub fn is_paused(&self) -> bool {
         self.player.is_paused()
+    }
+
+    pub fn emit_state(&self) {
+        let state = PlayerState {
+            current_song: self.current_song.clone(),
+            is_playing: !self.is_paused(),
+            progress: self.position(),
+        };
+        println!(
+            "emmited {}, {:#?}, {}\n {}, {}\n\n",
+            state.current_song.clone().unwrap().title,
+            state.current_song.clone().unwrap().duration,
+            state.current_song.clone().unwrap().path,
+            state.is_playing,
+            state.progress
+        );
+
+        self.handle.emit("player-state", state).ok();
     }
 
     fn cover_file_uri(song: &Song) -> Option<String> {
