@@ -4,7 +4,9 @@ mod types;
 
 use audio::player::AudioPlayer;
 use std::sync::Mutex;
-use tauri::{command, State};
+use tauri::{command, Listener, Manager, State, WebviewWindow};
+
+use crate::{audio::media_controls::MediaControls, types::Song};
 
 #[command]
 fn greet(name: &str) -> String {
@@ -17,8 +19,8 @@ fn scan_music(dir: String) -> Vec<types::Song> {
 }
 
 #[command]
-fn play_song(path: String, state: State<Mutex<AudioPlayer>>) {
-    state.lock().unwrap().play(path);
+fn play_song(song: Song, state: State<Mutex<AudioPlayer>>) {
+    state.lock().unwrap().play(song);
 }
 
 #[command]
@@ -54,7 +56,35 @@ fn get_is_paused(state: State<Mutex<AudioPlayer>>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Mutex::new(AudioPlayer::new()))
+        .setup(|app| {
+            let window: WebviewWindow = app
+                .get_webview_window("main")
+                .expect("failed to get main window");
+            let media_controls = MediaControls::new(&window);
+            let audio_player = AudioPlayer::new(media_controls);
+
+            app.manage(Mutex::new(audio_player));
+
+            app.listen("media-play", {
+                let app_handle = app.handle().clone();
+                move |_| {
+                    let state = app_handle.state::<Mutex<AudioPlayer>>();
+                    state.lock().unwrap().resume();
+                    println!("MEDIA PLAY!!!");
+                }
+            });
+
+            app.listen("media-pause", {
+                let app_handle = app.handle().clone();
+                move |_| {
+                    let state = app_handle.state::<Mutex<AudioPlayer>>();
+                    state.lock().unwrap().pause();
+                    println!("MEDIA PAUSE!!!");
+                }
+            });
+
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![

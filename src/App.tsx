@@ -1,113 +1,38 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useTheme } from "./shared/providers/theme-provider";
-
-type Song = {
-  path: string;
-  title: string;
-  artist: string;
-  album: string;
-  cover?: number[] | null;
-};
+import PlayerControls from "./components/player-controls/PlayerControls";
+import { pickFolder } from "./shared/lib/dialog";
+import { useAudioStore } from "./shared/store/audioStore";
+import { scanMusic } from "./shared/lib/audio";
 
 function App() {
-  const [songs, setSongs] = useState<Song[]>([]);
-  const [progress, setProgress] = useState(0);
-  const [currentSong, setCurrentSong] = useState<Song | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const { theme, toggleTheme } = useTheme();
-
-  useEffect(() => {
-    if (!currentSong) return;
-    const interval = setInterval(async () => {
-      if (isDragging) return;
-      const pos = await invoke<number>("get_position");
-      setProgress(pos);
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [currentSong, isDragging]);
-
-  async function loadSongs() {
-    const result = await invoke<Song[]>("scan_music", {
-      dir: "C:/Users/seafood/blacktape-lib",
-    });
-    setSongs(result);
-  }
-
-  async function playSong(song: Song) {
-    setCurrentSong(song);
-    setIsPlaying(true);
-    await invoke("play_song", { path: song.path });
-  }
-
-  async function pickFolder() {
-    const dir = await open({
-      directory: true,
-      multiple: false,
-    });
-
-    if (typeof dir === "string") {
-      const result = await invoke<Song[]>("scan_music", { dir });
-      setSongs(result);
-    }
+  const { songs, setSongs, currentSong, play } = useAudioStore();
+  async function handlePickFolder() {
+    const dir = await pickFolder();
+    if (!dir) return;
+    setSongs([]);
+    const loadedSongs = await scanMusic(dir);
+    setSongs(loadedSongs);
   }
 
   return (
     <main className="container">
       <h1>Welcome to Blacktape</h1>
-      <button onClick={pickFolder}>Select music folder</button>
-      <button onClick={loadSongs}>Scan music folder</button>
+
+      <button onClick={handlePickFolder}>Select music folder</button>
+
       <button onClick={toggleTheme}>
         {theme === "light" ? "Switch to Dark" : "Switch to Light"}
-      </button>{" "}
-      {currentSong && (
-        <div className="player-controls">
-          <button
-            onClick={async () => {
-              if (isPlaying) {
-                await invoke("pause");
-                setIsPlaying(false);
-              } else if (currentSong) {
-                await invoke("resume");
-                setIsPlaying(true);
-              }
-            }}
-          >
-            {isPlaying ? "Pause" : "Play"}
-          </button>
+      </button>
 
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            value={progress * 1000}
-            onChange={(e) => setProgress(Number(e.target.value) / 1000)}
-            onMouseDown={() => setIsDragging(true)}
-            onMouseUp={async (e) => {
-              setIsDragging(false);
-              const val = Number(e.currentTarget.value) / 1000;
-              await invoke("seek", { fraction: val });
-            }}
-            onTouchStart={() => setIsDragging(true)}
-            onTouchEnd={async (e) => {
-              setIsDragging(false);
-              const val = Number(e.currentTarget.value) / 1000;
-              await invoke("seek", { fraction: val });
-            }}
-            style={{ width: 300 }}
-          />
-          {progress}
-        </div>
-      )}
+      {currentSong && <PlayerControls />}
+
       <ul style={{ marginTop: 20 }}>
         {songs.map((song, i) => (
           <li
             key={i}
             style={{ cursor: "pointer", marginBottom: 8 }}
-            onClick={() => playSong(song)}
+            onClick={() => play(song)}
           >
             <strong>{song.title}</strong> — {song.artist}
             <br />

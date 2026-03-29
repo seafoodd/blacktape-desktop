@@ -16,7 +16,10 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
 
         let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
             Ok(f) => f,
-            Err(_) => continue,
+            Err(e) => {
+                println!("{}", e);
+                continue;
+            }
         };
 
         let tag = match tagged_file.primary_tag() {
@@ -26,11 +29,15 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
 
         let song = Song {
             path: path.to_string_lossy().to_string(),
-            title: tag.title().map_or("Unknown".to_string(), |s| s.to_string()),
+            title: tag
+                .title()
+                .map_or("Unknown Title".to_string(), |s| s.to_string()),
             artist: tag
                 .artist()
-                .map_or("Unknown".to_string(), |s| s.to_string()),
-            album: tag.album().map_or("Unknown".to_string(), |s| s.to_string()),
+                .map_or("Unknown Artist".to_string(), |s| s.to_string()),
+            album: tag
+                .album()
+                .map_or("Unknown Album".to_string(), |s| s.to_string()),
             cover: tag.pictures().first().map(|pic| pic.data().to_vec()),
             duration: tagged_file.properties().duration(),
         };
