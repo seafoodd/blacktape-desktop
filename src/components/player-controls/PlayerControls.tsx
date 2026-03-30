@@ -12,7 +12,6 @@ const PlayerControls = () => {
     setProgress,
     seek: storeSeek,
     updateProgress,
-    pause,
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
@@ -49,12 +48,12 @@ const PlayerControls = () => {
           onMouseDown={() => {
             setIsDragging(true);
           }}
+          onTouchStart={() => {
+            setIsDragging(true);
+          }}
           onMouseUp={async (e) => {
             setIsDragging(false);
             seek(Number(e.currentTarget.value) / 1000);
-          }}
-          onTouchStart={() => {
-            setIsDragging(true);
           }}
           onTouchEnd={async (e) => {
             setIsDragging(false);
