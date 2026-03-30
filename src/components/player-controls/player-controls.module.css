@@ -23,6 +23,11 @@
     background-color: red;
 }
 
+.leftControls {
+  display: flex;
+  gap: 10px;
+}
+
 .rightControls {
     margin-left: 20px;
     display: flex;

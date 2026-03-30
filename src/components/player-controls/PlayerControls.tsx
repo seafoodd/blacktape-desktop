@@ -43,12 +43,13 @@ const PlayerControls = () => {
       className={`${styles.container} ${currentSong ? "" : styles.disabled}`}
       onDragStart={(e) => e.preventDefault()}
     >
+    <div className={styles.leftControls}>
       <button>previous</button>
       <button className={styles.playButton} onClick={togglePlay}>
         {isPlaying ? "Pause" : "Play"}
       </button>
       <button>next</button>
-
+</div>
       <div className={styles.progress}>
         {formatDuration(currentTime)} /{" "}
         {currentSong ? formatDuration(currentSong.duration) : "0:00"}
