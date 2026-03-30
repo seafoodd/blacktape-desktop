@@ -1,11 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type Duration = {
+  secs: number;
+  nanos: number;
+};
+
 export type Song = {
   path: string;
   title: string;
   artist: string;
   album: string;
-  duration: number;
+  duration: Duration;
   cover?: number[] | null;
 };
 

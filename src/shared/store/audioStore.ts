@@ -54,7 +54,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   seek: async (fraction) => {
     set({ progress: fraction });
-    await tauriSeek(fraction);
+    tauriSeek(fraction);
   },
 
   updateProgress: async () => {

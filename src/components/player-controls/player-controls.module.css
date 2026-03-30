@@ -1,3 +1,36 @@
-.play-button {
-    width: 100px;
+.container {
+    width: 100%;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    padding-inline: 12px;
+    border-top: 2px solid darkgray;
+}
+
+.progressBar {
+    width: 100%;
+    max-width: 60%;
+    margin-inline: auto;
+}
+
+.progress {
+    white-space: nowrap;
+    margin-inline: 20px;
+    font-size: 18px;
+}
+
+.disabled {
+    background-color: red;
+}
+
+.rightControls {
+    margin-left: 20px;
+    display: flex;
+    gap: 10px;
+}
+
+.rightControl {
+    width: 32px;
+    height: 32px;
+    background-color: lightgray;
 }

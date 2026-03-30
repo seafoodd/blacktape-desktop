@@ -5,10 +5,12 @@ import { useAudioStore } from "./shared/store/audioStore";
 import { scanMusic } from "./shared/lib/audio";
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import styles from "./app.module.css";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
-  const { songs, setSongs, currentSong, play } = useAudioStore();
+  const { songs, setSongs, play } = useAudioStore();
+
   async function handlePickFolder() {
     const dir = await pickFolder();
     if (!dir) return;
@@ -23,37 +25,35 @@ function App() {
     };
 
     window.addEventListener("beforeunload", handleUnload);
-
-    return () => {
-      window.removeEventListener("beforeunload", handleUnload);
-    };
+    return () => window.removeEventListener("beforeunload", handleUnload);
   }, []);
 
   return (
-    <main className="container">
-      <h1>Welcome to Blacktape</h1>
+    <div className={styles.app}>
+      <header className={styles.header}>
+        <button onClick={handlePickFolder}>Select Music Folder</button>
+        <button onClick={toggleTheme}>
+          {theme === "light" ? "Switch to Dark" : "Switch to Light"}
+        </button>
+      </header>
 
-      <button onClick={handlePickFolder}>Select music folder</button>
+      <main className={styles.main}>
+        <ul className={styles.songs}>
+          {songs.map((song, i) => (
+            <li className={styles.song} key={i} onClick={() => play(song)}>
+              <strong>{song.title}</strong> — {song.artist}
+              <br />
+              <small>{song.album}</small>
+            </li>
+          ))}
+        </ul>
+      </main>
 
-      <button onClick={toggleTheme}>
-        {theme === "light" ? "Switch to Dark" : "Switch to Light"}
-      </button>
-      {currentSong && <PlayerControls />}
-
-      <ul style={{ marginTop: 20 }}>
-        {songs.map((song, i) => (
-          <li
-            key={i}
-            style={{ cursor: "pointer", marginBottom: 8 }}
-            onClick={() => play(song)}
-          >
-            <strong>{song.title}</strong> — {song.artist}
-            <br />
-            <small>{song.album}</small>
-          </li>
-        ))}
-      </ul>
-    </main>
+      {/* Footer with player controls */}
+      <footer className={styles.footer}>
+        <PlayerControls />
+      </footer>
+    </div>
   );
 }
 
