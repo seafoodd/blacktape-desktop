@@ -3,6 +3,12 @@ import { seek } from "../../shared/lib/audio";
 import { useAudioStore } from "../../shared/store/audioStore";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "../../shared/lib/time";
+import { FaPlay } from "react-icons/fa6";
+import { FaPause } from "react-icons/fa6";
+import {
+  TbPlayerSkipBackFilled,
+  TbPlayerSkipForwardFilled,
+} from "react-icons/tb";
 
 const PlayerControls = () => {
   const {
@@ -43,13 +49,17 @@ const PlayerControls = () => {
       className={`${styles.container} ${currentSong ? "" : styles.disabled}`}
       onDragStart={(e) => e.preventDefault()}
     >
-    <div className={styles.leftControls}>
-      <button>previous</button>
-      <button className={styles.playButton} onClick={togglePlay}>
-        {isPlaying ? "Pause" : "Play"}
-      </button>
-      <button>next</button>
-</div>
+      <div className={styles.leftControls}>
+        <button>
+          <TbPlayerSkipBackFilled size={24} />
+        </button>
+        <button onClick={togglePlay}>
+          {isPlaying ? <FaPause size={25} /> : <FaPlay size={24} />}
+        </button>
+        <button>
+          <TbPlayerSkipForwardFilled size={24} />
+        </button>
+      </div>
       <div className={styles.progress}>
         {formatDuration(currentTime)} /{" "}
         {currentSong ? formatDuration(currentSong.duration) : "0:00"}
