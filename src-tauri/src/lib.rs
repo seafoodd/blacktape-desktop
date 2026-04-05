@@ -1,4 +1,5 @@
 mod audio;
+mod discord_presence;
 mod music;
 mod types;
 
@@ -73,6 +74,7 @@ pub fn run() {
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
 
             app.manage(Mutex::new(audio_player));
+            app.manage(Mutex::new(discord_presence::DiscordRpcClient::new()));
 
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
                 let handle = app_handle.clone();

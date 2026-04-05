@@ -28,6 +28,7 @@ walkdir = "2.5.0"
 tauri-plugin-dialog = "2.6.0"
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 raw-window-handle = "0.6.2"
+discord-rich-presence = "1.1.0"
 
 [profile.dev]
 opt-level = 0      # fastest compile

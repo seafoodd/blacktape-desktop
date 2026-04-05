@@ -3,12 +3,14 @@ use souvlaki::MediaMetadata;
 use std::{
     fs::{self, File},
     io::Write,
+    sync::Mutex,
     time::Duration,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     audio::media_controls::MediaControls,
+    discord_presence,
     types::{PlayerState, Song},
 };
 
@@ -114,6 +116,8 @@ impl AudioPlayer {
         if let Err(e) = self.player.try_seek(target) {
             eprintln!("Seek failed: {:?}", e);
         }
+
+        self.update_discord_timestamp()
     }
 
     pub fn position(&self) -> f32 {
@@ -169,5 +173,19 @@ impl AudioPlayer {
 
             cover_path
         })
+    }
+
+    fn update_discord_timestamp(&self) {
+        let discord = self
+            .handle
+            .state::<Mutex<discord_presence::DiscordRpcClient>>();
+        let mut discord = discord.lock().unwrap();
+
+        if let Some(duration) = self.duration {
+            let pos_ms = self.player.get_pos().as_millis() as i64;
+            let duration_ms = duration.as_millis() as i64;
+
+            discord.update_timestamps(duration_ms, pos_ms);
+        }
     }
 }
