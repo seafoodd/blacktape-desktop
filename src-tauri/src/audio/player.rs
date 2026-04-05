@@ -64,6 +64,7 @@ impl AudioPlayer {
             .play()
             .expect("Failed to resume media controls state");
         self.emit_state();
+        self.update_discord_song();
     }
 
     pub fn pause(&mut self) {
@@ -185,7 +186,28 @@ impl AudioPlayer {
             let pos_ms = self.player.get_pos().as_millis() as i64;
             let duration_ms = duration.as_millis() as i64;
 
-            discord.update_timestamps(duration_ms, pos_ms);
+            if let Err(e) = discord.update_timestamps(pos_ms, duration_ms) {
+                eprintln!("Failed to update Discord timestamps: {}", e);
+            }
+        }
+    }
+
+    fn update_discord_song(&self) {
+        let Some(_song) = &self.current_song else {
+            return;
+        };
+
+        let discord_guard = self
+            .handle
+            .state::<Mutex<discord_presence::DiscordRpcClient>>();
+        let mut discord = discord_guard.lock().unwrap();
+
+        let duration_ms = self.duration.map(|d| d.as_millis() as i64).unwrap_or(0);
+
+        if let Some(song) = &self.current_song {
+            if let Err(e) = discord.update_song(song, duration_ms) {
+                eprintln!("Failed to update Discord song: {}", e);
+            }
         }
     }
 }

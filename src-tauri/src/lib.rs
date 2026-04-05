@@ -74,8 +74,15 @@ pub fn run() {
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
 
             app.manage(Mutex::new(audio_player));
-            app.manage(Mutex::new(discord_presence::DiscordRpcClient::new()));
-
+            match discord_presence::DiscordRpcClient::new() {
+                Ok(client) => {
+                    app.manage(Mutex::new(client));
+                    println!("Discord RPC managed");
+                }
+                Err(e) => {
+                    eprintln!("Discord RPC disabled: {}", e);
+                }
+            }
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
                 let handle = app_handle.clone();
                 app.listen(event, move |_| {
