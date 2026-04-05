@@ -4,6 +4,9 @@ A desktop music player that can download and organize music from different platf
 
 ## Features
 - Basic music player UI
+- Directory scanning
+- cross-platform media controls support
+- Discord RPC
 
 ## Status
 This is a personal project and is still in development. Things will change and break. 
