@@ -5,7 +5,7 @@ A desktop music player that can download and organize music from different platf
 ## Features
 - Basic music player UI
 - Directory scanning
-- cross-platform media controls support
+- Cross-platform media controls support
 - Discord RPC
 
 ## Status
