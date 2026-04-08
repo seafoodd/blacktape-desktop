@@ -193,21 +193,24 @@ impl AudioPlayer {
     }
 
     fn update_discord_song(&self) {
-        let Some(_song) = &self.current_song else {
-            return;
+        let song_data = match &self.current_song {
+            Some(song) => (song.clone(), self.duration),
+            None => return,
         };
 
-        let discord_guard = self
-            .handle
-            .state::<Mutex<discord_presence::DiscordRpcClient>>();
-        let mut discord = discord_guard.lock().unwrap();
+        let handle = self.handle.clone();
 
-        let duration_ms = self.duration.map(|d| d.as_millis() as i64).unwrap_or(0);
+        tauri::async_runtime::spawn(async move {
+            let (song, duration) = song_data;
+            let duration_ms = duration.map(|d| d.as_millis() as i64).unwrap_or(0);
 
-        if let Some(song) = &self.current_song {
-            if let Err(e) = discord.update_song(song, duration_ms) {
-                eprintln!("Failed to update Discord song: {}", e);
-            }
-        }
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                let discord_guard = handle.state::<Mutex<discord_presence::DiscordRpcClient>>();
+                let mut discord = discord_guard.lock().unwrap();
+                discord.update_song(&song, duration_ms)
+            })
+            .await
+            .map_err(|e| eprintln!("Discord RPC task failed: {}", e));
+        });
     }
 }
