@@ -3,12 +3,12 @@ use crate::{
     discord_presence,
     types::{PlayerState, Song},
 };
-use rodio::cpal::traits::DeviceTrait;
-use rodio::cpal::traits::HostTrait;
-use rodio::{
-    cpal::{self, DeviceId},
-    Decoder, MixerDeviceSink, Player, Source,
+use rodio::cpal::{
+    self,
+    traits::{DeviceTrait, HostTrait},
+    DeviceId, DeviceIdError,
 };
+use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
 use std::{
     collections::VecDeque,
@@ -31,16 +31,36 @@ pub struct AudioPlayer {
 
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
-        let error_handle = handle.clone();
-        let sink = rodio::DeviceSinkBuilder::from_default_device()
-            .expect("Failed to find default audio device")
+        let sink = Self::create_sink(handle.clone()).expect("Failed to open default audio stream");
+        let player = Player::connect_new(&sink.mixer());
+
+        Self::spawn_device_watcher(handle.clone());
+        Self::spawn_transition_watcher(handle.clone());
+
+        let initial_device_id = Self::get_default_device_id().ok();
+
+        Self {
+            _sink: sink,
+            player,
+            duration: None,
+            media_controls,
+            current_song: None,
+            handle,
+            queue: VecDeque::new(),
+            current_device_id: initial_device_id,
+        }
+    }
+
+    fn create_sink(handle: AppHandle) -> Result<MixerDeviceSink, String> {
+        rodio::DeviceSinkBuilder::from_default_device()
+            .map_err(|_| "No audio device found".to_string())?
             .with_error_callback(move |err| match err {
                 cpal::StreamError::DeviceNotAvailable => {
                     println!("Audio device disconnected! Attempting auto-reconnect...");
 
-                    let _ = error_handle.emit("audio-device-lost", ());
+                    let _ = handle.emit("audio-device-lost", ());
 
-                    let handle_for_reconnect = error_handle.clone();
+                    let handle_for_reconnect = handle.clone();
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -57,22 +77,18 @@ impl AudioPlayer {
                 _ => eprintln!("Other audio error: {}", err),
             })
             .open_stream()
-            .expect("Failed to open default audio stream");
+            .map_err(|e| e.to_string())
+    }
 
-        let watcher_handle = handle.clone();
+    fn spawn_device_watcher(handle: AppHandle) {
         tauri::async_runtime::spawn(async move {
-            // HostTrait is required to use cpal::default_host() and .default_output_device()
-
-            let host = cpal::default_host();
-
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
-                let system_default_id = host.default_output_device().and_then(|d| d.id().ok());
+                let system_default_id = Self::get_default_device_id().ok();
 
-                if let Ok(mut player) = watcher_handle.state::<Mutex<AudioPlayer>>().lock() {
+                if let Ok(mut player) = handle.state::<Mutex<AudioPlayer>>().lock() {
                     if let Some(new_id) = system_default_id {
-                        // If we haven't set a name yet, or the name changed
                         if player.current_device_id.as_ref() != Some(&new_id) {
                             println!(
                                 "Audio output drift detected. Switching from {:?} to: {:?}",
@@ -84,10 +100,9 @@ impl AudioPlayer {
                 }
             }
         });
+    }
 
-        let player = Player::connect_new(&sink.mixer());
-
-        let handle_clone = handle.clone();
+    fn spawn_transition_watcher(handle: AppHandle) {
         tauri::async_runtime::spawn(async move {
             let mut sleep_time: Duration = Duration::ZERO;
             let mut is_next = false;
@@ -95,7 +110,7 @@ impl AudioPlayer {
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
-                let state = handle_clone.state::<Mutex<AudioPlayer>>();
+                let state = handle.state::<Mutex<AudioPlayer>>();
 
                 let needs_emit = {
                     let mut player = state.lock().unwrap();
@@ -135,21 +150,20 @@ impl AudioPlayer {
                 }
             }
         });
+    }
 
-        let initial_device_id = cpal::default_host()
+    fn get_default_device_id() -> Result<DeviceId, DeviceIdError> {
+        let host = cpal::default_host();
+
+        let device = host
             .default_output_device()
-            .and_then(|d| d.id().ok());
+            .ok_or(DeviceIdError::BackendSpecific {
+                err: cpal::BackendSpecificError {
+                    description: "No default output device found".to_string(),
+                },
+            })?;
 
-        Self {
-            _sink: sink,
-            player,
-            duration: None,
-            media_controls,
-            current_song: None,
-            handle,
-            queue: VecDeque::new(),
-            current_device_id: initial_device_id,
-        }
+        device.id()
     }
 
     pub fn play(&mut self, song: Song) {
@@ -414,42 +428,11 @@ impl AudioPlayer {
     fn reconnect_default_device(&mut self) -> Result<(), String> {
         println!("Attempting to reconnect to a default audio device...");
 
-        // 1. Capture the current state before replacing the player
         let was_playing = !self.is_paused();
         let current_pos = self.player.get_pos();
         let current_song = self.current_song.clone();
 
-        // 2. Build a new sink (and re-attach the error callback!)
-        let error_handle = self.handle.clone();
-        let builder = rodio::DeviceSinkBuilder::from_default_device()
-            .map_err(|_| "Failed to find a default audio device. Is anything plugged in?")?;
-
-        let new_sink = builder
-            .with_error_callback(move |err| {
-                if let cpal::StreamError::DeviceNotAvailable = err {
-                    println!("Audio device disconnected! Attempting auto-reconnect...");
-
-                    let _ = error_handle.emit("audio-device-lost", ());
-
-                    let handle_for_reconnect = error_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        // Wait for the OS to switch the default device (e.g., from Headphones to Speakers)
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-
-                        match handle_for_reconnect.state::<Mutex<AudioPlayer>>().lock() {
-                            Ok(mut player) => {
-                                if let Err(e) = player.reconnect_default_device() {
-                                    eprintln!("Auto-reconnect failed: {}", e);
-                                }
-                            }
-                            Err(_) => eprintln!("Failed to lock AudioPlayer: Mutex poisoned"),
-                        }
-                    });
-                }
-            })
-            .open_stream()
-            .map_err(|e| format!("Failed to open stream: {}", e))?;
-
+        let new_sink = Self::create_sink(self.handle.clone())?;
         let new_player = Player::connect_new(&new_sink.mixer());
 
         self._sink = new_sink;
@@ -472,13 +455,8 @@ impl AudioPlayer {
                 }
             }
         }
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No default device found")?;
 
-        // Store the new device name
-        self.current_device_id = device.id().ok();
+        self.current_device_id = Self::get_default_device_id().ok();
 
         println!("Successfully reconnected and restored audio state!");
         self.emit_state();
