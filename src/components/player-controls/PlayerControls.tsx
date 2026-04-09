@@ -3,13 +3,6 @@ import { seek } from "../../shared/lib/audio";
 import { useAudioStore } from "../../shared/store/audioStore";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "../../shared/lib/time";
-import { FaPlay, FaRepeat, FaShuffle } from "react-icons/fa6";
-import { FaPause } from "react-icons/fa6";
-import {
-  TbPlayerSkipBackFilled,
-  TbPlayerSkipForwardFilled,
-} from "react-icons/tb";
-import { BiVolume } from "react-icons/bi";
 import {
   MdPause,
   MdPlayArrow,
