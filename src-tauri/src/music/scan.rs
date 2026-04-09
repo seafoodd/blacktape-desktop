@@ -42,7 +42,7 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
             duration: tagged_file.properties().duration(),
         };
         println!(
-            "----------------------------\n{}\n{}\n{}\n{:?}",
+            "Scanned song: {:?}, {:?}, {:?}, {:?}",
             song.title, song.artist, song.album, song.duration
         );
 
