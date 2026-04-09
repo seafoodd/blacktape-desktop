@@ -17,6 +17,9 @@
     white-space: nowrap;
     margin-inline: 20px;
     font-size: 18px;
+    /*width: 10px;*/
+    width: 100%;
+    max-width: 120px;
 }
 
 .disabled {
@@ -24,18 +27,35 @@
 }
 
 .leftControls {
-  display: flex;
-  gap: 10px;
+    display: flex;
+    gap: 10px;
+}
+
+.leftControl {
+    width: 32px;
+    height: 32px;
+    /*background-color: red;*/
+    /*overflow: hidden;*/
+}
+
+.leftControl svg {
+    width: 100%;
+    height: 100%;
 }
 
 .rightControls {
     margin-left: 20px;
     display: flex;
-    gap: 10px;
+    gap: 16px;
 }
 
 .rightControl {
-    width: 32px;
-    height: 32px;
-    background-color: lightgray;
+    width: 30px;
+    height: 30px;
+    opacity: 50%;
+    /*background-color: red;*/
+}
+.rightControl svg {
+    width: 100%;
+    height: 100%;
 }

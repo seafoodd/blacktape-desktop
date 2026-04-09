@@ -3,12 +3,22 @@ import { seek } from "../../shared/lib/audio";
 import { useAudioStore } from "../../shared/store/audioStore";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "../../shared/lib/time";
-import { FaPlay } from "react-icons/fa6";
+import { FaPlay, FaRepeat, FaShuffle } from "react-icons/fa6";
 import { FaPause } from "react-icons/fa6";
 import {
   TbPlayerSkipBackFilled,
   TbPlayerSkipForwardFilled,
 } from "react-icons/tb";
+import { BiVolume } from "react-icons/bi";
+import {
+  MdPause,
+  MdPlayArrow,
+  MdRepeat,
+  MdShuffle,
+  MdSkipNext,
+  MdSkipPrevious,
+  MdVolumeUp,
+} from "react-icons/md";
 
 const PlayerControls = () => {
   const {
@@ -50,14 +60,14 @@ const PlayerControls = () => {
       onDragStart={(e) => e.preventDefault()}
     >
       <div className={styles.leftControls}>
-        <button>
-          <TbPlayerSkipBackFilled size={24} />
+        <button className={styles.leftControl}>
+          <MdSkipPrevious />
         </button>
-        <button onClick={togglePlay}>
-          {isPlaying ? <FaPause size={25} /> : <FaPlay size={24} />}
+        <button className={styles.leftControl} onClick={togglePlay}>
+          {isPlaying ? <MdPause /> : <MdPlayArrow />}
         </button>
-        <button>
-          <TbPlayerSkipForwardFilled size={24} />
+        <button className={styles.leftControl}>
+          <MdSkipNext />
         </button>
       </div>
       <div className={styles.progress}>
@@ -88,9 +98,15 @@ const PlayerControls = () => {
         }}
       />
       <div className={styles.rightControls}>
-        <button className={styles.rightControl}></button>
-        <button className={styles.rightControl}></button>
-        <button className={styles.rightControl}></button>
+        <button className={styles.rightControl}>
+          <MdVolumeUp size={60} />
+        </button>
+        <button className={styles.rightControl}>
+          <MdRepeat size={60} />
+        </button>
+        <button className={styles.rightControl}>
+          <MdShuffle size={60} />
+        </button>
       </div>
     </div>
   );

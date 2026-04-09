@@ -30,6 +30,7 @@ button {
     border: 0px solid transparent;
     /*padding: var(--spacing-sm) var(--spacing-md);
     border-radius: var(--radius-sm);*/
+    padding: 0;
     background-color: unset;
     color: var(--color-text);
     cursor: pointer;
