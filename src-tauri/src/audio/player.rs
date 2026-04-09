@@ -31,7 +31,7 @@ pub struct AudioPlayer {
 
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
-        let sink = Self::create_sink(handle.clone()).expect("Failed to open default audio stream");
+        let sink = Self::create_sink().expect("Failed to open default audio stream");
         let player = Player::connect_new(&sink.mixer());
 
         Self::spawn_device_watcher(handle.clone());
@@ -51,31 +51,9 @@ impl AudioPlayer {
         }
     }
 
-    fn create_sink(handle: AppHandle) -> Result<MixerDeviceSink, String> {
+    fn create_sink() -> Result<MixerDeviceSink, String> {
         rodio::DeviceSinkBuilder::from_default_device()
             .map_err(|_| "No audio device found".to_string())?
-            .with_error_callback(move |err| match err {
-                cpal::StreamError::DeviceNotAvailable => {
-                    println!("Audio device disconnected! Attempting auto-reconnect...");
-
-                    let _ = handle.emit("audio-device-lost", ());
-
-                    let handle_for_reconnect = handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-
-                        match handle_for_reconnect.state::<Mutex<AudioPlayer>>().lock() {
-                            Ok(mut player) => {
-                                if let Err(e) = player.reconnect_default_device() {
-                                    eprintln!("Auto-reconnect failed: {}", e);
-                                }
-                            }
-                            Err(_) => eprintln!("Failed to lock AudioPlayer: Mutex poisoned"),
-                        }
-                    });
-                }
-                _ => eprintln!("Other audio error: {}", err),
-            })
             .open_stream()
             .map_err(|e| e.to_string())
     }
@@ -91,7 +69,7 @@ impl AudioPlayer {
                     if let Some(new_id) = system_default_id {
                         if player.current_device_id.as_ref() != Some(&new_id) {
                             println!(
-                                "Audio output drift detected. Switching from {:?} to: {:?}",
+                                "New default audio device detected. Switching from {:?} to: {:?}",
                                 player.current_device_id, new_id
                             );
                             let _ = player.reconnect_default_device();
@@ -167,7 +145,7 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
-        println!("{}, {:#?}", song.title, song.duration);
+        println!("Playing {}, {:#?}", song.title, song.duration);
         let path = &song.path;
         let file = File::open(&path).expect("failed to open file");
         let source = Decoder::try_from(file).expect("failed to decode audio");
@@ -432,7 +410,7 @@ impl AudioPlayer {
         let current_pos = self.player.get_pos();
         let current_song = self.current_song.clone();
 
-        let new_sink = Self::create_sink(self.handle.clone())?;
+        let new_sink = Self::create_sink()?;
         let new_player = Player::connect_new(&new_sink.mixer());
 
         self._sink = new_sink;
@@ -458,7 +436,7 @@ impl AudioPlayer {
 
         self.current_device_id = Self::get_default_device_id().ok();
 
-        println!("Successfully reconnected and restored audio state!");
+        // println!("Successfully reconnected and restored audio state!");
         self.emit_state();
         Ok(())
     }
