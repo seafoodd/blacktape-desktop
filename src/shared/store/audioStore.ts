@@ -58,9 +58,10 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   },
 
   updateProgress: async () => {
-    const { currentSong } = get();
-    if (!currentSong) return;
+    const { currentSong, isPlaying } = get();
+    if (!currentSong || !isPlaying) return;
     const pos = await getPosition();
+    console.log("updated progress", pos);
     set({ progress: pos });
   },
 }));
@@ -68,7 +69,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 if (typeof window !== "undefined") {
   listen("player-state", (event) => {
     const state: any = event.payload;
-    // console.log(state);
+    console.log("PLAYER STATEEE", state);
     useAudioStore.setState({
       isPlaying: state.is_playing,
       currentSong: state.current_song,

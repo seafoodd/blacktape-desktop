@@ -48,7 +48,7 @@ where
         match f() {
             Ok(val) => return Ok(val),
             Err(err) => {
-                eprintln!("Attempt {}/{} failed: {:?}", attempt, max_attempts, err);
+                // eprintln!("Attempt {}/{} failed: {:?}", attempt, max_attempts, err);
                 if attempt >= max_attempts {
                     return Err(RpcError::ConnectError(format!("{:?}", err)));
                 }
@@ -67,7 +67,7 @@ pub struct DiscordRpcClient {
 
 impl DiscordRpcClient {
     pub fn new() -> Result<Self> {
-        println!("Connecting to Discord RPC...");
+        // println!("Connecting to Discord RPC...");
 
         let mut client = DiscordIpcClient::new(CLIENT_ID);
         retry(
@@ -79,7 +79,7 @@ impl DiscordRpcClient {
             MAX_RETRIES,
             RETRY_DELAY,
         )?;
-        println!("Connected to Discord IPC");
+        // println!("Connected to Discord IPC");
 
         let activity = Self::build_initial_activity()?;
 
@@ -92,7 +92,7 @@ impl DiscordRpcClient {
             MAX_RETRIES,
             RETRY_DELAY,
         )?;
-        println!("Discord Rich Presence initialized");
+        // println!("Discord Rich Presence initialized");
 
         Ok(Self {
             client,
@@ -177,7 +177,7 @@ impl DiscordRpcClient {
 
     pub fn reconnect(&mut self) -> Result<()> {
         if !self.is_connected {
-            println!("Reconnecting to Discord RPC...");
+            // println!("Reconnecting to Discord RPC...");
             retry(
                 || {
                     self.client
@@ -188,7 +188,7 @@ impl DiscordRpcClient {
                 RETRY_DELAY,
             )?;
             self.is_connected = true;
-            println!("Reconnected");
+            // println!("Reconnected");
         }
         Ok(())
     }
@@ -198,7 +198,7 @@ impl Drop for DiscordRpcClient {
     fn drop(&mut self) {
         if self.is_connected {
             let _ = self.client.close();
-            println!("Discord RPC connection closed");
+            // println!("Discord RPC connection closed");
         }
     }
 }

@@ -24,7 +24,7 @@ const PlayerControls = () => {
 
   useEffect(() => {
     if (isDragging) return;
-    const interval = setInterval(updateProgress, 1000);
+    const interval = setInterval(updateProgress, 500);
 
     return () => {
       clearInterval(interval);

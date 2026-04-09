@@ -40,7 +40,7 @@ fn stop(state: State<Mutex<AudioPlayer>>) {
 
 #[command]
 fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
-    let player = state.lock().unwrap();
+    let mut player = state.lock().unwrap();
     player.seek(fraction);
 }
 

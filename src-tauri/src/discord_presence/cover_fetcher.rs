@@ -73,10 +73,10 @@ impl CoverFetcher {
 
     pub fn fetch_cover_url(&self, song: &Song) -> Option<String> {
         let mbid = self.get_release_mbid(song)?;
-        println!("Found MBID: {} for {} - {}", mbid, song.artist, song.album);
+        // println!("Found MBID: {} for {} - {}", mbid, song.artist, song.album);
 
         if let Some(cached_url) = self.cache.lock().unwrap().get(&mbid) {
-            println!("Using cached cover URL");
+            // println!("Using cached cover URL");
             return Some(cached_url.clone());
         }
         match self.get_cover_art_url(&mbid) {
@@ -103,7 +103,7 @@ impl CoverFetcher {
             encoded_query
         );
 
-        println!("Querying MusicBrainz: {}", url);
+        // println!("Querying MusicBrainz: {}", url);
 
         let response = match self.client.get(&url).send() {
             Ok(r) => r,
@@ -113,7 +113,7 @@ impl CoverFetcher {
             }
         };
 
-        println!("Status: {}", response.status());
+        // println!("Status: {}", response.status());
 
         if !response.status().is_success() {
             eprintln!("MusicBrainz API error: {}", response.status());
@@ -142,7 +142,7 @@ impl CoverFetcher {
             }
         };
 
-        println!("Parsed {} releases", metadata.release_list.releases.len());
+        // println!("Parsed {} releases", metadata.release_list.releases.len());
 
         metadata
             .release_list
@@ -150,11 +150,11 @@ impl CoverFetcher {
             .into_iter()
             .find(|r| r.score.unwrap_or(0) > 50)
             .map(|r| {
-                println!(
-                    "Selected release: {} (score: {})",
-                    r.title,
-                    r.score.unwrap_or(0)
-                );
+                // println!(
+                //     "Selected release: {} (score: {})",
+                //     r.title,
+                //     r.score.unwrap_or(0)
+                // );
                 r.id
             })
     }
@@ -162,12 +162,12 @@ impl CoverFetcher {
     fn get_cover_art_url(&self, mbid: &str) -> Result<Option<String>, reqwest::Error> {
         let url = format!("https://coverartarchive.org/release/{}", mbid);
 
-        println!("Querying Cover Art Archive: {}", url);
+        // println!("Querying Cover Art Archive: {}", url);
 
         let response = self.client.get(&url).send()?;
 
         if !response.status().is_success() {
-            eprintln!("Cover Art Archive API error: {}", response.status());
+            // eprintln!("Cover Art Archive API error: {}", response.status());
             return Ok(None);
         }
 
