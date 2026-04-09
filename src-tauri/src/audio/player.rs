@@ -3,7 +3,12 @@ use crate::{
     discord_presence,
     types::{PlayerState, Song},
 };
-use rodio::{Decoder, MixerDeviceSink, Player, Source};
+use rodio::cpal::traits::DeviceTrait;
+use rodio::cpal::traits::HostTrait;
+use rodio::{
+    cpal::{self, DeviceId},
+    Decoder, MixerDeviceSink, Player, Source,
+};
 use souvlaki::MediaMetadata;
 use std::{
     collections::VecDeque,
@@ -13,22 +18,74 @@ use std::{
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager};
-
 pub struct AudioPlayer {
-    _stream: MixerDeviceSink,
+    _sink: MixerDeviceSink,
     player: Player,
     duration: Option<Duration>,
     media_controls: MediaControls,
     current_song: Option<Song>,
     handle: AppHandle,
     queue: VecDeque<Song>,
+    current_device_id: Option<DeviceId>,
 }
 
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
-        let stream =
-            rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-        let player = rodio::Player::connect_new(&stream.mixer());
+        let error_handle = handle.clone();
+        let sink = rodio::DeviceSinkBuilder::from_default_device()
+            .expect("Failed to find default audio device")
+            .with_error_callback(move |err| match err {
+                cpal::StreamError::DeviceNotAvailable => {
+                    println!("Audio device disconnected! Attempting auto-reconnect...");
+
+                    let _ = error_handle.emit("audio-device-lost", ());
+
+                    let handle_for_reconnect = error_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+
+                        match handle_for_reconnect.state::<Mutex<AudioPlayer>>().lock() {
+                            Ok(mut player) => {
+                                if let Err(e) = player.reconnect_default_device() {
+                                    eprintln!("Auto-reconnect failed: {}", e);
+                                }
+                            }
+                            Err(_) => eprintln!("Failed to lock AudioPlayer: Mutex poisoned"),
+                        }
+                    });
+                }
+                _ => eprintln!("Other audio error: {}", err),
+            })
+            .open_stream()
+            .expect("Failed to open default audio stream");
+
+        let watcher_handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            // HostTrait is required to use cpal::default_host() and .default_output_device()
+
+            let host = cpal::default_host();
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                let system_default_id = host.default_output_device().and_then(|d| d.id().ok());
+
+                if let Ok(mut player) = watcher_handle.state::<Mutex<AudioPlayer>>().lock() {
+                    if let Some(new_id) = system_default_id {
+                        // If we haven't set a name yet, or the name changed
+                        if player.current_device_id.as_ref() != Some(&new_id) {
+                            println!(
+                                "Audio output drift detected. Switching from {:?} to: {:?}",
+                                player.current_device_id, new_id
+                            );
+                            let _ = player.reconnect_default_device();
+                        }
+                    }
+                }
+            }
+        });
+
+        let player = Player::connect_new(&sink.mixer());
 
         let handle_clone = handle.clone();
         tauri::async_runtime::spawn(async move {
@@ -36,7 +93,7 @@ impl AudioPlayer {
             let mut is_next = false;
 
             loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
 
                 let state = handle_clone.state::<Mutex<AudioPlayer>>();
 
@@ -79,14 +136,19 @@ impl AudioPlayer {
             }
         });
 
+        let initial_device_id = cpal::default_host()
+            .default_output_device()
+            .and_then(|d| d.id().ok());
+
         Self {
-            _stream: stream,
-            player: player,
+            _sink: sink,
+            player,
             duration: None,
             media_controls,
             current_song: None,
             handle,
             queue: VecDeque::new(),
+            current_device_id: initial_device_id,
         }
     }
 
@@ -290,7 +352,7 @@ impl AudioPlayer {
             let mut temp_path = std::env::temp_dir();
 
             temp_path.push("blacktape");
-            temp_path.push(format!("current_song_cover.jpg"));
+            temp_path.push("current_song_cover.jpg");
 
             if let Some(parent) = temp_path.parent() {
                 fs::create_dir_all(parent).expect("Failed to create temp directory");
@@ -347,5 +409,79 @@ impl AudioPlayer {
             .await
             .map_err(|e| eprintln!("Discord RPC task failed: {}", e));
         });
+    }
+
+    fn reconnect_default_device(&mut self) -> Result<(), String> {
+        println!("Attempting to reconnect to a default audio device...");
+
+        // 1. Capture the current state before replacing the player
+        let was_playing = !self.is_paused();
+        let current_pos = self.player.get_pos();
+        let current_song = self.current_song.clone();
+
+        // 2. Build a new sink (and re-attach the error callback!)
+        let error_handle = self.handle.clone();
+        let builder = rodio::DeviceSinkBuilder::from_default_device()
+            .map_err(|_| "Failed to find a default audio device. Is anything plugged in?")?;
+
+        let new_sink = builder
+            .with_error_callback(move |err| {
+                if let cpal::StreamError::DeviceNotAvailable = err {
+                    println!("Audio device disconnected! Attempting auto-reconnect...");
+
+                    let _ = error_handle.emit("audio-device-lost", ());
+
+                    let handle_for_reconnect = error_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Wait for the OS to switch the default device (e.g., from Headphones to Speakers)
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+
+                        match handle_for_reconnect.state::<Mutex<AudioPlayer>>().lock() {
+                            Ok(mut player) => {
+                                if let Err(e) = player.reconnect_default_device() {
+                                    eprintln!("Auto-reconnect failed: {}", e);
+                                }
+                            }
+                            Err(_) => eprintln!("Failed to lock AudioPlayer: Mutex poisoned"),
+                        }
+                    });
+                }
+            })
+            .open_stream()
+            .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+        let new_player = Player::connect_new(&new_sink.mixer());
+
+        self._sink = new_sink;
+        self.player = new_player;
+
+        if let Some(song) = current_song {
+            if let Ok(file) = File::open(&song.path) {
+                if let Ok(source) = Decoder::try_from(file) {
+                    self.player.append(source);
+
+                    if current_pos.as_millis() > 0 {
+                        let _ = self.player.try_seek(current_pos);
+                    }
+
+                    if !was_playing {
+                        self.player.pause();
+                    } else {
+                        self.player.play();
+                    }
+                }
+            }
+        }
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or("No default device found")?;
+
+        // Store the new device name
+        self.current_device_id = device.id().ok();
+
+        println!("Successfully reconnected and restored audio state!");
+        self.emit_state();
+        Ok(())
     }
 }
