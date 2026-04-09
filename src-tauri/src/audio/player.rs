@@ -311,17 +311,18 @@ impl AudioPlayer {
     }
 
     fn update_discord_timestamp(&self) {
-        let discord = self
+        if let Ok(mut discord) = self
             .handle
-            .state::<Mutex<discord_presence::DiscordRpcClient>>();
-        let mut discord = discord.lock().unwrap();
+            .state::<Mutex<discord_presence::DiscordRpcClient>>()
+            .try_lock()
+        {
+            if let Some(duration) = self.duration {
+                let pos_ms = self.player.get_pos().as_millis() as i64;
+                let duration_ms = duration.as_millis() as i64;
 
-        if let Some(duration) = self.duration {
-            let pos_ms = self.player.get_pos().as_millis() as i64;
-            let duration_ms = duration.as_millis() as i64;
-
-            if let Err(e) = discord.update_timestamps(pos_ms, duration_ms) {
-                eprintln!("Failed to update Discord timestamps: {}", e);
+                if let Err(e) = discord.update_timestamps(pos_ms, duration_ms) {
+                    eprintln!("Failed to update Discord timestamps: {}", e);
+                }
             }
         }
     }
