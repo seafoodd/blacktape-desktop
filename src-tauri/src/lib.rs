@@ -12,12 +12,18 @@ use crate::{audio::media_controls::MediaControls, types::Song};
 #[command]
 fn scan_music(dir: String) -> Vec<types::Song> {
     music::scan::scan_music_dir(dir)
+        .into_iter()
+        .map(|mut song| {
+            song.cover = None;
+            song
+        })
+        .collect()
 }
 
 #[command]
 fn play_song(song: Song, state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
-    player.play(song.clone());
+    player.play_from_path(&song.path);
 }
 
 #[command]

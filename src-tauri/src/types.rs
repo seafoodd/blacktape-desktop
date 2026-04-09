@@ -8,7 +8,9 @@ pub struct Song {
     pub artist: String,
     pub album: String,
     pub duration: Duration,
-    pub cover: Option<Vec<u8>>,
+
+    #[serde(skip)]
+    pub cover: Option<(Vec<u8>, String)>,
 }
 
 #[derive(Serialize, Clone, Debug)]

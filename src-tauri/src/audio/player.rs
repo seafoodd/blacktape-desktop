@@ -1,6 +1,7 @@
 use crate::{
     audio::media_controls::MediaControls,
     discord_presence,
+    music::scan::get_song_from_path,
     types::{PlayerState, Song},
 };
 use rodio::cpal::{
@@ -13,7 +14,6 @@ use souvlaki::MediaMetadata;
 use std::{
     collections::VecDeque,
     fs::{self, File},
-    io::Write,
     sync::Mutex,
     time::Duration,
 };
@@ -144,7 +144,13 @@ impl AudioPlayer {
         device.id()
     }
 
-    pub fn play(&mut self, song: Song) {
+    pub fn play_from_path(&mut self, path: &str) {
+        if let Some(song) = get_song_from_path(path) {
+            self.play(song);
+        }
+    }
+
+    fn play(&mut self, song: Song) {
         println!("Playing {}, {:#?}", song.title, song.duration);
         let path = &song.path;
         let file = File::open(&path).expect("failed to open file");
@@ -155,18 +161,23 @@ impl AudioPlayer {
         self.player.append(source);
 
         self.clear_queue();
-        // self.add_to_queue(Song {
-        //     path: "Z:\\music\\glass beach\\plastic death\\glass beach - plastic death - 10 the CIA.mp3".to_string(),
-        //     title: "the CIA".to_string(),
-        //     artist: "glass beach".to_string(),
-        //     album: "plastic death".to_string(),
-        //     duration: Duration::new(282, 0),
-        //     cover: None,
-        // });
+
+        // let test_songs = [
+        //     "Z:\\music\\glass beach\\plastic death\\glass beach - plastic death - 10 the CIA.mp3",
+        //     "Z:\\music\\Heaven Pierce Her\\ULTRAKILL - FRAUD\\Heaven Pierce Her - ULTRAKILL- FRAUD - 07 The Shattering Circle, or- A Charade of Shadeless Ones and Zeroes Rearranged ad Nihilum.mp3",
+        //     "Z:\\music\\Bull of Heaven\\Superstring Theory Verified\\Bull of Heaven - 111- Superstring Theory Verified - 01 Superstring Theory Verified.mp3",
+        // ];
+
+        // for p in test_songs {
+        //     if let Some(s) = get_song_from_path(p) {
+        //         self.add_to_queue(s);
+        //     }
+        // }
+
         self.player.play();
         self.current_song = Some(song.clone());
 
-        let uri = AudioPlayer::cover_file_uri(&song);
+        let uri = Self::cover_file_uri(&song);
         // println!("debug: {:#?}", uri);
         self.media_controls.update_metadata(MediaMetadata {
             title: Some(&song.title),
@@ -243,16 +254,18 @@ impl AudioPlayer {
     /// Returns `true` if the player advanced, or `false` if the queue was empty.
     fn advance_to_next_in_queue(&mut self) -> bool {
         if let Some(next) = self.queue.pop_front() {
+            self.current_song = Some(next.clone());
+            self.duration = Some(next.duration);
             self.update_discord_song();
+
+            let cover_url = Self::cover_file_uri(&next);
             self.media_controls.update_metadata(MediaMetadata {
                 title: Some(&next.title),
                 artist: Some(&next.artist),
                 album: Some(&next.album),
                 duration: Some(next.duration),
-                cover_url: None,
+                cover_url: cover_url.as_deref(),
             });
-            self.duration = Some(next.duration);
-            self.current_song = Some(next);
             return true;
         }
         false
@@ -270,7 +283,10 @@ impl AudioPlayer {
 
     pub fn next(&mut self) {
         self.player.skip_one();
-        self.advance_to_next_in_queue();
+        if !self.advance_to_next_in_queue() {
+            self.pause();
+            self.stop();
+        }
         self.buffer_next_silent();
         self.emit_state();
     }
@@ -340,18 +356,25 @@ impl AudioPlayer {
     }
 
     fn cover_file_uri(song: &Song) -> Option<String> {
-        song.cover.as_ref().map(|cover_bytes| {
-            let mut temp_path = std::env::temp_dir();
+        song.cover.as_ref().map(|(bytes, mime)| {
+            let ext = match mime.as_str() {
+                "image/png" => "png",
+                "image/jpeg" | "image/jpg" => "jpg",
+                "image/webp" => "webp",
+                _ => "img",
+            };
 
+            let mut temp_path = std::env::temp_dir();
             temp_path.push("blacktape");
-            temp_path.push("current_song_cover.jpg");
 
             if let Some(parent) = temp_path.parent() {
-                fs::create_dir_all(parent).expect("Failed to create temp directory");
+                fs::create_dir_all(parent).ok();
             }
-            let mut f = File::create(&temp_path).expect("Failed to create temp cover file");
-            f.write_all(cover_bytes)
-                .expect("Failed to write temp cover file");
+
+            temp_path.push(format!("current_song_cover.{}", ext));
+
+            // write the actual bytes
+            std::fs::write(&temp_path, bytes).ok()?;
 
             let path_str = temp_path.to_string_lossy();
 
@@ -360,8 +383,8 @@ impl AudioPlayer {
             #[cfg(not(target_os = "windows"))]
             let cover_path = format!("file://{}", path_str);
 
-            cover_path
-        })
+            Some(cover_path)
+        })?
     }
 
     fn update_discord_timestamp(&self) {
