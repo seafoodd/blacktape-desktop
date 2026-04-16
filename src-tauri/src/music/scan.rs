@@ -35,7 +35,6 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
         };
 
         let mut cover_url = None;
-        let mut cover = None;
 
         if let Some(pic) = tag.pictures().first() {
             let data = pic.data();
@@ -66,10 +65,10 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             }
 
             cover_url = Some(full_path.to_string_lossy().to_string());
-            cover = Some((data.to_vec(), mime));
         }
 
         let song = Song {
+            id: None,
             path: path.to_string_lossy().to_string(),
             title: tag
                 .title()
@@ -84,7 +83,6 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             track_number: tag.track().map(|n| n as i32),
             genre: tag.genre().map(|g| g.to_string()),
             release_year: tag.date().map(|d| d.year as i32),
-            cover,
             cover_url,
         };
         println!(
@@ -114,6 +112,7 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
 
     // Build Song struct
     let song = Song {
+        id: None,
         path: path.to_string(),
         title: tag
             .and_then(|t| t.title().map(|s| s.to_string()))
@@ -129,15 +128,6 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
         genre: None,
         release_year: None,
         cover_url: None,
-        cover: tag.and_then(|t| {
-            t.pictures().first().map(|pic| {
-                let mime = pic
-                    .mime_type()
-                    .map(|m| m.as_str().to_string())
-                    .unwrap_or_else(|| "image/jpeg".to_string());
-                (pic.data().to_vec(), mime)
-            })
-        }),
     };
 
     Some(song)

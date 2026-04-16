@@ -11,6 +11,7 @@ use audio::player::AudioPlayer;
 use std::sync::Mutex;
 use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
+use crate::types::ArtistSummary;
 
 #[command]
 async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
@@ -18,29 +19,51 @@ async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio:
     let covers_path = app_data.join("covers");
 
     let songs = music::scan::scan_music_dir(dir, covers_path);
-    let songs_to_insert = songs.clone();
 
     let db = state.lock().await;
-    db.insert_songs(songs_to_insert)
+    db.insert_songs(songs.clone())
         .await
         .map_err(|e| e.to_string())?;
 
+    let db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
 
-    let cleaned_songs = songs
-        .into_iter()
-        .map(|mut song| {
-            song.cover = None;
-            song
-        })
-        .collect();
+    Ok(db_songs)
+}
+//
+// #[command]
+// async fn get_library(dir: String, app: tauri::AppHandle, state: State<'_,  tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
+//     let db = state.lock().await;
+//     let db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
+//
+//     Ok(db_songs)
+// }
 
-    Ok(cleaned_songs)
+#[command]
+async fn get_artists(state: State<'_, tokio::sync::Mutex<Database>>) -> Result<Vec<ArtistSummary>, String> {
+    let db = state.lock().await;
+    db.get_artists_summary()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[command]
-fn play_song(song: Song, state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.play_from_path(&song.path);
+async fn play_song(
+    id: i64,
+    db_state: State<'_, tokio::sync::Mutex<Database>>,
+    player_state: State<'_, Mutex<AudioPlayer>>
+) -> Result<(), String> {
+    let song = {
+        let db = db_state.lock().await;
+        db.get_song_by_id(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Song not found in library".to_string())?
+    };
+
+    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    player.play(song);
+
+    Ok(())
 }
 
 #[command]
@@ -152,7 +175,8 @@ pub fn run() {
             seek,
             get_is_paused,
             get_position,
-            toggle
+            toggle,
+            get_artists
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

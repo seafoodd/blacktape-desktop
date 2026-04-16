@@ -1,6 +1,19 @@
 body {
     background-color: var(--color-background);
     color: var(--color-text);
+
+    font-family:
+            "Segoe UI",       /* Windows */
+            "San Francisco",  /* Mac (modern) */
+            "-apple-system",  /* Mac (older) */
+            "BlinkMacSystemFont", /* Chrome/Edge on Mac */
+            "Roboto",         /* Android/ChromeOS */
+            "Oxygen",         /* Linux (KDE) */
+            "Ubuntu",         /* Linux (Ubuntu) */
+            "Cantarell",      /* Linux (Gnome) */
+            "Helvetica Neue", /* Fallback */
+            sans-serif;       /* The "Emergency" fallback */    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 h1,
@@ -27,7 +40,7 @@ a:hover {
 }
 
 button {
-    border: 0px solid transparent;
+    border: 0 solid transparent;
     /*padding: var(--spacing-sm) var(--spacing-md);
     border-radius: var(--radius-sm);*/
     padding: 0;
@@ -42,5 +55,37 @@ button {
 }*/
 
 ul {
+    padding: 0;
     list-style: none;
 }
+
+/* Modern Standard (Firefox and Chrome 121+) */
+:root {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-primary-light) var(--color-surface);
+}
+
+* {
+    scroll-behavior: smooth;
+}
+
+/*!* Legacy WebKit (Older Chrome, Safari, and Tauri's WebView2/WebKit) *!*/
+/*!* This ensures the look is consistent even if the standard properties aren't fully parsed *!*/
+/*::-webkit-scrollbar {*/
+/*    width: 8px; !* Equivalent to 'thin' *!*/
+/*    height: 8px;*/
+/*}*/
+
+/*::-webkit-scrollbar-track {*/
+/*    background: var(--color-surface);*/
+/*}*/
+
+/*::-webkit-scrollbar-thumb {*/
+/*    background-color: var(--color-primary-light);*/
+/*    border-radius: 10px;*/
+/*    border: 2px solid var(--color-surface); !* Creates a "padding" effect around the thumb *!*/
+/*}*/
+
+/*::-webkit-scrollbar-thumb:hover {*/
+/*    background-color: var(--color-primary); !* Optional: darken on hover *!*/
+/*}*/

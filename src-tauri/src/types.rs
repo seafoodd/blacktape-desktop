@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone, sqlx::FromRow)]
 pub struct Song {
+    pub id: Option<i64>,
     pub path: String,
     pub title: String,
     pub artist: String,
@@ -11,9 +12,6 @@ pub struct Song {
     pub genre: Option<String>,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
-
-    #[serde(skip)]
-    pub cover: Option<(Vec<u8>, String)>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -21,4 +19,11 @@ pub struct PlayerState {
     pub current_song: Option<Song>,
     pub is_playing: bool,
     pub progress: f32,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct ArtistSummary {
+    pub name: String,
+    pub album_count: i32,
+    pub cover_url: Option<String>,
 }

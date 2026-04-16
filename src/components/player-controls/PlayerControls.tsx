@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { seek } from "../../shared/lib/audio";
-import { useAudioStore } from "../../shared/store/audioStore";
+import { seek } from "@/shared/lib/audio.ts";
+import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
-import { formatDuration } from "../../shared/lib/time";
+import { formatDuration } from "@/shared/lib/time.ts";
 import {
   MdPause,
   MdPlayArrow,
@@ -40,9 +40,7 @@ const PlayerControls = () => {
     await storeSeek(value);
   };
 
-  const currentTime = currentSong
-    ? currentSong.duration_ms * progress
-    : 0;
+  const currentTime = currentSong ? currentSong.duration_ms * progress : 0;
 
   return (
     <div

@@ -1,4 +1,4 @@
-use crate::types::Song;
+use crate::types::{ArtistSummary, Song};
 use sqlx::sqlite::SqlitePool;
 
 pub struct Database {
@@ -11,6 +11,36 @@ impl Database {
             .await
             .expect("Failed to connect to database");
         Self { pool }
+    }
+
+    pub async fn get_all_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
+        sqlx::query_as::<_, Song>(
+            "SELECT
+                id, path, title, artist, album, track_number,
+                duration_ms, cover_url, genre, release_year
+             FROM songs
+             ORDER BY artist ASC, album ASC, track_number ASC"
+        )
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    pub async fn get_artists_summary(&self) -> Result<Vec<ArtistSummary>, sqlx::Error> {
+        // Query to group by artist name
+        // We use MAX(cover_url) just to grab one valid image from their catalog
+        let artists = sqlx::query_as::<_, ArtistSummary>(
+            "SELECT
+                artist AS name,
+                COUNT(DISTINCT album) AS album_count,
+                MAX(cover_url) AS cover_url
+             FROM songs
+             GROUP BY artist
+             ORDER BY artist ASC"
+        )
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(artists)
     }
 
     pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
@@ -65,5 +95,18 @@ impl Database {
         tx.commit().await?;
 
         Ok(())
+    }
+
+    pub async fn get_song_by_id(&self, id: i64) -> Result<Option<Song>, sqlx::Error> {
+        let song = sqlx::query_as::<_, Song>(
+            "SELECT id, path, title, artist, album, track_number, duration_ms, cover_url, genre, release_year
+             FROM songs
+             WHERE id = ?"
+        )
+            .bind(id)
+            .fetch_optional(&self.pool) // returns None if no song is found
+            .await?;
+
+        Ok(song)
     }
 }

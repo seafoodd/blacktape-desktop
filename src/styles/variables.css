@@ -46,7 +46,7 @@
 /* Dark theme variant */
 [data-theme="dark"] {
     /* Backgrounds */
-    --color-background: #1e1e2e; /* soft dark purple/gray */
+    --color-background: #1E1E20; /* soft dark purple/gray */
     --color-surface: #2a2a3d; /* cards/panels */
 
     /* Text */

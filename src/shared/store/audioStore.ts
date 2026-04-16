@@ -34,7 +34,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   play: async (song) => {
     // set({ currentSong: song, isPlaying: true });
-    await tauriPlay(song);
+    await tauriPlay(song.id);
   },
 
   togglePlay: async () => {

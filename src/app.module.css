@@ -13,9 +13,16 @@
     border-bottom: 2px solid darkgray;
 }
 
+.layout {
+    display: flex;
+    flex: 1; /* Takes up remaining space between header and footer */
+    overflow: hidden;
+    /*max-height: 600px;*/
+}
+
 .main {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: scroll;
     scrollbar-width: thin;
     scroll-behavior: smooth;
     scrollbar-color: var(--color-primary-light) var(--color-surface);

@@ -1,0 +1,63 @@
+
+
+.leftSidebar {
+    min-width: 150px;
+    max-width: 600px;    /*background: var(--bg-secondary); !* Assuming you have theme variables *!*/
+    /*border-right: 1px solid var(--border-color);*/
+    overflow-y: scroll;
+    scrollbar-width: thin;
+    border: 2px solid darkgray;
+    /*background-color: ;*/
+}
+
+.resizer {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.2s;
+    z-index: 10;
+    /* Make sure this is positioned relative to the layout container */
+    margin-left: -2px;
+}
+
+.leftSidebarTitle {}
+
+.artistList {
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    justify-content: start;
+    align-items: start;
+    gap: 6px;
+}
+
+.artistImage {
+    max-width: 64px;
+    max-height: 64px;
+    width: 100%;
+    height: 100%;
+}
+
+.artistItem {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: start;
+
+    &:hover {
+        background-color: rgb(0 0 0 / 0.1);
+    }
+}
+
+.artistInfo {
+    display: flex;
+    flex-direction: column;
+}
+
+.artistName {
+
+}
+.albumCount {
+
+}

@@ -1,7 +1,6 @@
 use crate::{
     audio::media_controls::MediaControls,
     discord_presence,
-    music::scan::get_song_from_path,
     types::{PlayerState, Song},
 };
 use rodio::cpal::{
@@ -11,13 +10,9 @@ use rodio::cpal::{
 };
 use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
-use std::{
-    collections::VecDeque,
-    fs::{self, File},
-    sync::Mutex,
-    time::Duration,
-};
+use std::{collections::VecDeque, fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
+
 pub struct AudioPlayer {
     _sink: MixerDeviceSink,
     player: Player,
@@ -144,13 +139,7 @@ impl AudioPlayer {
         device.id()
     }
 
-    pub fn play_from_path(&mut self, path: &str) {
-        if let Some(song) = get_song_from_path(path) {
-            self.play(song);
-        }
-    }
-
-    fn play(&mut self, song: Song) {
+    pub fn play(&mut self, song: Song) {
         println!("Playing {}, {:#?}", song.title, song.duration_ms);
         let path = &song.path;
         let file = File::open(&path).expect("failed to open file");
@@ -177,14 +166,24 @@ impl AudioPlayer {
         self.player.play();
         self.current_song = Some(song.clone());
 
-        let uri = Self::cover_file_uri(&song);
+        let uri = &song.cover_url;
+
+        let formatted_uri;
+        let uri_ref = if let Some(path) = &song.cover_url {
+            formatted_uri = Self::format_cover_path(path.clone());
+            Some(formatted_uri.as_str())
+        } else {
+            None
+        };
+
+        println!("URI: {:?}", uri);
         // println!("debug: {:#?}", uri);
         self.media_controls.update_metadata(MediaMetadata {
             title: Some(&song.title),
             artist: Some(&song.artist),
             album: Some(&song.album),
             duration: Some(Duration::from_millis(song.duration_ms)),
-            cover_url: uri.as_deref(),
+            cover_url: uri_ref,
         });
         self.media_controls
             .play()
@@ -260,7 +259,7 @@ impl AudioPlayer {
             self.duration = Some(duration);
             self.update_discord_song();
 
-            let cover_url = Self::cover_file_uri(&next);
+            let cover_url = next.cover_url;
             self.media_controls.update_metadata(MediaMetadata {
                 title: Some(&next.title),
                 artist: Some(&next.artist),
@@ -357,36 +356,45 @@ impl AudioPlayer {
         self.handle.emit("player-state", state).ok();
     }
 
-    fn cover_file_uri(song: &Song) -> Option<String> {
-        song.cover.as_ref().map(|(bytes, mime)| {
-            let ext = match mime.as_str() {
-                "image/png" => "png",
-                "image/jpeg" | "image/jpg" => "jpg",
-                "image/webp" => "webp",
-                _ => "img",
-            };
+    // fn cover_file_uri(song: &Song) -> Option<String> {
+    //     song.cover.as_ref().map(|(bytes, mime)| {
+    //         let ext = match mime.as_str() {
+    //             "image/png" => "png",
+    //             "image/jpeg" | "image/jpg" => "jpg",
+    //             "image/webp" => "webp",
+    //             _ => "img",
+    //         };
+    //
+    //         let mut temp_path = std::env::temp_dir();
+    //         temp_path.push("blacktape");
+    //
+    //         if let Some(parent) = temp_path.parent() {
+    //             fs::create_dir_all(parent).ok();
+    //         }
+    //
+    //         temp_path.push(format!("current_song_cover.{}", ext));
+    //
+    //         // write the actual bytes
+    //         fs::write(&temp_path, bytes).ok()?;
+    //
+    //         let path_str = temp_path.to_string_lossy();
+    //
+    //         #[cfg(target_os = "windows")]
+    //         let cover_path = format!("file://{}", path_str.replace('/', "\\"));
+    //         #[cfg(not(target_os = "windows"))]
+    //         let cover_path = format!("file://{}", path_str);
+    //
+    //         Some(cover_path)
+    //     })?
+    // }
 
-            let mut temp_path = std::env::temp_dir();
-            temp_path.push("blacktape");
+    fn format_cover_path(path: String) -> String {
+        #[cfg(target_os = "windows")]
+        let cover_path = format!("file://{}", path.replace('/', "\\"));
+        #[cfg(not(target_os = "windows"))]
+        let cover_path = format!("file://{}", path_str);
 
-            if let Some(parent) = temp_path.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-
-            temp_path.push(format!("current_song_cover.{}", ext));
-
-            // write the actual bytes
-            fs::write(&temp_path, bytes).ok()?;
-
-            let path_str = temp_path.to_string_lossy();
-
-            #[cfg(target_os = "windows")]
-            let cover_path = format!("file://{}", path_str.replace('/', "\\"));
-            #[cfg(not(target_os = "windows"))]
-            let cover_path = format!("file://{}", path_str);
-
-            Some(cover_path)
-        })?
+        cover_path
     }
 
     fn update_discord_timestamp(&self) {
