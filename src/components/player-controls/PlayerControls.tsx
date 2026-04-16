@@ -41,11 +41,8 @@ const PlayerControls = () => {
   };
 
   const currentTime = currentSong
-    ? {
-        secs: Math.floor(currentSong.duration.secs * progress),
-        nanos: Math.floor(currentSong.duration.nanos * progress),
-      }
-    : { secs: 0, nanos: 0 };
+    ? currentSong.duration_ms * progress
+    : 0;
 
   return (
     <div
@@ -65,7 +62,7 @@ const PlayerControls = () => {
       </div>
       <div className={styles.progress}>
         {formatDuration(currentTime)} /{" "}
-        {currentSong ? formatDuration(currentSong.duration) : "0:00"}
+        {currentSong ? formatDuration(currentSong.duration_ms) : "0:00"}
       </div>
 
       <input

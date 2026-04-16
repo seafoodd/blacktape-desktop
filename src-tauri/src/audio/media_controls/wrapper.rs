@@ -59,7 +59,7 @@ impl MediaControls {
             .set_playback(MediaPlayback::Stopped)
             .expect("Failed to set playback");
 
-        Self { controls: controls }
+        Self { controls }
     }
 
     pub fn update_metadata(&mut self, metadata: MediaMetadata) {

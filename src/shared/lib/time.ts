@@ -1,7 +1,5 @@
-import { Duration } from "./audio";
-
-export function formatDuration(duration: Duration): string {
-  const secsTotal = duration.secs + duration.nanos / 1e9;
+export function formatDuration(duration_ms: number): string {
+  const secsTotal = duration_ms / 1000;
 
   const hours = Math.floor(secsTotal / 3600);
   const minutes = Math.floor((secsTotal % 3600) / 60);

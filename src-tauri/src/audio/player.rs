@@ -151,7 +151,7 @@ impl AudioPlayer {
     }
 
     fn play(&mut self, song: Song) {
-        println!("Playing {}, {:#?}", song.title, song.duration);
+        println!("Playing {}, {:#?}", song.title, song.duration_ms);
         let path = &song.path;
         let file = File::open(&path).expect("failed to open file");
         let source = Decoder::try_from(file).expect("failed to decode audio");
@@ -183,7 +183,7 @@ impl AudioPlayer {
             title: Some(&song.title),
             artist: Some(&song.artist),
             album: Some(&song.album),
-            duration: Some(song.duration),
+            duration: Some(Duration::from_millis(song.duration_ms)),
             cover_url: uri.as_deref(),
         });
         self.media_controls
@@ -254,8 +254,10 @@ impl AudioPlayer {
     /// Returns `true` if the player advanced, or `false` if the queue was empty.
     fn advance_to_next_in_queue(&mut self) -> bool {
         if let Some(next) = self.queue.pop_front() {
+            let duration = Duration::from_millis(next.duration_ms);
+
             self.current_song = Some(next.clone());
-            self.duration = Some(next.duration);
+            self.duration = Some(duration);
             self.update_discord_song();
 
             let cover_url = Self::cover_file_uri(&next);
@@ -263,7 +265,7 @@ impl AudioPlayer {
                 title: Some(&next.title),
                 artist: Some(&next.artist),
                 album: Some(&next.album),
-                duration: Some(next.duration),
+                duration: Some(duration),
                 cover_url: cover_url.as_deref(),
             });
             return true;
@@ -374,7 +376,7 @@ impl AudioPlayer {
             temp_path.push(format!("current_song_cover.{}", ext));
 
             // write the actual bytes
-            std::fs::write(&temp_path, bytes).ok()?;
+            fs::write(&temp_path, bytes).ok()?;
 
             let path_str = temp_path.to_string_lossy();
 

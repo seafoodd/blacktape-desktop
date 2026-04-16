@@ -1,5 +1,3 @@
-use std::fs::File;
-
 use crate::types::Song;
 use lofty::prelude::*;
 use lofty::probe::Probe;
@@ -48,11 +46,15 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
 
                 (pic.data().to_vec(), mime)
             }),
-            duration: tagged_file.properties().duration(),
+            duration_ms: tagged_file.properties().duration().as_millis() as u64,
+            track_number: None,
+            genre: None,
+            release_year: None,
+            cover_url: None,
         };
         println!(
             "Scanned song: {:?}, {:?}, {:?}, {:?}",
-            song.title, song.artist, song.album, song.duration
+            song.title, song.artist, song.album, song.duration_ms
         );
 
         songs.push(song);
@@ -63,6 +65,7 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
 
 pub fn get_song_from_path(path: &str) -> Option<Song> {
     // Read metadata using lofty
+    println!("get song from path");
     let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
         Ok(f) => f,
         Err(e) => {
@@ -86,7 +89,11 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
         album: tag
             .and_then(|t| t.album().map(|s| s.to_string()))
             .unwrap_or_else(|| "Unknown Album".into()),
-        duration: tagged_file.properties().duration(),
+        duration_ms: tagged_file.properties().duration().as_millis() as u64,
+        track_number: None,
+        genre: None,
+        release_year: None,
+        cover_url: None,
         cover: tag.and_then(|t| {
             t.pictures().first().map(|pic| {
                 let mime = pic

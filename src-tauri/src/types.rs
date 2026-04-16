@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 #[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Song {
@@ -7,7 +6,11 @@ pub struct Song {
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub duration: Duration,
+    pub duration_ms: u64,
+    pub track_number: Option<i32>,
+    pub genre: Option<String>,
+    pub release_year: Option<i32>,
+    pub cover_url: Option<String>,
 
     #[serde(skip)]
     pub cover: Option<(Vec<u8>, String)>,
