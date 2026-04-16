@@ -13,8 +13,11 @@ use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
 
 #[command]
-async fn scan_music(dir: String, state: State<'_, tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
-    let songs = music::scan::scan_music_dir(dir);
+async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
+    let app_data = app.path().app_data_dir().unwrap();
+    let covers_path = app_data.join("covers");
+
+    let songs = music::scan::scan_music_dir(dir, covers_path);
     let songs_to_insert = songs.clone();
 
     let db = state.lock().await;

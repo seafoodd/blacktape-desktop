@@ -1,10 +1,17 @@
+use std::fs;
+use std::path::PathBuf;
 use crate::types::Song;
 use lofty::prelude::*;
 use lofty::probe::Probe;
+use sha2::{Sha256, Digest};
 use walkdir::WalkDir;
 
-pub fn scan_music_dir(dir: String) -> Vec<Song> {
+pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
     let mut songs = Vec::new();
+
+    if !covers_dir.exists() {
+        fs::create_dir_all(&covers_dir).ok();
+    }
 
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
         let path = entry.path();
@@ -27,6 +34,41 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
             None => continue,
         };
 
+        let mut cover_url = None;
+        let mut cover = None;
+
+        if let Some(pic) = tag.pictures().first() {
+            let data = pic.data();
+            let mime = pic.mime_type()
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "image/jpeg".to_string());
+
+            // Fix Cow mismatch: convert both to a standard String for the key
+            let artist = tag.artist().map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
+            let album = tag.album().map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
+            let album_key = format!("{}{}", artist, album);
+
+            // Fix Hash Formatting
+            let mut hasher = Sha256::new();
+            hasher.update(album_key.as_bytes());
+            let hash_result = hasher.finalize();
+            let hash = hash_result
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
+
+            let ext = if mime.contains("png") { "png" } else { "jpg" };
+            let filename = format!("{}.{}", hash, ext);
+            let full_path = covers_dir.join(&filename);
+
+            if !full_path.exists() {
+                let _ = fs::write(&full_path, data);
+            }
+
+            cover_url = Some(full_path.to_string_lossy().to_string());
+            cover = Some((data.to_vec(), mime));
+        }
+
         let song = Song {
             path: path.to_string_lossy().to_string(),
             title: tag
@@ -38,23 +80,16 @@ pub fn scan_music_dir(dir: String) -> Vec<Song> {
             album: tag
                 .album()
                 .map_or("Unknown Album".to_string(), |s| s.to_string()),
-            cover: tag.pictures().first().map(|pic| {
-                let mime = pic
-                    .mime_type()
-                    .map(|m| m.as_str().to_string())
-                    .unwrap_or_else(|| "image/jpeg".to_string());
-
-                (pic.data().to_vec(), mime)
-            }),
             duration_ms: tagged_file.properties().duration().as_millis() as u64,
-            track_number: None,
-            genre: None,
-            release_year: None,
-            cover_url: None,
+            track_number: tag.track().map(|n| n as i32),
+            genre: tag.genre().map(|g| g.to_string()),
+            release_year: tag.date().map(|d| d.year as i32),
+            cover,
+            cover_url,
         };
         println!(
-            "Scanned song: {:?}, {:?}, {:?}, {:?}",
-            song.title, song.artist, song.album, song.duration_ms
+            "Scanned song: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
+            song.title, song.artist, song.album, song.duration_ms, song.track_number, song.genre, song.release_year
         );
 
         songs.push(song);
