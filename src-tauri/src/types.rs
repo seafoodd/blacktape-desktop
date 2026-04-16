@@ -27,3 +27,10 @@ pub struct ArtistSummary {
     pub album_count: i32,
     pub cover_url: Option<String>,
 }
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct Album {
+    pub title: String,
+    pub cover_url: Option<String>,
+    pub songs: Vec<Song>,
+}

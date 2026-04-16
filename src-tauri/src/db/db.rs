@@ -1,4 +1,4 @@
-use crate::types::{ArtistSummary, Song};
+use crate::types::{Album, ArtistSummary, Song};
 use sqlx::sqlite::SqlitePool;
 
 pub struct Database {
@@ -26,8 +26,7 @@ impl Database {
     }
 
     pub async fn get_artists_summary(&self) -> Result<Vec<ArtistSummary>, sqlx::Error> {
-        // Query to group by artist name
-        // We use MAX(cover_url) just to grab one valid image from their catalog
+        // MAX(cover_url) just to grab one valid album cover
         let artists = sqlx::query_as::<_, ArtistSummary>(
             "SELECT
                 artist AS name,
@@ -41,6 +40,28 @@ impl Database {
             .await?;
 
         Ok(artists)
+    }
+
+    pub async fn get_artist_albums(&self, artist_name: &str) -> Result<Vec<Album>, sqlx::Error> {
+        let songs = sqlx::query_as::<_, Song>(
+            "SELECT * FROM songs WHERE artist = ? ORDER BY album ASC, track_number ASC"
+        )
+            .bind(artist_name).fetch_all(&self.pool).await?;
+
+        let mut album_map: std::collections::BTreeMap<String, Album> = std::collections::BTreeMap::new();
+
+        for song in songs {
+            let entry = album_map.entry(song.album.clone()).or_insert(Album {
+                title: song.album.clone(),
+                cover_url: song.cover_url.clone(),
+                songs: Vec::new(),
+            });
+            entry.songs.push(song);
+        }
+
+        let albums = album_map.into_values().collect();
+
+        Ok(albums)
     }
 
     pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {

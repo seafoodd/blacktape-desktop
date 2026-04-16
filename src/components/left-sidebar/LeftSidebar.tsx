@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import styles from "./left-sidebar.module.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderArtistImage from "@/assets/react.svg";
-import { ArtistSummary, getArtists } from "@/shared/lib/audio.ts";
+import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import clsx from "clsx";
 
 const LeftSidebar = () => {
-  const [artists, setArtists] = useState<ArtistSummary[]>([]);
-
+  const { fetchTabs, tabs, selectedTab, setSelectedTab } = useLibraryStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -39,15 +39,23 @@ const LeftSidebar = () => {
   }, [resize, stopResizing]);
 
   useEffect(() => {
-    getArtists().then(setArtists);
+    fetchTabs().catch((e) => {
+      console.log("fetch tabs error: ", e);
+    });
   }, []);
   return (
     <>
       <aside className={styles.leftSidebar} style={{ width: sidebarWidth }}>
         <h3 className={styles.leftSidebarTitle}>Artists</h3>
         <ul className={styles.artistList}>
-          {artists.map((artist) => (
-            <button key={artist.name} className={styles.artistItem}>
+          {tabs.map((artist) => (
+            <button
+              key={artist.name}
+              className={clsx(styles.artistItem, {
+                [styles.active]: selectedTab == artist.name,
+              })}
+              onClick={() => setSelectedTab(artist.name)}
+            >
               {artist.cover_url ? (
                 <img
                   src={convertFileSrc(artist.cover_url)}
@@ -58,7 +66,7 @@ const LeftSidebar = () => {
                 <img
                   src={placeholderArtistImage}
                   className={styles.artistImage}
-                  alt=""
+                  alt={artist.name}
                 />
               )}
               <div className={styles.artistInfo}>

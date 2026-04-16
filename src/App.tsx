@@ -1,24 +1,25 @@
 import { useTheme } from "./shared/providers/theme-provider";
 import PlayerControls from "./components/player-controls/PlayerControls";
 import { pickFolder } from "./shared/lib/dialog";
-import { useAudioStore } from "./shared/store/audioStore";
 import { scanMusic } from "./shared/lib/audio";
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "./app.module.css";
 import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
 
+import ArtistAlbums from "@/components/artist-albums/ArtistAlbums.tsx";
+import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+
 function App() {
   const { theme, toggleTheme } = useTheme();
-  const { songs, setSongs, play } = useAudioStore();
+  const { fetchTabs } = useLibraryStore();
 
   async function handlePickFolder() {
     const dir = await pickFolder();
     if (!dir) return;
-    setSongs([]);
     const loadedSongs = await scanMusic(dir);
     console.log("loadedSongs: ", loadedSongs[0]);
-    setSongs(loadedSongs);
+    await fetchTabs();
   }
 
   useEffect(() => {
@@ -44,15 +45,16 @@ function App() {
 
         {/* Main Content */}
         <main className={styles.main}>
-          <ul className={styles.songs}>
-            {songs.map((song, i) => (
-              <li className={styles.song} key={i} onClick={() => play(song)}>
-                <strong>{song.title}</strong> — {song.artist}
-                <br />
-                <small>{song.album}</small>
-              </li>
-            ))}
-          </ul>
+          {/*<ul className={styles.songs}>*/}
+          {/*  {songs.map((song, i) => (*/}
+          {/*    <li className={styles.song} key={i} onClick={() => play(song)}>*/}
+          {/*      <strong>{song.title}</strong> — {song.artist}*/}
+          {/*      <br />*/}
+          {/*      <small>{song.album}</small>*/}
+          {/*    </li>*/}
+          {/*  ))}*/}
+          {/*</ul>*/}
+          <ArtistAlbums/>
         </main>
       </div>
 

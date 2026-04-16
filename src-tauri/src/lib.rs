@@ -11,7 +11,7 @@ use audio::player::AudioPlayer;
 use std::sync::Mutex;
 use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
-use crate::types::ArtistSummary;
+use crate::types::{Album, ArtistSummary};
 
 #[command]
 async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
@@ -42,6 +42,14 @@ async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio:
 async fn get_artists(state: State<'_, tokio::sync::Mutex<Database>>) -> Result<Vec<ArtistSummary>, String> {
     let db = state.lock().await;
     db.get_artists_summary()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+async fn get_artist_albums(state: State<'_, tokio::sync::Mutex<Database>>, artist_name: &str) -> Result<Vec<Album>, String> {
+    let db = state.lock().await;
+    db.get_artist_albums(artist_name)
         .await
         .map_err(|e| e.to_string())
 }
@@ -176,7 +184,8 @@ pub fn run() {
             get_is_paused,
             get_position,
             toggle,
-            get_artists
+            get_artists,
+            get_artist_albums
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

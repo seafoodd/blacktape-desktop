@@ -16,7 +16,7 @@ interface AudioState {
   isPlaying: boolean;
 
   setSongs: (songs: Song[]) => void;
-  play: (song: Song) => Promise<void>;
+  play: (songId: number) => Promise<void>;
   togglePlay: () => Promise<void>;
   setProgress: (value: number) => void;
   seek: (fraction: number) => Promise<void>;
@@ -32,9 +32,9 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   setSongs: (songs) => set({ songs }),
 
-  play: async (song) => {
+  play: async (songId) => {
     // set({ currentSong: song, isPlaying: true });
-    await tauriPlay(song.id);
+    await tauriPlay(songId);
   },
 
   togglePlay: async () => {

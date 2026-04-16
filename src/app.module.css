@@ -10,7 +10,7 @@
     align-items: center;
     padding-inline: 16px;
     height: 60px;
-    border-bottom: 2px solid darkgray;
+    border-bottom: 1px solid rgb(169 169 169 / 0.5);
 }
 
 .layout {
@@ -22,7 +22,7 @@
 
 .main {
     flex: 1;
-    overflow-y: scroll;
+    overflow-y: auto;
     scrollbar-width: thin;
     scroll-behavior: smooth;
     scrollbar-color: var(--color-primary-light) var(--color-surface);

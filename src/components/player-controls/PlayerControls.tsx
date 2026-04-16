@@ -12,6 +12,9 @@ import {
   MdSkipPrevious,
   MdVolumeUp,
 } from "react-icons/md";
+import clsx from "clsx";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import placeholderSongImage from "@/assets/react.svg";
 
 const PlayerControls = () => {
   const {
@@ -44,28 +47,15 @@ const PlayerControls = () => {
 
   return (
     <div
-      className={`${styles.container} ${currentSong ? "" : styles.disabled}`}
+      className={clsx(styles.container, { [styles.disabled]: !currentSong })}
       onDragStart={(e) => e.preventDefault()}
     >
-      <div className={styles.leftControls}>
-        <button className={styles.leftControl}>
-          <MdSkipPrevious />
-        </button>
-        <button className={styles.leftControl} onClick={togglePlay}>
-          {isPlaying ? <MdPause /> : <MdPlayArrow />}
-        </button>
-        <button className={styles.leftControl}>
-          <MdSkipNext />
-        </button>
-      </div>
-      <div className={styles.progress}>
-        {formatDuration(currentTime)} /{" "}
-        {currentSong ? formatDuration(currentSong.duration_ms) : "0:00"}
-      </div>
-
       <input
         className={styles.progressBar}
         type="range"
+        style={{
+          background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #444 0)`,
+        }}
         min={0}
         max={1000}
         value={progress * 1000}
@@ -85,16 +75,69 @@ const PlayerControls = () => {
           seek(Number(e.currentTarget.value) / 1000);
         }}
       />
-      <div className={styles.rightControls}>
-        <button className={styles.rightControl}>
-          <MdVolumeUp size={60} />
-        </button>
-        <button className={styles.rightControl}>
-          <MdRepeat size={60} />
-        </button>
-        <button className={styles.rightControl}>
-          <MdShuffle size={60} />
-        </button>
+      <div className={styles.innerBlock}>
+        <div className={styles.leftControls}>
+          <button className={styles.leftControl}>
+            <MdSkipPrevious />
+          </button>
+          <button className={styles.leftControl} onClick={togglePlay}>
+            {isPlaying ? <MdPause /> : <MdPlayArrow />}
+          </button>
+          <button className={styles.leftControl}>
+            <MdSkipNext />
+          </button>
+        </div>
+        <div className={styles.progress}>
+          {formatDuration(currentTime)} /{" "}
+          {currentSong ? formatDuration(currentSong.duration_ms) : "0:00"}
+        </div>
+
+        <div className={styles.currentSongBlock}>
+          {currentSong ? (
+            <>
+              {currentSong.cover_url ? (
+                <img
+                  className={styles.currentSongCover}
+                  src={convertFileSrc(currentSong.cover_url)}
+                  alt={currentSong.title}
+                />
+              ) : (
+                <img
+                  className={styles.currentSongCover}
+                  src={placeholderSongImage}
+                  alt={currentSong.title}
+                />
+              )}
+              <div className={styles.currentSongDetails}>
+                <div className={styles.currentSongTitle}>
+                  {currentSong.title}
+                </div>
+                <div className={styles.currentSongArtist}>
+                  {currentSong.artist} &bull; {currentSong.album}
+                  {currentSong.release_year ? (
+                    <> &bull; {currentSong.release_year}</>
+                  ) : (
+                    ""
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            ""
+          )}
+        </div>
+
+        <div className={styles.rightControls}>
+          <button className={styles.rightControl}>
+            <MdVolumeUp size={60} />
+          </button>
+          <button className={styles.rightControl}>
+            <MdRepeat size={60} />
+          </button>
+          <button className={styles.rightControl}>
+            <MdShuffle size={60} />
+          </button>
+        </div>
       </div>
     </div>
   );

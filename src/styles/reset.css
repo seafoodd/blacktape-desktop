@@ -73,3 +73,11 @@ h6 {
 #__next {
     isolation: isolate;
 }
+
+/*input[type="range"] {*/
+/*    -webkit-appearance: none; !* For Chrome, Safari, and Edge *!*/
+/*    appearance: none;*/
+/*    background: transparent; !* Reset base background *!*/
+/*    cursor: pointer;*/
+/*    width: 100%;*/
+/*}*/
