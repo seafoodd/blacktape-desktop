@@ -113,12 +113,9 @@ const PlayerControls = () => {
                   {currentSong.title}
                 </div>
                 <div className={styles.currentSongArtist}>
-                  {currentSong.artist} &bull; {currentSong.album}
-                  {currentSong.release_year ? (
-                    <> &bull; {currentSong.release_year}</>
-                  ) : (
-                    ""
-                  )}
+                  {[currentSong.artist, currentSong.album, currentSong.release_year]
+                    .filter(Boolean)
+                    .join(" • ")}
                 </div>
               </div>
             </>
