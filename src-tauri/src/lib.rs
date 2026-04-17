@@ -150,7 +150,8 @@ fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
 #[command]
 fn next(state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
-    player.next()
+    player.next();
+    player.resume()
 }
 
 #[command]
