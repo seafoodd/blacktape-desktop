@@ -38,8 +38,11 @@ export const getArtists = (query?: string): Promise<ArtistSummary[]> => {
 export const getArtistAlbums = (artistName: string): Promise<Album[]> =>
   invoke<Album[]>("get_artist_albums", { artistName });
 
-export const playSong = (id: number): Promise<void> =>
-  invoke("play_song", { id });
+export const startPlayback = (
+  id: number,
+  queue: number[],
+  history: number[],
+): Promise<void> => invoke("start_playback", { id, queue, history });
 
 export const pause = (): Promise<void> => invoke("pause");
 
@@ -47,10 +50,15 @@ export const resume = (): Promise<void> => invoke("resume");
 
 export const toggle = (): Promise<void> => invoke("toggle");
 
-export const seek = (fraction: number): void => {
+export const seek = (fraction: number): Promise<void> => {
   invoke("seek", { fraction });
-  resume();
+  return resume();
 };
+
+export const next = (): Promise<void> => invoke("next");
+
+export const previous = (): Promise<void> => invoke("previous");
+
 export const getPosition = (): Promise<number> => {
   return invoke<number>("get_position");
 };

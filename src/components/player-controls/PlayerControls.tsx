@@ -24,6 +24,8 @@ const PlayerControls = () => {
     togglePlay,
     setProgress,
     seek: storeSeek,
+    next,
+    previous,
     updateProgress,
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -68,22 +70,22 @@ const PlayerControls = () => {
         }}
         onMouseUp={async (e) => {
           setIsDragging(false);
-          seek(Number(e.currentTarget.value) / 1000);
+          await seek(Number(e.currentTarget.value) / 1000);
         }}
         onTouchEnd={async (e) => {
           setIsDragging(false);
-          seek(Number(e.currentTarget.value) / 1000);
+          await seek(Number(e.currentTarget.value) / 1000);
         }}
       />
       <div className={styles.innerBlock}>
         <div className={styles.leftControls}>
-          <button className={styles.leftControl}>
+          <button onClick={() => previous()} className={styles.leftControl}>
             <MdSkipPrevious />
           </button>
           <button className={styles.leftControl} onClick={togglePlay}>
             {isPlaying ? <MdPause /> : <MdPlayArrow />}
           </button>
-          <button className={styles.leftControl}>
+          <button onClick={() => next()} className={styles.leftControl}>
             <MdSkipNext />
           </button>
         </div>
@@ -113,7 +115,11 @@ const PlayerControls = () => {
                   {currentSong.title}
                 </div>
                 <div className={styles.currentSongArtist}>
-                  {[currentSong.artist, currentSong.album, currentSong.release_year]
+                  {[
+                    currentSong.artist,
+                    currentSong.album,
+                    currentSong.release_year,
+                  ]
                     .filter(Boolean)
                     .join(" • ")}
                 </div>

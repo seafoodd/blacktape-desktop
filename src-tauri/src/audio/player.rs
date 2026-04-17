@@ -1,3 +1,4 @@
+use crate::discord_presence::DiscordRpcClient;
 use crate::{
     audio::media_controls::MediaControls,
     types::{PlayerState, Song},
@@ -11,7 +12,6 @@ use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
 use std::{collections::VecDeque, fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
-use crate::discord_presence::DiscordRpcClient;
 
 pub struct AudioPlayer {
     _sink: MixerDeviceSink,
@@ -20,6 +20,7 @@ pub struct AudioPlayer {
     media_controls: MediaControls,
     current_song: Option<Song>,
     handle: AppHandle,
+    history: VecDeque<Song>,
     queue: VecDeque<Song>,
     current_device_id: Option<DeviceId>,
 }
@@ -41,6 +42,7 @@ impl AudioPlayer {
             media_controls,
             current_song: None,
             handle,
+            history: VecDeque::new(),
             queue: VecDeque::new(),
             current_device_id: initial_device_id,
         }
@@ -81,7 +83,7 @@ impl AudioPlayer {
             let mut is_next = false;
 
             loop {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
                 let state = handle.state::<Mutex<AudioPlayer>>();
 
@@ -98,8 +100,8 @@ impl AudioPlayer {
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 // println!("start seamless transition");
                                 is_next = player.advance_to_next_in_queue();
+                                // println!("seamless transition IS NEXT: {}", is_next);
 
-                                player.buffer_next_silent();
                                 sleep_time = duration.saturating_sub(current_pos);
                                 advanced = true;
                             }
@@ -119,6 +121,8 @@ impl AudioPlayer {
                     }
 
                     player.emit_state();
+                    player.update_discord_song();
+                    player.update_current_metadata();
                     // println!("state emitted after delay");
                 }
             }
@@ -148,8 +152,9 @@ impl AudioPlayer {
 
         self.player.clear();
         self.player.append(source);
+        self.buffer_next_silent();
 
-        self.clear_queue();
+        // self.clear_queue();
 
         // let test_songs = [
         //     "Z:\\music\\glass beach\\plastic death\\glass beach - plastic death - 10 the CIA.mp3",
@@ -166,25 +171,7 @@ impl AudioPlayer {
         self.player.play();
         self.current_song = Some(song.clone());
 
-        let uri = &song.cover_url;
-
-        let formatted_uri;
-        let uri_ref = if let Some(path) = &song.cover_url {
-            formatted_uri = Self::format_cover_path(path.clone());
-            Some(formatted_uri.as_str())
-        } else {
-            None
-        };
-
-        println!("URI: {:?}", uri);
-        // println!("debug: {:#?}", uri);
-        self.media_controls.update_metadata(MediaMetadata {
-            title: Some(&song.title),
-            artist: Some(&song.artist),
-            album: Some(&song.album),
-            duration: Some(Duration::from_millis(song.duration_ms)),
-            cover_url: uri_ref,
-        });
+        self.update_current_metadata();
         self.media_controls
             .play()
             .expect("Failed to resume media controls state");
@@ -231,10 +218,6 @@ impl AudioPlayer {
     }
 
     pub fn add_to_queue(&mut self, song: Song) {
-        let path = &song.path;
-        let file = File::open(&path).expect("failed to open file");
-        let source = Decoder::try_from(file).expect("failed to decode audio");
-        self.player.append(source);
         self.queue.push_back(song);
 
         // TODO: send queue to the client maybe
@@ -253,27 +236,51 @@ impl AudioPlayer {
     /// Returns `true` if the player advanced, or `false` if the queue was empty.
     fn advance_to_next_in_queue(&mut self) -> bool {
         if let Some(next) = self.queue.pop_front() {
+            println!("advance_to_next_in_queue: {:?}", next.id);
             let duration = Duration::from_millis(next.duration_ms);
+
+            if let Some(finished) = self.current_song.take() {
+                self.history.push_back(finished);
+            }
 
             self.current_song = Some(next.clone());
             self.duration = Some(duration);
-            self.update_discord_song();
+            self.buffer_next_silent();
 
-            let cover_url = next.cover_url;
-            self.media_controls.update_metadata(MediaMetadata {
-                title: Some(&next.title),
-                artist: Some(&next.artist),
-                album: Some(&next.album),
-                duration: Some(duration),
-                cover_url: cover_url.as_deref(),
-            });
+            // self.update_discord_song();
+            // self.update_current_metadata();
+
             return true;
         }
         false
     }
 
+    fn update_current_metadata(&mut self) {
+        let Some(song) = &self.current_song else {
+            return;
+        };
+
+        let formatted_uri: String;
+
+        let uri_ref = if let Some(path) = &song.cover_url {
+            formatted_uri = Self::format_cover_path(path.clone());
+            Some(formatted_uri.as_str())
+        } else {
+            None
+        };
+
+        self.media_controls.update_metadata(MediaMetadata {
+            title: Some(&song.title),
+            artist: Some(&song.artist),
+            album: Some(&song.album),
+            duration: Some(Duration::from_millis(song.duration_ms)),
+            cover_url: uri_ref,
+        });
+    }
+
     fn buffer_next_silent(&mut self) {
         if let Some(next) = self.queue.front() {
+            println!("Silent buffer: {}, {:?}", next.title, next.id);
             if let Ok(file) = File::open(&next.path) {
                 if let Ok(source) = Decoder::try_from(file) {
                     self.player.append(source);
@@ -290,10 +297,29 @@ impl AudioPlayer {
         }
         self.buffer_next_silent();
         self.emit_state();
+        self.update_current_metadata();
+        self.update_discord_song();
     }
 
     pub fn previous(&mut self) {
-        println!("PREVIOUUS!!!! (unimplemented)")
+        if self.player.get_pos() > Duration::from_secs(5) {
+            if let Some(current) = self.current_song.clone() {
+                self.play(current);
+                return;
+            }
+        }
+
+        if let Some(prev_song) = self.history.pop_back() {
+            if let Some(current) = self.current_song.take() {
+                self.queue.push_front(current);
+            }
+
+            self.play(prev_song);
+        } else {
+            if let Some(current) = self.current_song.clone() {
+                self.play(current);
+            }
+        }
     }
 
     pub fn seek(&mut self, fraction: f32) {
@@ -323,6 +349,7 @@ impl AudioPlayer {
             target, remaining, duration
         );
         self.update_discord_song();
+        self.update_current_metadata();
     }
 
     pub fn position(&self) -> f32 {
@@ -392,7 +419,7 @@ impl AudioPlayer {
         #[cfg(target_os = "windows")]
         let cover_path = format!("file://{}", path.replace('/', "\\"));
         #[cfg(not(target_os = "windows"))]
-        let cover_path = format!("file://{}", path_str);
+        let cover_path = format!("file://{}", path);
 
         cover_path
     }
@@ -476,5 +503,14 @@ impl AudioPlayer {
 
         self.emit_state();
         Ok(())
+    }
+
+    pub fn set_history(&mut self, songs: VecDeque<Song>) {
+        println!("SETTING HISTORY: {:?}", songs);
+        self.history = songs;
+    }
+    pub fn set_queue(&mut self, songs: VecDeque<Song>) {
+        println!("SETTING QUEUE: {:?}", songs);
+        self.queue = songs;
     }
 }

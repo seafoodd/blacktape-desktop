@@ -9,7 +9,28 @@ import { HiOutlineMusicNote } from "react-icons/hi";
 
 const ArtistAlbums = () => {
   const { selectedTab, albums } = useLibraryStore();
-  const { play, currentSong, isPlaying } = useAudioStore();
+  const { startPlayback, currentSong, isPlaying } = useAudioStore();
+
+  const handlePlaySong = (clickedSongId: number) => {
+    // Flatten all songs from all albums into one continuous array
+    const allSongs = albums.flatMap((album) => album.songs);
+
+    // Find where the clicked song is in this master list
+    const currentIndex = allSongs.findIndex(
+      (song) => song.id === clickedSongId,
+    );
+
+    if (currentIndex === -1) return; // Safety check
+
+    // Everything before the clicked song (chronological order)
+    const historyIds = allSongs.slice(0, currentIndex).map((s) => s.id);
+
+    // Everything after the clicked song
+    const queueIds = allSongs.slice(currentIndex + 1).map((s) => s.id);
+
+    // Send it to the Tauri backend!
+    startPlayback(clickedSongId, queueIds, historyIds);
+  };
 
   return (
     <div className={styles.container}>
@@ -41,7 +62,7 @@ const ArtistAlbums = () => {
                       [styles.playing]:
                         currentSong && song.id == currentSong.id,
                     })}
-                    onClick={() => play(song.id)}
+                    onClick={() => handlePlaySong(song.id)}
                     key={song.id}
                   >
                     <div className={styles.songLeft}>

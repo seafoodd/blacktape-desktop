@@ -7,14 +7,19 @@ mod types;
 use crate::audio::media_controls::MediaControls;
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
+use crate::types::{Album, ArtistSummary};
 use audio::player::AudioPlayer;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
-use crate::types::{Album, ArtistSummary};
 
 #[command]
-async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio::sync::Mutex<Database>>) -> Result<Vec<Song>, String> {
+async fn scan_music(
+    dir: String,
+    app: tauri::AppHandle,
+    state: State<'_, tokio::sync::Mutex<Database>>,
+) -> Result<Vec<Song>, String> {
     let app_data = app.path().app_data_dir().unwrap();
     let covers_path = app_data.join("covers");
 
@@ -39,15 +44,18 @@ async fn scan_music(dir: String, app: tauri::AppHandle, state: State<'_,  tokio:
 // }
 
 #[command]
-async fn get_artists(state: State<'_, tokio::sync::Mutex<Database>>) -> Result<Vec<ArtistSummary>, String> {
+async fn get_artists(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+) -> Result<Vec<ArtistSummary>, String> {
     let db = state.lock().await;
-    db.get_artists_summary()
-        .await
-        .map_err(|e| e.to_string())
+    db.get_artists_summary().await.map_err(|e| e.to_string())
 }
 
 #[command]
-async fn get_artist_albums(state: State<'_, tokio::sync::Mutex<Database>>, artist_name: &str) -> Result<Vec<Album>, String> {
+async fn get_artist_albums(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    artist_name: &str,
+) -> Result<Vec<Album>, String> {
     let db = state.lock().await;
     db.get_artist_albums(artist_name)
         .await
@@ -55,20 +63,40 @@ async fn get_artist_albums(state: State<'_, tokio::sync::Mutex<Database>>, artis
 }
 
 #[command]
-async fn play_song(
+async fn start_playback(
     id: i64,
+    queue: Vec<i64>,
+    history: Vec<i64>,
     db_state: State<'_, tokio::sync::Mutex<Database>>,
-    player_state: State<'_, Mutex<AudioPlayer>>
+    player_state: State<'_, Mutex<AudioPlayer>>,
 ) -> Result<(), String> {
+    let db = db_state.lock().await;
+
     let song = {
-        let db = db_state.lock().await;
         db.get_song_by_id(id)
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Song not found in library".to_string())?
     };
 
+    let mut history_songs = VecDeque::new();
+    for id in history {
+        if let Ok(Some(s)) = db.get_song_by_id(id).await {
+            history_songs.push_back(s);
+        }
+    }
+
+    let mut queue_songs = VecDeque::new();
+    for id in queue {
+        if let Ok(Some(s)) = db.get_song_by_id(id).await {
+            queue_songs.push_back(s);
+        }
+    }
+
     let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    player.stop();
+    player.set_history(history_songs);
+    player.set_queue(queue_songs);
     player.play(song);
 
     Ok(())
@@ -96,6 +124,19 @@ fn stop(state: State<Mutex<AudioPlayer>>) {
 fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     player.seek(fraction);
+}
+
+#[command]
+fn next(state: State<Mutex<AudioPlayer>>) {
+    let mut player = state.lock().unwrap();
+    player.next()
+
+}
+
+#[command]
+fn previous(state: State<Mutex<AudioPlayer>>) {
+    let mut player = state.lock().unwrap();
+    player.previous()
 }
 
 #[command]
@@ -134,15 +175,16 @@ pub fn run() {
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
             app.manage(Mutex::new(audio_player));
 
-            let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
+            let app_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to get app data dir");
             if !app_dir.exists() {
                 std::fs::create_dir_all(&app_dir).expect("failed to create app data directory");
             }
             let db_path = app_dir.join("blacktape.db");
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
-            let db = tauri::async_runtime::block_on(async {
-                Database::new(db_path_str).await
-            });
+            let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
             app.manage(tokio::sync::Mutex::new(db));
 
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
@@ -167,11 +209,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             scan_music,
-            play_song,
+            start_playback,
             pause,
             resume,
             stop,
             seek,
+            next,
+            previous,
             get_is_paused,
             get_position,
             toggle,
