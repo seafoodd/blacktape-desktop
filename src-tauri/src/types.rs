@@ -12,6 +12,7 @@ pub struct Song {
     pub genre: Option<String>,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
+    pub external_cover_url: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

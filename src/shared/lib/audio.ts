@@ -11,6 +11,7 @@ export type Song = {
   genre?: string;
   release_year?: string;
   cover_url?: string;
+  external_cover_url?: string;
   cover?: number[] | null;
 };
 
@@ -29,13 +30,13 @@ export type Album = {
 export const scanMusic = (dir: string): Promise<Song[]> =>
   invoke<Song[]>("scan_music", { dir });
 
-export const getArtists = (query?: string): Promise<ArtistSummary[]> =>{
+export const getArtists = (query?: string): Promise<ArtistSummary[]> => {
   if (query) console.log("Queries not supported");
   return invoke<ArtistSummary[]>("get_artists");
-}
+};
 
 export const getArtistAlbums = (artistName: string): Promise<Album[]> =>
-  invoke<Album[]>("get_artist_albums", {artistName});
+  invoke<Album[]>("get_artist_albums", { artistName });
 
 export const playSong = (id: number): Promise<void> =>
   invoke("play_song", { id });

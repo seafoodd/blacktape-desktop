@@ -17,7 +17,7 @@ impl Database {
         sqlx::query_as::<_, Song>(
             "SELECT
                 id, path, title, artist, album, track_number,
-                duration_ms, cover_url, genre, release_year
+                duration_ms, cover_url, external_cover_url, genre, release_year
              FROM songs
              ORDER BY artist ASC, album ASC, track_number ASC"
         )
@@ -64,6 +64,15 @@ impl Database {
         Ok(albums)
     }
 
+    pub async fn update_external_cover(&self, id: i64, url: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE songs SET external_cover_url = ? WHERE id = ?")
+            .bind(url)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO songs (path, title, artist, album, track_number, duration_ms, cover_url)
@@ -88,8 +97,8 @@ impl Database {
 
         for song in songs {
             sqlx::query(
-                "INSERT INTO songs (path, title, artist, album, track_number, duration_ms, cover_url, genre, release_year)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO songs (path, title, artist, album, track_number, duration_ms, cover_url, external_cover_url, genre, release_year)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 artist = excluded.artist,
@@ -97,6 +106,7 @@ impl Database {
                 track_number = excluded.track_number,
                 duration_ms = excluded.duration_ms,
                 cover_url = excluded.cover_url,
+                external_cover_url = excluded.external_cover_url,
                 genre = excluded.genre,
                 release_year = excluded.release_year"
             )
@@ -107,6 +117,7 @@ impl Database {
                 .bind(song.track_number)
                 .bind(song.duration_ms as i64)
                 .bind(&song.cover_url)
+                .bind(&song.external_cover_url)
                 .bind(&song.genre)
                 .bind(&song.release_year)
                 .execute(&mut *tx)
@@ -120,7 +131,7 @@ impl Database {
 
     pub async fn get_song_by_id(&self, id: i64) -> Result<Option<Song>, sqlx::Error> {
         let song = sqlx::query_as::<_, Song>(
-            "SELECT id, path, title, artist, album, track_number, duration_ms, cover_url, genre, release_year
+            "SELECT id, path, title, artist, album, track_number, duration_ms, cover_url, external_cover_url, genre, release_year
              FROM songs
              WHERE id = ?"
         )

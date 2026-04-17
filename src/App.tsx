@@ -45,20 +45,11 @@ function App() {
 
         {/* Main Content */}
         <main className={styles.main}>
-          {/*<ul className={styles.songs}>*/}
-          {/*  {songs.map((song, i) => (*/}
-          {/*    <li className={styles.song} key={i} onClick={() => play(song)}>*/}
-          {/*      <strong>{song.title}</strong> — {song.artist}*/}
-          {/*      <br />*/}
-          {/*      <small>{song.album}</small>*/}
-          {/*    </li>*/}
-          {/*  ))}*/}
-          {/*</ul>*/}
-          <ArtistAlbums/>
+          <ArtistAlbums />
         </main>
       </div>
 
-      {/* Footer with player controls */}
+      {/* Footer */}
       <footer className={styles.footer}>
         <PlayerControls />
       </footer>

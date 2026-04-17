@@ -84,6 +84,7 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             genre: tag.genre().map(|g| g.to_string()),
             release_year: tag.date().map(|d| d.year as i32),
             cover_url,
+            external_cover_url: None,
         };
         println!(
             "Scanned song: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
@@ -97,7 +98,6 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
 }
 
 pub fn get_song_from_path(path: &str) -> Option<Song> {
-    // Read metadata using lofty
     println!("get song from path");
     let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
         Ok(f) => f,
@@ -107,10 +107,8 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
         }
     };
 
-    // Get the primary tag if available
     let tag = tagged_file.primary_tag();
 
-    // Build Song struct
     let song = Song {
         id: None,
         path: path.to_string(),
@@ -128,6 +126,7 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
         genre: None,
         release_year: None,
         cover_url: None,
+        external_cover_url: None,
     };
 
     Some(song)

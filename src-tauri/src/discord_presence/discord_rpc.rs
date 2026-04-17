@@ -1,3 +1,5 @@
+use crate::db::db::Database;
+use crate::{discord_presence::cover_fetcher::CoverFetcher, types::Song};
 use discord_rich_presence::{
     activity::{self, Activity, Assets, Timestamps},
     DiscordIpc, DiscordIpcClient,
@@ -6,8 +8,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
-use crate::{discord_presence::cover_fetcher::CoverFetcher, types::Song};
+use tauri::{AppHandle, Manager};
 
 const CLIENT_ID: &str = "1490382526169219342";
 const SOURCE_CODE_URL: &str = "https://github.com/seafoodd/blacktape-desktop";
@@ -61,44 +62,22 @@ where
 pub struct DiscordRpcClient {
     client: DiscordIpcClient,
     activity: Activity<'static>,
-    is_connected: bool,
+    pub is_connected: bool,
     cover_fetcher: CoverFetcher,
+    handle: AppHandle,
 }
 
 impl DiscordRpcClient {
-    pub fn new() -> Result<Self> {
-        // println!("Connecting to Discord RPC...");
-
-        let mut client = DiscordIpcClient::new(CLIENT_ID);
-        retry(
-            || {
-                client
-                    .connect()
-                    .map_err(|e| RpcError::ConnectError(format!("{:?}", e)))
-            },
-            MAX_RETRIES,
-            RETRY_DELAY,
-        )?;
-        // println!("Connected to Discord IPC");
-
+    pub fn new(handle: AppHandle) -> Result<Self> {
+        let client = DiscordIpcClient::new(CLIENT_ID);
         let activity = Self::build_initial_activity()?;
-
-        retry(
-            || {
-                client
-                    .set_activity(activity.clone())
-                    .map_err(|e| RpcError::ActivityError(format!("{:?}", e)))
-            },
-            MAX_RETRIES,
-            RETRY_DELAY,
-        )?;
-        // println!("Discord Rich Presence initialized");
 
         Ok(Self {
             client,
             activity,
-            is_connected: true,
+            is_connected: false,
             cover_fetcher: CoverFetcher::new(),
+            handle,
         })
     }
 
@@ -108,38 +87,37 @@ impl DiscordRpcClient {
             .name(APP_NAME))
     }
 
-    pub fn update_timestamps(&mut self, position_ms: i64, duration_ms: i64) -> Result<()> {
+    pub fn update_song(&mut self, song: &Song, duration_ms: i64, position_ms: i64) -> Result<()> {
         let now = current_timestamp_ms()?;
 
         let timestamps = Timestamps::new()
             .start(now - position_ms)
             .end(now + duration_ms - position_ms);
 
-        let activity = self.activity.clone().timestamps(timestamps);
-        retry(
-            || {
-                self.client
-                    .set_activity(activity.clone())
-                    .map_err(|e| RpcError::ActivityError(format!("{:?}", e)))
-            },
-            MAX_RETRIES,
-            RETRY_DELAY,
-        )?;
-        Ok(())
-    }
+        let mut cover_url = song.external_cover_url.clone();
 
-    pub fn update_song(&mut self, song: &Song, duration_ms: i64) -> Result<()> {
-        let now = current_timestamp_ms()?;
+        if cover_url.is_none() {
+            if let Some(fetched_url) = self.cover_fetcher.fetch_cover_url(song) {
+                cover_url = Some(fetched_url.clone());
+                let Some(song_id) = song.id else { return Ok(()) };
+                let handle = self.handle.clone();
+                let url_to_save = fetched_url.clone();
 
-        let timestamps = Timestamps::new().start(now).end(now + duration_ms);
-        let cover_url = {
-            self.cover_fetcher
-                .fetch_cover_url(song)
-                .unwrap_or_else(|| "album_generic".to_string())
-        };
+                tauri::async_runtime::spawn(async move {
+                    let db_state = handle.state::<tokio::sync::Mutex<Database>>();
+                    let db = db_state.lock().await;
+
+                    if let Err(e) = db.update_external_cover(song_id, &url_to_save).await {
+                        eprintln!("Failed to save cover to DB: {}", e);
+                    }
+                });
+            }
+        }
+
+        let final_cover_url = cover_url.unwrap_or_else(|| "album_generic".to_string());
 
         let assets = Assets::new()
-            .large_image(cover_url.to_string())
+            .large_image(final_cover_url)
             .large_url(SOURCE_CODE_URL)
             .large_text(song.album.to_string()); // second description line
                                                  // .small_image(APP_IMAGE_URL)

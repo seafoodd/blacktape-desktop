@@ -1,6 +1,5 @@
 use crate::{
     audio::media_controls::MediaControls,
-    discord_presence,
     types::{PlayerState, Song},
 };
 use rodio::cpal::{
@@ -12,6 +11,7 @@ use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
 use std::{collections::VecDeque, fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
+use crate::discord_presence::DiscordRpcClient;
 
 pub struct AudioPlayer {
     _sink: MixerDeviceSink,
@@ -322,7 +322,7 @@ impl AudioPlayer {
             "seeking: {:?}, REMAININGGGGGGG {:?}, duration: {:?}",
             target, remaining, duration
         );
-        self.update_discord_timestamp()
+        self.update_discord_song();
     }
 
     pub fn position(&self) -> f32 {
@@ -397,42 +397,47 @@ impl AudioPlayer {
         cover_path
     }
 
-    fn update_discord_timestamp(&self) {
-        if let Ok(mut discord) = self
-            .handle
-            .state::<Mutex<discord_presence::DiscordRpcClient>>()
-            .try_lock()
-        {
-            if let Some(duration) = self.duration {
-                let pos_ms = self.player.get_pos().as_millis() as i64;
-                let duration_ms = duration.as_millis() as i64;
-
-                if let Err(e) = discord.update_timestamps(pos_ms, duration_ms) {
-                    eprintln!("Failed to update Discord timestamps: {}", e);
-                }
-            }
-        }
-    }
-
     fn update_discord_song(&self) {
         let song_data = match &self.current_song {
             Some(song) => (song.clone(), self.duration),
             None => return,
         };
 
+        let pos_ms = self.player.get_pos().as_millis() as i64;
         let handle = self.handle.clone();
+        let handle_clone = self.handle.clone();
 
-        let _ = tauri::async_runtime::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let (song, duration) = song_data;
             let duration_ms = duration.map(|d| d.as_millis() as i64).unwrap_or(0);
 
             let _ = tauri::async_runtime::spawn_blocking(move || {
-                let discord_guard = handle.state::<Mutex<discord_presence::DiscordRpcClient>>();
-                let mut discord = discord_guard.lock().unwrap();
-                discord.update_song(&song, duration_ms)
-            })
-            .await
-            .map_err(|e| eprintln!("Discord RPC task failed: {}", e));
+                let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
+                let mut lock = state.lock().unwrap();
+
+                if lock.is_none() {
+                    match DiscordRpcClient::new(handle_clone) {
+                        Ok(client) => *lock = Some(client),
+                        Err(e) => {
+                            eprintln!("Failed to create Discord client: {}", e);
+                            return;
+                        }
+                    }
+                }
+
+                if let Some(ref mut discord) = *lock {
+                    if !discord.is_connected() {
+                        if let Err(_) = discord.reconnect() {
+                            return;
+                        }
+                    }
+
+                    if let Err(e) = discord.update_song(&song, duration_ms, pos_ms) {
+                        eprintln!("Discord update failed, disconnecting: {}", e);
+                        discord.is_connected = false;
+                    }
+                }
+            });
         });
     }
 
@@ -469,7 +474,6 @@ impl AudioPlayer {
 
         self.current_device_id = Self::get_default_device_id().ok();
 
-        // println!("Successfully reconnected and restored audio state!");
         self.emit_state();
         Ok(())
     }

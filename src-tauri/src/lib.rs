@@ -124,6 +124,7 @@ pub fn run() {
                 .add_migrations("sqlite:blacktape.db", get_migrations())
                 .build(),
         )
+        .manage(Mutex::new(None::<discord_presence::DiscordRpcClient>))
         .setup(|app| {
             let window: WebviewWindow = app
                 .get_webview_window("main")
@@ -143,16 +144,6 @@ pub fn run() {
                 Database::new(db_path_str).await
             });
             app.manage(tokio::sync::Mutex::new(db));
-
-            match discord_presence::DiscordRpcClient::new() {
-                Ok(client) => {
-                    app.manage(Mutex::new(client));
-                    println!("Discord RPC managed");
-                }
-                Err(e) => {
-                    eprintln!("Discord RPC disabled: {}", e);
-                }
-            }
 
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
                 let handle = app_handle.clone();

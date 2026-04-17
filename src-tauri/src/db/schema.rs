@@ -14,6 +14,7 @@ pub fn get_migrations() -> Vec<Migration> {
                 track_number INTEGER,
                 duration_ms INTEGER NOT NULL,
                 cover_url TEXT,
+                external_cover_url TEXT,
                 source_url TEXT,
                 genre TEXT,
                 release_year INTEGER,
