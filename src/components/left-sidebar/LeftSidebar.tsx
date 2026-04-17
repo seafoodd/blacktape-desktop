@@ -30,9 +30,17 @@ const LeftSidebar = () => {
   );
 
   useEffect(() => {
-    window.addEventListener("mousemove", resize);
-    window.addEventListener("mouseup", stopResizing);
+    if (isResizing) {
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+
+      window.addEventListener("mousemove", resize);
+      window.addEventListener("mouseup", stopResizing);
+    }
     return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+
       window.removeEventListener("mousemove", resize);
       window.removeEventListener("mouseup", stopResizing);
     };
@@ -70,7 +78,9 @@ const LeftSidebar = () => {
                 />
               )}
               <div className={styles.artistInfo}>
-                <span className={clsx(styles.artistName, "truncate")}>{artist.name}</span>
+                <span className={clsx(styles.artistName, "truncate")}>
+                  {artist.name}
+                </span>
                 <span className={styles.albumCount}>
                   {artist.album_count} Albums
                 </span>

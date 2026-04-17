@@ -69,6 +69,16 @@ ul {
     scroll-behavior: smooth;
 }
 
+::selection {
+    background-color: var(--color-primary);
+    color: #ffffff;
+}
+
+::-moz-selection {
+    background-color: var(--color-primary);
+    color: #ffffff;
+}
+
 /*!* Legacy WebKit (Older Chrome, Safari, and Tauri's WebView2/WebKit) *!*/
 /*!* This ensures the look is consistent even if the standard properties aren't fully parsed *!*/
 /*::-webkit-scrollbar {*/
