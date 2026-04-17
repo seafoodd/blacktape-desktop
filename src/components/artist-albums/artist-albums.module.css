@@ -2,7 +2,7 @@
 }
 
 .artistName {
-    font-size: 24px;
+    font-size: 22px;
     line-height: 1.5;
     border-bottom: 1px solid rgb(169 169 169 / 0.2);
     margin-bottom: 12px;
@@ -22,7 +22,7 @@
 
 .albumBlockLeft {
     /*height: 100%;*/
-    max-width: 300px;
+    max-width: 200px;
     min-width: 120px;
 }
 
@@ -45,10 +45,7 @@
 }
 
 .albumTitle {
-    font-size: 24px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 20px;
 }
 
 .songs {
@@ -74,12 +71,13 @@
     &.playing {
         background-color: rgb(160 66 251 / 0.5);
     }
+    font-size: 14px;
 }
 
 .songLeft {
     display: flex;
-    padding-left: 30px;
-    gap: 20px;
+    padding-left: 8px;
+    gap: 16px;
     align-items: center;
     justify-content: start;
 
@@ -98,10 +96,6 @@
 }
 
 .songTitle {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-
     flex: 1;
     min-width: 0;
 }

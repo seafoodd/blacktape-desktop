@@ -70,7 +70,7 @@ const LeftSidebar = () => {
                 />
               )}
               <div className={styles.artistInfo}>
-                <span className={styles.artistName}>{artist.name}</span>
+                <span className={clsx(styles.artistName, "truncate")}>{artist.name}</span>
                 <span className={styles.albumCount}>
                   {artist.album_count} Albums
                 </span>

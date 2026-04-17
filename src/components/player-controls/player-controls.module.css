@@ -81,11 +81,13 @@
 .currentSongBlock {
     position: absolute;
     top: 50%;
-    left: 48%;
+    left: 50%;
     transform: translate(-50%, -50%);
 
     display: flex;
     gap: 12px;
+    max-width: 40vw;
+    overflow: hidden;
 }
 
 .currentSongCover {
@@ -99,12 +101,14 @@
     justify-content: center;
     line-height: 1;
     gap: 4px;
+    min-width: 0;
 }
 
 .currentSongTitle {
     font-size: 16px;
     font-weight: 600;
 }
+
 .currentSongArtist {
     color: var(--color-muted);
     font-size: 16px;

@@ -111,10 +111,10 @@ const PlayerControls = () => {
                 />
               )}
               <div className={styles.currentSongDetails}>
-                <div className={styles.currentSongTitle}>
+                <div className={clsx(styles.currentSongTitle, "truncate")}>
                   {currentSong.title}
                 </div>
-                <div className={styles.currentSongArtist}>
+                <div className={clsx(styles.currentSongArtist, "truncate")}>
                   {[
                     currentSong.artist,
                     currentSong.album,

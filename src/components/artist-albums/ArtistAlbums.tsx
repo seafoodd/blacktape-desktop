@@ -12,29 +12,32 @@ const ArtistAlbums = () => {
   const { startPlayback, currentSong, isPlaying } = useAudioStore();
 
   const handlePlaySong = (clickedSongId: number) => {
-    // Flatten all songs from all albums into one continuous array
     const allSongs = albums.flatMap((album) => album.songs);
 
-    // Find where the clicked song is in this master list
     const currentIndex = allSongs.findIndex(
       (song) => song.id === clickedSongId,
     );
+    if (currentIndex === -1) return;
 
-    if (currentIndex === -1) return; // Safety check
-
-    // Everything before the clicked song (chronological order)
     const historyIds = allSongs.slice(0, currentIndex).map((s) => s.id);
-
-    // Everything after the clicked song
     const queueIds = allSongs.slice(currentIndex + 1).map((s) => s.id);
 
-    // Send it to the Tauri backend!
-    startPlayback(clickedSongId, queueIds, historyIds);
+    startPlayback(clickedSongId, queueIds, historyIds).catch((e) =>
+      console.log("startPlayback error: ", e),
+    );
   };
+
+  // useEffect(() => {
+  //   setSelectedTab("")
+  // }, []);
+
+  if (!selectedTab) {
+    return;
+  }
 
   return (
     <div className={styles.container}>
-      <h1 className={styles.artistName}>{selectedTab}</h1>
+      <h1 className={clsx(styles.artistName, "truncate")}>{selectedTab}</h1>
       <div className={styles.albums}>
         {albums.map((album) => (
           <section className={styles.albumBlock} key={album.title}>
@@ -54,7 +57,7 @@ const ArtistAlbums = () => {
               )}
             </div>
             <div className={styles.albumBlockRight}>
-              <h2 className={styles.albumTitle}>{album.title}</h2>
+              <h2 className={clsx(styles.albumTitle, "truncate")}>{album.title}</h2>
               <ul className={styles.songs}>
                 {album.songs.map((song) => (
                   <button
@@ -76,7 +79,7 @@ const ArtistAlbums = () => {
                           </>
                         </div>
                       )}
-                      <div className={styles.songTitle}>{song.title}</div>
+                      <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
                     </div>
                     <div className={styles.songDuration}>
                       {formatDuration(song.duration_ms)}
