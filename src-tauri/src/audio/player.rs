@@ -10,8 +10,15 @@ use rodio::cpal::{
 };
 use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
+use std::time::Instant;
 use std::{collections::VecDeque, fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
+
+enum RepeatMode {
+    Off,
+    Track,
+    Queue,
+}
 
 pub struct AudioPlayer {
     _sink: MixerDeviceSink,
@@ -88,7 +95,7 @@ impl AudioPlayer {
                 let state = handle.state::<Mutex<AudioPlayer>>();
 
                 let needs_emit = {
-                    let mut player = state.lock().unwrap();
+                    let mut player = state.lock().unwrap_or_else(|e| e.into_inner());
 
                     if player.is_paused() {
                         false
@@ -99,6 +106,7 @@ impl AudioPlayer {
                         if let Some(duration) = player.duration {
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 // println!("start seamless transition");
+                                player.buffer_next_silent();
                                 is_next = player.advance_to_next_in_queue();
                                 // println!("seamless transition IS NEXT: {}", is_next);
 
@@ -114,7 +122,8 @@ impl AudioPlayer {
                     // println!("sleeping for {:#?}", sleep_time);
                     tokio::time::sleep(sleep_time).await;
 
-                    let mut player = state.lock().unwrap();
+                    let mut player = state.lock().unwrap_or_else(|e| e.into_inner());
+
                     if !is_next {
                         player.pause();
                         player.stop();
@@ -146,13 +155,25 @@ impl AudioPlayer {
     pub fn play(&mut self, song: Song) {
         println!("Playing {}, {:#?}", song.title, song.duration_ms);
         let path = &song.path;
-        let file = File::open(&path).expect("failed to open file");
-        let source = Decoder::try_from(file).expect("failed to decode audio");
+        let file = match File::open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error: Could not open file {}: {}", path, e);
+                return;
+            }
+        };
+        let source = match Decoder::try_from(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error: Failed to decode audio for {}: {}", path, e);
+                return;
+            }
+        };
         self.duration = source.total_duration();
 
         self.player.clear();
         self.player.append(source);
-        self.buffer_next_silent();
+        // self.buffer_next_silent();
 
         // self.clear_queue();
 
@@ -245,7 +266,6 @@ impl AudioPlayer {
 
             self.current_song = Some(next.clone());
             self.duration = Some(duration);
-            self.buffer_next_silent();
 
             // self.update_discord_song();
             // self.update_current_metadata();
@@ -279,6 +299,7 @@ impl AudioPlayer {
     }
 
     fn buffer_next_silent(&mut self) {
+        let now = Instant::now();
         if let Some(next) = self.queue.front() {
             println!("Silent buffer: {}, {:?}", next.title, next.id);
             if let Ok(file) = File::open(&next.path) {
@@ -287,15 +308,16 @@ impl AudioPlayer {
                 }
             }
         }
+        println!("BUFFERING TOOK: {:#?}", now.elapsed())
     }
 
     pub fn next(&mut self) {
         self.player.skip_one();
+        self.buffer_next_silent();
         if !self.advance_to_next_in_queue() {
             self.pause();
             self.stop();
         }
-        self.buffer_next_silent();
         self.emit_state();
         self.update_current_metadata();
         self.update_discord_song();

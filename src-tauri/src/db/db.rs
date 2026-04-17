@@ -136,9 +136,27 @@ impl Database {
              WHERE id = ?"
         )
             .bind(id)
-            .fetch_optional(&self.pool) // returns None if no song is found
+            .fetch_optional(&self.pool)
             .await?;
 
         Ok(song)
+    }
+
+    pub async fn delete_songs(&self, ids: Vec<i64>) -> Result<(), sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for id in ids {
+            sqlx::query("DELETE FROM songs WHERE id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 }

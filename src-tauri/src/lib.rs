@@ -20,18 +20,39 @@ async fn scan_music(
     app: tauri::AppHandle,
     state: State<'_, tokio::sync::Mutex<Database>>,
 ) -> Result<Vec<Song>, String> {
+    if !std::path::Path::new(&dir).exists() {
+        return Err("Directory not found. Please check if the path exists".into());
+    }
+
     let app_data = app.path().app_data_dir().unwrap();
     let covers_path = app_data.join("covers");
 
-    let songs = music::scan::scan_music_dir(dir, covers_path);
-
     let db = state.lock().await;
+
+    let current_db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
+    let mut ids_to_remove = Vec::new();
+
+    for song in current_db_songs {
+        if !std::path::Path::new(&song.path).exists() {
+            if let Some(id) = song.id {
+                ids_to_remove.push(id);
+            }
+        }
+    }
+
+    if !ids_to_remove.is_empty() {
+        println!("Pruning {} missing songs...", ids_to_remove.len());
+        db.delete_songs(ids_to_remove)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let songs = music::scan::scan_music_dir(dir, covers_path);
     db.insert_songs(songs.clone())
         .await
         .map_err(|e| e.to_string())?;
 
     let db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
-
     Ok(db_songs)
 }
 //
@@ -130,7 +151,6 @@ fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
 fn next(state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     player.next()
-
 }
 
 #[command]

@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
 use crate::types::Song;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
@@ -17,7 +17,8 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
         let path = entry.path();
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !["mp3", "flac", "ogg", "wav"].contains(&ext) {
+
+        if !["mp3", "flac", "ogg", "wav", "m4a", "aiff"].contains(&ext) {
             continue;
         }
 
@@ -29,66 +30,98 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             }
         };
 
-        let tag = match tagged_file.primary_tag() {
-            Some(t) => t,
-            None => continue,
-        };
+        let tag = tagged_file.primary_tag().or(tagged_file.first_tag());
+
+        let title = tag
+            .and_then(|t| t.title().map(|s| s.to_string()))
+            .unwrap_or_else(|| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Unknown Track")
+                    .to_string()
+            });
+
+        let artist = tag
+            .and_then(|t| t.artist().map(|s| s.to_string()))
+            .unwrap_or_else(|| "Unknown Artist".to_string());
+
+        let album = tag
+            .and_then(|t| t.album())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Unknown Album".to_string());
 
         let mut cover_url = None;
 
-        if let Some(pic) = tag.pictures().first() {
-            let data = pic.data();
-            let mime = pic.mime_type()
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "image/jpeg".to_string());
+        if let Some(parent) = path.parent() {
+            let common_names = [
+                "cover.jpg",
+                "cover.png",
+                "folder.jpg",
+                "front.jpg",
+                "front.png",
+            ];
 
-            // Fix Cow mismatch: convert both to a standard String for the key
-            let artist = tag.artist().map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
-            let album = tag.album().map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
-            let album_key = format!("{}{}", artist, album);
-
-            // Fix Hash Formatting
-            let mut hasher = Sha256::new();
-            hasher.update(album_key.as_bytes());
-            let hash_result = hasher.finalize();
-            let hash = hash_result
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>();
-
-            let ext = if mime.contains("png") { "png" } else { "jpg" };
-            let filename = format!("{}.{}", hash, ext);
-            let full_path = covers_dir.join(&filename);
-
-            if !full_path.exists() {
-                let _ = fs::write(&full_path, data);
+            for name in common_names {
+                let potential_cover = parent.join(name);
+                if potential_cover.exists() {
+                    cover_url = Some(potential_cover.to_string_lossy().to_string());
+                    break;
+                }
             }
+        }
 
-            cover_url = Some(full_path.to_string_lossy().to_string());
+        if cover_url.is_none() {
+            if let Some(t) = tag {
+                if let Some(pic) = t.pictures().first() {
+                    let data = pic.data();
+                    let mime = pic.mime_type()
+                        .map(|m| m.as_str())
+                        .unwrap_or("image/jpeg");
+
+                    let album_key = format!("{}{}", artist, album);
+
+                    let mut hasher = Sha256::new();
+                    hasher.update(album_key.as_bytes());
+                    let hash_result = hasher.finalize();
+                    let hash = hash_result
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>();
+
+                    let pic_ext = if mime.contains("png") { "png" } else { "jpg" };
+                    let filename = format!("{}.{}", hash, pic_ext);
+                    let full_path = covers_dir.join(&filename);
+
+                    if !full_path.exists() {
+                        let _ = fs::write(&full_path, data);
+                    }
+                    cover_url = Some(full_path.to_string_lossy().to_string());
+                }
+            }
         }
 
         let song = Song {
             id: None,
             path: path.to_string_lossy().to_string(),
-            title: tag
-                .title()
-                .map_or("Unknown Title".to_string(), |s| s.to_string()),
-            artist: tag
-                .artist()
-                .map_or("Unknown Artist".to_string(), |s| s.to_string()),
-            album: tag
-                .album()
-                .map_or("Unknown Album".to_string(), |s| s.to_string()),
+            title,
+            artist,
+            album,
             duration_ms: tagged_file.properties().duration().as_millis() as u64,
-            track_number: tag.track().map(|n| n as i32),
-            genre: tag.genre().map(|g| g.to_string()),
-            release_year: tag.date().map(|d| d.year as i32),
+            track_number: tag.and_then(|t| t.track()).map(|n| n as i32),
+            genre: tag.and_then(|t| t.genre()).map(|g| g.to_string()),
+            release_year: tag.and_then(|t| t.date()).map(|d| d.year as i32),
             cover_url,
             external_cover_url: None,
         };
         println!(
             "Scanned song: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
-            song.title, song.artist, song.album, song.duration_ms, song.track_number, song.genre, song.release_year
+            song.title,
+            song.artist,
+            song.album,
+            song.duration_ms,
+            song.track_number,
+            song.genre,
+            song.release_year
         );
 
         songs.push(song);
