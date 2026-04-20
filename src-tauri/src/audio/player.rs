@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use souvlaki::MediaMetadata;
 use std::time::Instant;
 use std::{fs::File, sync::Mutex, time::Duration};
+use rand::rng;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,7 +280,7 @@ impl AudioPlayer {
         self.cursor = Some(current_index);
 
         if self.shuffle_mode {
-            self.apply_shuffle_to_future();
+            self.apply_shuffle_to_queue();
         }
         self.stop();
         if let (Some(order), Some(cursor)) = (&self.play_order, self.cursor) {
@@ -330,7 +331,7 @@ impl AudioPlayer {
             self.shuffle_mode = false;
         } else {
             self.shuffle_mode = true;
-            self.apply_shuffle_to_future();
+            self.apply_shuffle_to_queue();
         }
         self.emit_state();
     }
@@ -339,12 +340,14 @@ impl AudioPlayer {
         self.repeat_mode = repeat_mode;
     }
 
-    fn apply_shuffle_to_future(&mut self) {
+    fn apply_shuffle_to_queue(&mut self) {
         if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
-            if cursor + 1 < order.len() {
-                let future = &mut order[cursor + 1..];
-                future.shuffle(&mut rand::rng());
-            }
+            let current_idx = order.remove(cursor);
+            let mut rng = rng();
+            order.shuffle(&mut rng);
+            order.insert(0, current_idx);
+            self.cursor = Some(0);
+            println!("SHSHSHSHSHSHS, {:?}", order);
         }
     }
 
