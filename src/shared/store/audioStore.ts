@@ -1,13 +1,16 @@
 import { create } from "zustand";
-import { setVolume, Song, toggleShuffle } from "../lib/audio";
 import {
-  startPlayback as tauriStartPlayback,
-  seek as tauriSeek,
-  toggle as tauriToggle,
-  pause as tauriPause,
-  next as tauriNext,
-  previous as tauriPrevious,
   getPosition,
+  next as tauriNext,
+  pause as tauriPause,
+  previous as tauriPrevious,
+  RepeatMode,
+  seek as tauriSeek, setRepeatMode,
+  setVolume,
+  Song,
+  startPlayback as tauriStartPlayback,
+  toggle as tauriToggle,
+  toggleShuffle
 } from "../lib/audio";
 import { listen } from "@tauri-apps/api/event";
 
@@ -18,11 +21,13 @@ interface AudioState {
   volume: number;
   isPlaying: boolean;
   shuffleMode: boolean;
+  repeatMode: RepeatMode;
 
   setSongs: (songs: Song[]) => void;
   startPlayback: (queue: number[], current_index: number) => Promise<void>;
   togglePlay: () => Promise<void>;
   toggleShuffle: () => Promise<void>;
+  cycleRepeatMode: () => Promise<void>;
   setProgress: (value: number) => void;
   setVolume: (value: number) => void;
   seek: (fraction: number) => Promise<void>;
@@ -39,6 +44,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   volume: 0,
   isPlaying: false,
   shuffleMode: false,
+  repeatMode: RepeatMode.Off,
 
   setSongs: (songs) => set({ songs }),
 
@@ -60,7 +66,16 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     set((state) => ({
       shuffleMode: !state.shuffleMode,
     }));
-    toggleShuffle()
+    toggleShuffle();
+  },
+
+  cycleRepeatMode: async () => {
+    const current = get().repeatMode;
+    const repeatOrder = Object.values(RepeatMode);
+    const nextMode =
+      repeatOrder[(repeatOrder.indexOf(current) + 1) % repeatOrder.length];
+    set({ repeatMode: nextMode });
+    setRepeatMode(nextMode);
   },
 
   pause: async () => {
@@ -106,6 +121,7 @@ if (typeof window !== "undefined") {
       progress: state.progress,
       volume: state.volume,
       shuffleMode: state.shuffle_mode,
+      repeatMode: state.repeat_mode
     });
   });
 }

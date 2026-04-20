@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { seek } from "@/shared/lib/audio.ts";
+import { RepeatMode, seek } from "@/shared/lib/audio.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
@@ -7,6 +7,7 @@ import {
   MdPause,
   MdPlayArrow,
   MdRepeat,
+  MdRepeatOne,
   MdShuffle,
   MdSkipNext,
   MdSkipPrevious,
@@ -31,7 +32,9 @@ const PlayerControls = () => {
     previous,
     updateProgress,
     shuffleMode,
-    toggleShuffle
+    toggleShuffle,
+    cycleRepeatMode,
+    repeatMode,
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [mutedVolume, setMutedVolume] = useState<number>(volume);
@@ -145,10 +148,24 @@ const PlayerControls = () => {
         </div>
 
         <div className={styles.rightControls}>
-          <button className={styles.rightControl}>
-            <MdRepeat size={60} />
+          <button
+            onClick={cycleRepeatMode}
+            className={clsx(styles.rightControl, {
+              [styles.rightControlActive]: repeatMode !== RepeatMode.Off,
+            })}
+          >
+            {repeatMode === RepeatMode.Track ? (
+              <MdRepeatOne size={60} />
+            ) : (
+              <MdRepeat size={60} />
+            )}
           </button>
-          <button onClick={toggleShuffle} className={clsx(styles.rightControl, {[styles.rightControlActive]: shuffleMode})}>
+          <button
+            onClick={toggleShuffle}
+            className={clsx(styles.rightControl, {
+              [styles.rightControlActive]: shuffleMode,
+            })}
+          >
             <MdShuffle size={60} />
           </button>
           <button className={styles.rightControl} onClick={handleMute}>

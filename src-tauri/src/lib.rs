@@ -12,6 +12,7 @@ use audio::player::AudioPlayer;
 use std::sync::Mutex;
 use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
+use crate::audio::player::RepeatMode;
 
 #[command]
 async fn scan_music(
@@ -101,7 +102,7 @@ async fn start_playback(
     if master_songs.is_empty() {
         return Err("Queue is empty or songs could not be loaded".to_string());
     }
-    
+
     let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
 
     player.start_playback(master_songs, current_index);
@@ -189,6 +190,13 @@ fn toggle_shuffle(state: State<Mutex<AudioPlayer>>) {
     player.toggle_shuffle();
 }
 
+#[command]
+fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
+    let mut player = state.lock().unwrap();
+    println!("Setting repeat mode to: {:?}", repeat_mode);
+    player.set_repeat_mode(repeat_mode);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -256,7 +264,8 @@ pub fn run() {
             set_volume,
             get_volume,
             fetch_state,
-            toggle_shuffle
+            toggle_shuffle,
+            set_repeat_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

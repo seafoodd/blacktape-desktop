@@ -27,6 +27,12 @@ export type Album = {
   songs: Song[];
 };
 
+export enum RepeatMode {
+  Off = "Off",
+  Queue = "Queue",
+  Track = "Track",
+}
+
 export const scanMusic = (dir: string): Promise<Song[]> =>
   invoke<Song[]>("scan_music", { dir });
 
@@ -76,4 +82,8 @@ export const fetchState = (): void => {
 };
 export const toggleShuffle = (): void => {
   invoke("toggle_shuffle");
+};
+
+export const setRepeatMode = (repeatMode: RepeatMode): void => {
+  invoke("set_repeat_mode", { repeatMode: repeatMode });
 };

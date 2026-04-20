@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::audio::player::RepeatMode;
 
 #[derive(Serialize, Debug, Deserialize, Clone, sqlx::FromRow)]
 pub struct Song {
@@ -22,6 +23,7 @@ pub struct PlayerState {
     pub progress: f32,
     pub volume: f32,
     pub shuffle_mode: bool,
+    pub repeat_mode: RepeatMode,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
