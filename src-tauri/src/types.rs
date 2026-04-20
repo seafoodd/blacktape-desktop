@@ -20,6 +20,7 @@ pub struct PlayerState {
     pub current_song: Option<Song>,
     pub is_playing: bool,
     pub progress: f32,
+    pub volume: f32,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

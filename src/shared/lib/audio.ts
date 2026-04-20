@@ -62,6 +62,16 @@ export const previous = (): Promise<void> => invoke("previous");
 export const getPosition = (): Promise<number> => {
   return invoke<number>("get_position");
 };
+
 export const isPaused = (): Promise<boolean> => {
   return invoke<boolean>("get_is_paused");
 };
+
+export const setVolume = (fraction: number): Promise<void> =>
+  invoke("set_volume", { fraction });
+
+export const getVolume = (): Promise<void> => invoke("get_volume");
+
+export const fetchState = (): void =>{
+  invoke("fetch_state");
+}

@@ -167,15 +167,34 @@ fn get_position(state: State<Mutex<AudioPlayer>>) -> f32 {
 }
 
 #[command]
-fn get_is_paused(state: State<Mutex<AudioPlayer>>) {
+fn get_is_paused(state: State<Mutex<AudioPlayer>>) -> bool {
     let player = state.lock().unwrap();
-    player.is_paused();
+    player.is_paused()
 }
 
 #[command]
 fn toggle(state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     player.toggle();
+}
+
+#[command]
+fn set_volume(fraction: f32, state: State<Mutex<AudioPlayer>>) {
+    let mut player = state.lock().unwrap();
+    player.set_volume(fraction);
+    println!("SET VOLUME {}", fraction);
+}
+
+#[command]
+fn get_volume(state: State<Mutex<AudioPlayer>>) -> f32 {
+    let mut player = state.lock().unwrap();
+    player.get_volume()
+}
+
+#[command]
+fn fetch_state(state: State<Mutex<AudioPlayer>>) {
+    let mut player = state.lock().unwrap();
+    player.emit_state()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -241,7 +260,10 @@ pub fn run() {
             get_position,
             toggle,
             get_artists,
-            get_artist_albums
+            get_artist_albums,
+            set_volume,
+            get_volume,
+            fetch_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

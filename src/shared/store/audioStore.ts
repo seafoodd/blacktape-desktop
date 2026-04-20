@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Song } from "../lib/audio";
+import { setVolume, Song } from "../lib/audio";
 import {
   startPlayback as tauriStartPlayback,
   seek as tauriSeek,
@@ -15,6 +15,7 @@ interface AudioState {
   songs: Song[];
   currentSong: Song | null;
   progress: number;
+  volume: number;
   isPlaying: boolean;
 
   setSongs: (songs: Song[]) => void;
@@ -25,6 +26,7 @@ interface AudioState {
   ) => Promise<void>;
   togglePlay: () => Promise<void>;
   setProgress: (value: number) => void;
+  setVolume: (value: number) => void;
   seek: (fraction: number) => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
@@ -36,6 +38,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   songs: [],
   currentSong: null,
   progress: 0,
+  volume: 0,
   isPlaying: false,
 
   setSongs: (songs) => set({ songs }),
@@ -60,9 +63,14 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   setProgress: (progress) => set({ progress }),
 
-  seek: async (fraction) => {
-    set({ progress: fraction });
-    await tauriSeek(fraction);
+  setVolume: async (volume) => {
+    set({ volume });
+    await setVolume(volume);
+  },
+
+  seek: async (progress) => {
+    set({ progress });
+    await tauriSeek(progress);
   },
 
   next: async () => {
@@ -90,6 +98,7 @@ if (typeof window !== "undefined") {
       isPlaying: state.is_playing,
       currentSong: state.current_song,
       progress: state.progress,
+      volume: state.volume,
     });
   });
 }

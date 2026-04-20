@@ -392,6 +392,7 @@ impl AudioPlayer {
             is_playing: !self.is_paused(),
             // progress: 0.0,
             progress: self.position(),
+            volume: self.player.volume(),
         };
 
         if let Some(ref song) = state.current_song {
@@ -534,5 +535,13 @@ impl AudioPlayer {
     pub fn set_queue(&mut self, songs: VecDeque<Song>) {
         println!("SETTING QUEUE: {:?}", songs);
         self.queue = songs;
+    }
+
+    pub fn set_volume(&mut self, fraction: f32) {
+        self.player.set_volume(fraction);
+    }
+
+    pub fn get_volume(&mut self) -> f32 {
+        self.player.volume()
     }
 }

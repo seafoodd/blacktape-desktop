@@ -116,16 +116,36 @@
 }
 
 .rightControls {
-    margin-left: auto;
     display: flex;
+    align-items: center;
+    margin-left: auto;
     gap: 16px;
 }
 
 .rightControl {
     width: 30px;
     height: 30px;
-    opacity: 50%;
-    /*background-color: red;*/
+    color: #838282;
+}
+
+.volumeSlider {
+    -webkit-appearance: none;
+    width: 80px;
+    height: 4px;
+    margin-right: 12px;
+    background: #838282;
+    border-radius: 2px;
+    cursor: pointer;
+
+    &::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 5px;
+        height: 16px;
+        background-color: var(--color-primary-dark);
+        border-radius: 12px;
+        margin-top: -0px;
+    }
 }
 
 .rightControl svg {

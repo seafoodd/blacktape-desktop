@@ -10,6 +10,7 @@ import {
   MdShuffle,
   MdSkipNext,
   MdSkipPrevious,
+  MdVolumeOff,
   MdVolumeUp,
 } from "react-icons/md";
 import clsx from "clsx";
@@ -20,6 +21,8 @@ const PlayerControls = () => {
   const {
     currentSong,
     progress,
+    volume,
+    setVolume,
     isPlaying,
     togglePlay,
     setProgress,
@@ -29,6 +32,7 @@ const PlayerControls = () => {
     updateProgress,
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [mutedVolume, setMutedVolume] = useState<number>(volume);
 
   useEffect(() => {
     if (isDragging) return;
@@ -45,6 +49,14 @@ const PlayerControls = () => {
     await storeSeek(value);
   };
 
+  const handleMute = () => {
+    setMutedVolume(volume);
+    if (volume === 0) {
+      return setVolume(mutedVolume);
+    }
+    setVolume(0);
+  };
+
   const currentTime = currentSong ? currentSong.duration_ms * progress : 0;
 
   return (
@@ -56,7 +68,7 @@ const PlayerControls = () => {
         className={styles.progressBar}
         type="range"
         style={{
-          background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #444 0)`,
+          background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #555 0)`,
         }}
         min={0}
         max={1000}
@@ -132,14 +144,25 @@ const PlayerControls = () => {
 
         <div className={styles.rightControls}>
           <button className={styles.rightControl}>
-            <MdVolumeUp size={60} />
-          </button>
-          <button className={styles.rightControl}>
             <MdRepeat size={60} />
           </button>
           <button className={styles.rightControl}>
             <MdShuffle size={60} />
           </button>
+          <button className={styles.rightControl} onClick={handleMute}>
+            {volume > 0 ? <MdVolumeUp size={60} /> : <MdVolumeOff size={60} />}
+          </button>
+          <input
+            className={styles.volumeSlider}
+            type="range"
+            style={{
+              background: `linear-gradient(to right, var(--color-primary-dark) ${volume * 100}%, #555 0)`,
+            }}
+            min={0}
+            max={100}
+            value={volume * 100}
+            onChange={(e) => setVolume(Number(e.target.value) / 100)}
+          />
         </div>
       </div>
     </div>

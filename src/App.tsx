@@ -1,9 +1,8 @@
 import { useTheme } from "./shared/providers/theme-provider";
 import PlayerControls from "./components/player-controls/PlayerControls";
 import { pickFolder } from "./shared/lib/dialog";
-import { scanMusic } from "./shared/lib/audio";
+import { fetchState, scanMusic } from "./shared/lib/audio";
 import { useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import styles from "./app.module.css";
 import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
 
@@ -23,16 +22,11 @@ function App() {
   }
 
   useEffect(() => {
-    const handleUnload = () => {
-      invoke("stop");
-    };
-
-    window.addEventListener("beforeunload", handleUnload);
-    return () => window.removeEventListener("beforeunload", handleUnload);
+    fetchState();
   }, []);
 
   return (
-    <div className={styles.app}>
+    <main className={styles.app}>
       <header className={styles.header}>
         <button onClick={handlePickFolder}>Select Music Folder</button>
         <button onClick={toggleTheme}>
@@ -53,7 +47,7 @@ function App() {
       <footer className={styles.footer}>
         <PlayerControls />
       </footer>
-    </div>
+    </main>
   );
 }
 
