@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { setVolume, Song } from "../lib/audio";
+import { setVolume, Song, toggleShuffle } from "../lib/audio";
 import {
   startPlayback as tauriStartPlayback,
   seek as tauriSeek,
@@ -17,14 +17,12 @@ interface AudioState {
   progress: number;
   volume: number;
   isPlaying: boolean;
+  shuffleMode: boolean;
 
   setSongs: (songs: Song[]) => void;
-  startPlayback: (
-    songId: number,
-    queue: number[],
-    history: number[],
-  ) => Promise<void>;
+  startPlayback: (queue: number[], current_index: number) => Promise<void>;
   togglePlay: () => Promise<void>;
+  toggleShuffle: () => Promise<void>;
   setProgress: (value: number) => void;
   setVolume: (value: number) => void;
   seek: (fraction: number) => Promise<void>;
@@ -40,12 +38,13 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   progress: 0,
   volume: 0,
   isPlaying: false,
+  shuffleMode: false,
 
   setSongs: (songs) => set({ songs }),
 
-  startPlayback: async (songId: number, queue: number[], history: number[]) => {
+  startPlayback: async (queue: number[], current_index: number) => {
     // set({ currentSong: song, isPlaying: true });
-    await tauriStartPlayback(songId, queue, history);
+    await tauriStartPlayback(queue, current_index);
   },
 
   togglePlay: async () => {
@@ -55,6 +54,13 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     await tauriToggle();
     // const isPaused = await tauriIsPaused();
     // set({ isPlaying: !isPaused });
+  },
+
+  toggleShuffle: async () => {
+    set((state) => ({
+      shuffleMode: !state.shuffleMode,
+    }));
+    toggleShuffle()
   },
 
   pause: async () => {
@@ -99,6 +105,7 @@ if (typeof window !== "undefined") {
       currentSong: state.current_song,
       progress: state.progress,
       volume: state.volume,
+      shuffleMode: state.shuffle_mode,
     });
   });
 }

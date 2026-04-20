@@ -409,6 +409,7 @@ dependencies = [
  "discord-rich-presence",
  "lofty",
  "quick-xml 0.39.2",
+ "rand 0.10.1",
  "reqwest",
  "rodio",
  "serde",

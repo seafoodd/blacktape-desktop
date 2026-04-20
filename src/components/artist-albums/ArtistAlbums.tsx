@@ -19,10 +19,10 @@ const ArtistAlbums = () => {
     );
     if (currentIndex === -1) return;
 
-    const historyIds = allSongs.slice(0, currentIndex).map((s) => s.id);
-    const queueIds = allSongs.slice(currentIndex + 1).map((s) => s.id);
+    // const historyIds = allSongs.slice(0, currentIndex).map((s) => s.id);
+    const queueIds = allSongs.map((s) => s.id);
 
-    startPlayback(clickedSongId, queueIds, historyIds).catch((e) =>
+    startPlayback(queueIds, currentIndex).catch((e) =>
       console.log("startPlayback error: ", e),
     );
   };

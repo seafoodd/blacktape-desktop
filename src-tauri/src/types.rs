@@ -21,6 +21,7 @@ pub struct PlayerState {
     pub is_playing: bool,
     pub progress: f32,
     pub volume: f32,
+    pub shuffle_mode: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

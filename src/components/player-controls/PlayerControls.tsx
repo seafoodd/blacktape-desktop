@@ -30,6 +30,8 @@ const PlayerControls = () => {
     next,
     previous,
     updateProgress,
+    shuffleMode,
+    toggleShuffle
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [mutedVolume, setMutedVolume] = useState<number>(volume);
@@ -146,7 +148,7 @@ const PlayerControls = () => {
           <button className={styles.rightControl}>
             <MdRepeat size={60} />
           </button>
-          <button className={styles.rightControl}>
+          <button onClick={toggleShuffle} className={clsx(styles.rightControl, {[styles.rightControlActive]: shuffleMode})}>
             <MdShuffle size={60} />
           </button>
           <button className={styles.rightControl} onClick={handleMute}>

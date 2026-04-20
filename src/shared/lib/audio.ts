@@ -39,10 +39,9 @@ export const getArtistAlbums = (artistName: string): Promise<Album[]> =>
   invoke<Album[]>("get_artist_albums", { artistName });
 
 export const startPlayback = (
-  id: number,
   queue: number[],
-  history: number[],
-): Promise<void> => invoke("start_playback", { id, queue, history });
+  currentIndex: number,
+): Promise<void> => invoke("start_playback", { queue, currentIndex });
 
 export const pause = (): Promise<void> => invoke("pause");
 
@@ -72,6 +71,9 @@ export const setVolume = (fraction: number): Promise<void> =>
 
 export const getVolume = (): Promise<void> => invoke("get_volume");
 
-export const fetchState = (): void =>{
+export const fetchState = (): void => {
   invoke("fetch_state");
-}
+};
+export const toggleShuffle = (): void => {
+  invoke("toggle_shuffle");
+};

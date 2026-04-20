@@ -3,6 +3,7 @@ use crate::{
     audio::media_controls::MediaControls,
     types::{PlayerState, Song},
 };
+use rand::seq::SliceRandom;
 use rodio::cpal::{
     self,
     traits::{DeviceTrait, HostTrait},
@@ -11,7 +12,7 @@ use rodio::cpal::{
 use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use souvlaki::MediaMetadata;
 use std::time::Instant;
-use std::{collections::VecDeque, fs::File, sync::Mutex, time::Duration};
+use std::{fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
 enum RepeatMode {
@@ -27,9 +28,11 @@ pub struct AudioPlayer {
     media_controls: MediaControls,
     current_song: Option<Song>,
     handle: AppHandle,
-    history: VecDeque<Song>,
-    queue: VecDeque<Song>,
+    queue: Vec<Song>,
     current_device_id: Option<DeviceId>,
+    shuffle_mode: bool,
+    play_order: Option<Vec<usize>>,
+    cursor: Option<usize>,
 }
 
 impl AudioPlayer {
@@ -49,9 +52,11 @@ impl AudioPlayer {
             media_controls,
             current_song: None,
             handle,
-            history: VecDeque::new(),
-            queue: VecDeque::new(),
+            queue: Vec::new(),
             current_device_id: initial_device_id,
+            shuffle_mode: false,
+            play_order: None,
+            cursor: None,
         }
     }
 
@@ -106,7 +111,6 @@ impl AudioPlayer {
                         if let Some(duration) = player.duration {
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 // println!("start seamless transition");
-                                player.buffer_next_silent();
                                 is_next = player.advance_to_next_in_queue();
                                 // println!("seamless transition IS NEXT: {}", is_next);
 
@@ -173,7 +177,6 @@ impl AudioPlayer {
 
         self.player.clear();
         self.player.append(source);
-        // self.buffer_next_silent();
 
         // self.clear_queue();
 
@@ -239,9 +242,15 @@ impl AudioPlayer {
     }
 
     pub fn add_to_queue(&mut self, song: Song) {
-        self.queue.push_back(song);
+        self.queue.push(song);
+        let new_idx = self.queue.len() - 1;
 
-        // TODO: send queue to the client maybe
+        if let Some(ref mut order) = self.play_order {
+            order.push(new_idx);
+        } else {
+            self.play_order = Some(vec![new_idx]);
+            self.cursor = Some(0);
+        }
     }
 
     pub fn clear_queue(&mut self) {
@@ -256,23 +265,84 @@ impl AudioPlayer {
     ///
     /// Returns `true` if the player advanced, or `false` if the queue was empty.
     fn advance_to_next_in_queue(&mut self) -> bool {
-        if let Some(next) = self.queue.pop_front() {
-            println!("advance_to_next_in_queue: {:?}", next.id);
-            let duration = Duration::from_millis(next.duration_ms);
+        let Some(order) = &self.play_order else {
+            return false;
+        };
+        let Some(current_cursor) = self.cursor else {
+            return false;
+        };
 
-            if let Some(finished) = self.current_song.take() {
-                self.history.push_back(finished);
+        let next_cursor = current_cursor + 1;
+
+        if next_cursor < order.len() {
+            self.cursor = Some(next_cursor);
+            if let Some(next_song) = self.get_song_at_cursor() {
+                self.buffer_next_silent(&next_song);
+                self.current_song = Some(next_song.clone());
+                self.duration = Some(Duration::from_millis(next_song.duration_ms));
+                return true;
             }
-
-            self.current_song = Some(next.clone());
-            self.duration = Some(duration);
-
-            // self.update_discord_song();
-            // self.update_current_metadata();
-
-            return true;
         }
         false
+    }
+
+    // fn generate_shuffled_queue(queue: VecDeque<Song>) -> VecDeque<Song> {
+    //     let mut vec: Vec<Song> = Vec::from(queue);
+    //     let mut rng = rand::rng();
+    //     vec.shuffle(&mut rng);
+    //     VecDeque::from(vec)
+    // }
+
+    pub fn start_playback(&mut self, songs: Vec<Song>, current_index: usize) {
+        let new_play_order: Vec<usize> = (0..songs.len()).collect();
+
+        self.queue = songs;
+        self.play_order = Some(new_play_order);
+        self.cursor = Some(current_index);
+
+        self.shuffle_mode = !self.shuffle_mode;
+        self.toggle_shuffle();
+
+        self.stop();
+        if let (Some(order), Some(cursor)) = (&self.play_order, self.cursor) {
+            if let Some(&song_idx) = order.get(cursor) {
+                if let Some(song) = self.queue.get(song_idx) {
+                    let song_to_play = song.clone();
+                    self.play(song_to_play);
+                }
+            }
+        }
+    }
+
+    fn get_song_at_cursor(&self) -> Option<Song> {
+        let order = self.play_order.as_ref()?;
+        let cursor = self.cursor?;
+        let song_idx = order.get(cursor)?;
+        self.queue.get(*song_idx).cloned()
+    }
+
+    pub fn toggle_shuffle(&mut self) {
+        if self.shuffle_mode {
+            if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
+                let current_actual_idx = order[cursor];
+                order.sort();
+                self.cursor = Some(current_actual_idx);
+            }
+            self.shuffle_mode = false;
+        } else {
+            self.shuffle_mode = true;
+            self.apply_shuffle_to_future();
+        }
+        self.emit_state();
+    }
+
+    fn apply_shuffle_to_future(&mut self) {
+        if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
+            if cursor + 1 < order.len() {
+                let future = &mut order[cursor + 1..];
+                future.shuffle(&mut rand::rng());
+            }
+        }
     }
 
     fn update_current_metadata(&mut self) {
@@ -298,22 +368,20 @@ impl AudioPlayer {
         });
     }
 
-    fn buffer_next_silent(&mut self) {
+    fn buffer_next_silent(&mut self, song: &Song) {
         let now = Instant::now();
-        if let Some(next) = self.queue.front() {
-            println!("Silent buffer: {}, {:?}", next.title, next.id);
-            if let Ok(file) = File::open(&next.path) {
-                if let Ok(source) = Decoder::try_from(file) {
-                    self.player.append(source);
-                }
+        println!("Silent buffer: {}, {:?}", song.title, song.id);
+        if let Ok(file) = File::open(&song.path) {
+            if let Ok(source) = Decoder::try_from(file) {
+                self.player.append(source);
             }
         }
+
         println!("BUFFERING TOOK: {:#?}", now.elapsed())
     }
 
     pub fn next(&mut self) {
         self.player.skip_one();
-        self.buffer_next_silent();
         if !self.advance_to_next_in_queue() {
             self.pause();
             self.stop();
@@ -324,21 +392,25 @@ impl AudioPlayer {
     }
 
     pub fn previous(&mut self) {
-        if self.player.get_pos() > Duration::from_secs(5) {
-            if let Some(current) = self.current_song.clone() {
+        if self.player.get_pos() > Duration::from_secs(3) {
+            if let Some(current) = self.get_song_at_cursor() {
                 self.play(current);
                 return;
             }
         }
 
-        if let Some(prev_song) = self.history.pop_back() {
-            if let Some(current) = self.current_song.take() {
-                self.queue.push_front(current);
-            }
+        let Some(current_cursor) = self.cursor else {
+            return;
+        };
 
-            self.play(prev_song);
+        if current_cursor > 0 {
+            self.cursor = Some(current_cursor - 1);
+            if let Some(prev_song) = self.get_song_at_cursor() {
+                self.play(prev_song);
+            }
         } else {
-            if let Some(current) = self.current_song.clone() {
+            // Already at the first song, just restart it
+            if let Some(current) = self.get_song_at_cursor() {
                 self.play(current);
             }
         }
@@ -393,6 +465,7 @@ impl AudioPlayer {
             // progress: 0.0,
             progress: self.position(),
             volume: self.player.volume(),
+            shuffle_mode: self.shuffle_mode,
         };
 
         if let Some(ref song) = state.current_song {
@@ -528,11 +601,7 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub fn set_history(&mut self, songs: VecDeque<Song>) {
-        println!("SETTING HISTORY: {:?}", songs);
-        self.history = songs;
-    }
-    pub fn set_queue(&mut self, songs: VecDeque<Song>) {
+    pub fn set_queue(&mut self, songs: Vec<Song>) {
         println!("SETTING QUEUE: {:?}", songs);
         self.queue = songs;
     }

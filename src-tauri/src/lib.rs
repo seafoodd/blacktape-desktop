@@ -9,7 +9,6 @@ use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::types::{Album, ArtistSummary};
 use audio::player::AudioPlayer;
-use std::collections::VecDeque;
 use std::sync::Mutex;
 use tauri::{command, Listener, Manager, State, WebviewWindow};
 use types::Song;
@@ -85,40 +84,27 @@ async fn get_artist_albums(
 
 #[command]
 async fn start_playback(
-    id: i64,
     queue: Vec<i64>,
-    history: Vec<i64>,
+    current_index: usize,
     db_state: State<'_, tokio::sync::Mutex<Database>>,
     player_state: State<'_, Mutex<AudioPlayer>>,
 ) -> Result<(), String> {
     let db = db_state.lock().await;
 
-    let song = {
-        db.get_song_by_id(id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Song not found in library".to_string())?
-    };
-
-    let mut history_songs = VecDeque::new();
-    for id in history {
-        if let Ok(Some(s)) = db.get_song_by_id(id).await {
-            history_songs.push_back(s);
-        }
-    }
-
-    let mut queue_songs = VecDeque::new();
+    let mut master_songs = Vec::new();
     for id in queue {
         if let Ok(Some(s)) = db.get_song_by_id(id).await {
-            queue_songs.push_back(s);
+            master_songs.push(s);
         }
     }
 
+    if master_songs.is_empty() {
+        return Err("Queue is empty or songs could not be loaded".to_string());
+    }
+    
     let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
-    player.stop();
-    player.set_history(history_songs);
-    player.set_queue(queue_songs);
-    player.play(song);
+
+    player.start_playback(master_songs, current_index);
 
     Ok(())
 }
@@ -193,8 +179,14 @@ fn get_volume(state: State<Mutex<AudioPlayer>>) -> f32 {
 
 #[command]
 fn fetch_state(state: State<Mutex<AudioPlayer>>) {
+    let player = state.lock().unwrap();
+    player.emit_state();
+}
+
+#[command]
+fn toggle_shuffle(state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
-    player.emit_state()
+    player.toggle_shuffle();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -263,7 +255,8 @@ pub fn run() {
             get_artist_albums,
             set_volume,
             get_volume,
-            fetch_state
+            fetch_state,
+            toggle_shuffle
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
