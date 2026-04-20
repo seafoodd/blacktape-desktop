@@ -300,8 +300,9 @@ impl AudioPlayer {
         self.play_order = Some(new_play_order);
         self.cursor = Some(current_index);
 
-        self.shuffle_mode = !self.shuffle_mode;
-        self.toggle_shuffle();
+        if self.shuffle_mode {
+            self.apply_shuffle_to_future();
+        }
 
         self.stop();
         if let (Some(order), Some(cursor)) = (&self.play_order, self.cursor) {
