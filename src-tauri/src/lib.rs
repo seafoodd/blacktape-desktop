@@ -200,6 +200,15 @@ fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
 }
 
 #[command]
+async fn get_search_suggestions(query: String) -> Vec<String> {
+    let mut sugs: Vec<String> = Vec::new();
+    sugs.push("suggestion 1".to_string());
+    sugs.push("suggestion 2".to_string());
+    sugs.push("suggestion 33".to_string());
+    sugs
+}
+
+#[command]
 async fn get_lyrics(
     state: State<'_, tokio::sync::Mutex<Database>>,
     id: i64,
@@ -305,6 +314,7 @@ pub fn run() {
             toggle_shuffle,
             set_repeat_mode,
             get_lyrics,
+            get_search_suggestions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,6 +9,7 @@ import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
 import ArtistAlbums from "@/components/artist-albums/ArtistAlbums.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import RightSidebar from "@/components/right-sidebar/RightSidebar.tsx";
+import SearchBar from "./components/search-bar/SearchBar.tsx";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -30,6 +31,7 @@ function App() {
     <main className={styles.app}>
       <header className={styles.header}>
         <button onClick={handlePickFolder}>Select Music Folder</button>
+        <SearchBar/>
         <button onClick={toggleTheme}>
           {theme === "light" ? "Switch to Dark" : "Switch to Light"}
         </button>
