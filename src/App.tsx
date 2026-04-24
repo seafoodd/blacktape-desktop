@@ -8,6 +8,7 @@ import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
 
 import ArtistAlbums from "@/components/artist-albums/ArtistAlbums.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import RightSidebar from "@/components/right-sidebar/RightSidebar.tsx";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -41,6 +42,8 @@ function App() {
         <main className={styles.main}>
           <ArtistAlbums />
         </main>
+
+        <RightSidebar />
       </div>
 
       {/* Footer */}

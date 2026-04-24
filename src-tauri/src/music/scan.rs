@@ -112,6 +112,8 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             release_year: tag.and_then(|t| t.date()).map(|d| d.year as i32),
             cover_url,
             external_cover_url: None,
+            lyrics: None,
+            lyrics_source: None,
         };
         println!(
             "Scanned song: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
@@ -160,6 +162,8 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
         release_year: None,
         cover_url: None,
         external_cover_url: None,
+        lyrics: None,
+        lyrics_source: None,
     };
 
     Some(song)

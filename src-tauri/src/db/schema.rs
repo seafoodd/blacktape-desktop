@@ -22,5 +22,17 @@ pub fn get_migrations() -> Vec<Migration> {
             );",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 2,
+            description: "add lyrics field",
+            sql: "ALTER TABLE songs ADD COLUMN lyrics TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "add lyrics source field",
+            sql: "ALTER TABLE songs ADD COLUMN lyrics_source TEXT;",
+            kind: MigrationKind::Up,
+        }
     ]
 }

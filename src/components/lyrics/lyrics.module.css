@@ -1,0 +1,24 @@
+.container {
+    font-size: 15px;
+}
+
+.lyricLine {
+    min-height: 1.4em;
+}
+
+.source {
+    margin-top: 1.4em;
+    color: var(--color-muted);
+    text-align: start;
+
+    a {
+        color: unset;
+        text-decoration: underline;
+        cursor: pointer;
+        transition: color 100ms linear;
+
+        &:hover {
+            color: var(--color-text);
+        }
+    }
+}

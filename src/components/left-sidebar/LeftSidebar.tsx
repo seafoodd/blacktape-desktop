@@ -52,47 +52,43 @@ const LeftSidebar = () => {
     });
   }, []);
   return (
-    <>
-      <aside className={styles.leftSidebar} style={{ width: sidebarWidth }}>
-        <h3 className={styles.leftSidebarTitle}>Artists</h3>
-        <ul className={styles.artistList}>
-          {tabs.map((artist) => (
-            <button
-              key={artist.name}
-              className={clsx(styles.artistItem, {
-                [styles.active]: selectedTab == artist.name,
-              })}
-              onClick={() => setSelectedTab(artist.name)}
-            >
-              {artist.cover_url ? (
-                <img
-                  src={convertFileSrc(artist.cover_url)}
-                  className={styles.artistImage}
-                  alt={artist.name}
-                />
-              ) : (
-                <img
-                  src={placeholderArtistImage}
-                  className={styles.artistImage}
-                  alt={artist.name}
-                />
-              )}
-              <div className={styles.artistInfo}>
-                <span className={clsx(styles.artistName, "truncate")}>
-                  {artist.name}
-                </span>
-                <span className={styles.albumCount}>
-                  {artist.album_count} Albums
-                </span>
-              </div>
-            </button>
-          ))}
-        </ul>
-      </aside>
-
-      {/* invisible handle that detects the drag */}
+    <aside className={styles.leftSidebar} style={{ width: sidebarWidth }}>
+      <h3 className={styles.leftSidebarTitle}>Artists</h3>
+      <ul className={styles.artistList}>
+        {tabs.map((artist) => (
+          <button
+            key={artist.name}
+            className={clsx(styles.artistItem, {
+              [styles.active]: selectedTab == artist.name,
+            })}
+            onClick={() => setSelectedTab(artist.name)}
+          >
+            {artist.cover_url ? (
+              <img
+                src={convertFileSrc(artist.cover_url)}
+                className={styles.artistImage}
+                alt={artist.name}
+              />
+            ) : (
+              <img
+                src={placeholderArtistImage}
+                className={styles.artistImage}
+                alt={artist.name}
+              />
+            )}
+            <div className={styles.artistInfo}>
+              <span className={clsx(styles.artistName, "truncate")}>
+                {artist.name}
+              </span>
+              <span className={styles.albumCount}>
+                {artist.album_count} Albums
+              </span>
+            </div>
+          </button>
+        ))}
+      </ul>
       <div className={styles.resizer} onMouseDown={startResizing} />
-    </>
+    </aside>
   );
 };
 

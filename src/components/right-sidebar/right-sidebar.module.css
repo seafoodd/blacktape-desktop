@@ -1,0 +1,21 @@
+.rightSidebar {
+    position: relative;
+    min-width: 150px;
+    max-width: 600px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    border-inline: 1px solid rgb(169 169 169 / 0.5);
+    padding: 8px;
+}
+
+.resizer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    cursor: col-resize;
+    z-index: 10;
+    /*transition: background 0.2s;*/
+    /*margin-right: -2px;*/
+}

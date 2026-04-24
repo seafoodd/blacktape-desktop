@@ -27,10 +27,6 @@ const ArtistAlbums = () => {
     );
   };
 
-  // useEffect(() => {
-  //   setSelectedTab("")
-  // }, []);
-
   if (!selectedTab) {
     return;
   }

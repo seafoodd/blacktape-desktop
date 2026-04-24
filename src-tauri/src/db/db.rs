@@ -1,3 +1,4 @@
+use crate::lyrics::LyricsSource;
 use crate::types::{Album, ArtistSummary, Song};
 use sqlx::sqlite::SqlitePool;
 
@@ -19,10 +20,10 @@ impl Database {
                 id, path, title, artist, album, track_number,
                 duration_ms, cover_url, external_cover_url, genre, release_year
              FROM songs
-             ORDER BY artist ASC, album ASC, track_number ASC"
+             ORDER BY artist ASC, album ASC, track_number ASC",
         )
-            .fetch_all(&self.pool)
-            .await
+        .fetch_all(&self.pool)
+        .await
     }
 
     pub async fn get_artists_summary(&self) -> Result<Vec<ArtistSummary>, sqlx::Error> {
@@ -34,21 +35,24 @@ impl Database {
                 MAX(cover_url) AS cover_url
              FROM songs
              GROUP BY artist
-             ORDER BY artist ASC"
+             ORDER BY artist ASC",
         )
-            .fetch_all(&self.pool)
-            .await?;
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(artists)
     }
 
     pub async fn get_artist_albums(&self, artist_name: &str) -> Result<Vec<Album>, sqlx::Error> {
         let songs = sqlx::query_as::<_, Song>(
-            "SELECT * FROM songs WHERE artist = ? ORDER BY album ASC, track_number ASC"
+            "SELECT * FROM songs WHERE artist = ? ORDER BY album ASC, track_number ASC",
         )
-            .bind(artist_name).fetch_all(&self.pool).await?;
+        .bind(artist_name)
+        .fetch_all(&self.pool)
+        .await?;
 
-        let mut album_map: std::collections::BTreeMap<String, Album> = std::collections::BTreeMap::new();
+        let mut album_map: std::collections::BTreeMap<String, Album> =
+            std::collections::BTreeMap::new();
 
         for song in songs {
             let entry = album_map.entry(song.album.clone()).or_insert(Album {
@@ -73,21 +77,44 @@ impl Database {
         Ok(())
     }
 
-    pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO songs (path, title, artist, album, track_number, duration_ms, cover_url)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(path) DO UPDATE SET title = excluded.title"
-        )
-            .bind(song.path)
-            .bind(song.title)
-            .bind(song.artist)
-            .bind(song.album)
-            .bind(song.track_number)
-            .bind(song.duration_ms as i64)
-            .bind(song.cover_url)
+    pub async fn update_song_lyrics(
+        &self,
+        id: i64,
+        lyrics_source: LyricsSource,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE songs SET lyrics = ?, lyrics_source = ? WHERE id = ?")
+            .bind(lyrics_source.lyrics)
+            .bind(lyrics_source.source)
+            .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO songs (
+                path, title, artist, album, track_number,
+                duration_ms, cover_url, external_cover_url,
+                genre, release_year, lyrics
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(path) DO UPDATE SET title = excluded.title",
+        )
+        .bind(&song.path)
+        .bind(&song.title)
+        .bind(&song.artist)
+        .bind(&song.album)
+        .bind(song.track_number)
+        .bind(song.duration_ms as i64)
+        .bind(&song.cover_url)
+        .bind(&song.external_cover_url)
+        .bind(&song.genre)
+        .bind(&song.release_year)
+        .bind(&song.lyrics)
+        .bind(&song.lyrics_source)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -97,41 +124,46 @@ impl Database {
 
         for song in songs {
             sqlx::query(
-                "INSERT INTO songs (path, title, artist, album, track_number, duration_ms, cover_url, external_cover_url, genre, release_year)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(path) DO UPDATE SET
+                "INSERT INTO songs (
+                path, title, artist, album, track_number,
+                duration_ms, cover_url, external_cover_url,
+                genre, release_year, lyrics
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 artist = excluded.artist,
                 album = excluded.album,
                 track_number = excluded.track_number,
                 duration_ms = excluded.duration_ms,
                 cover_url = excluded.cover_url,
-                external_cover_url = excluded.external_cover_url,
                 genre = excluded.genre,
-                release_year = excluded.release_year"
+                release_year = excluded.release_year
+            ",
             )
-                .bind(&song.path)
-                .bind(&song.title)
-                .bind(&song.artist)
-                .bind(&song.album)
-                .bind(song.track_number)
-                .bind(song.duration_ms as i64)
-                .bind(&song.cover_url)
-                .bind(&song.external_cover_url)
-                .bind(&song.genre)
-                .bind(&song.release_year)
-                .execute(&mut *tx)
-                .await?;
+            .bind(&song.path)
+            .bind(&song.title)
+            .bind(&song.artist)
+            .bind(&song.album)
+            .bind(song.track_number)
+            .bind(song.duration_ms as i64)
+            .bind(&song.cover_url)
+            .bind(&song.external_cover_url)
+            .bind(&song.genre)
+            .bind(&song.release_year)
+            .bind(&song.lyrics)
+            .bind(&song.lyrics_source)
+            .execute(&mut *tx)
+            .await?;
         }
 
         tx.commit().await?;
-
         Ok(())
     }
 
     pub async fn get_song_by_id(&self, id: i64) -> Result<Option<Song>, sqlx::Error> {
         let song = sqlx::query_as::<_, Song>(
-            "SELECT id, path, title, artist, album, track_number, duration_ms, cover_url, external_cover_url, genre, release_year
+            "SELECT id, path, title, artist, album, track_number, duration_ms, cover_url, external_cover_url, genre, release_year, lyrics, lyrics_source
              FROM songs
              WHERE id = ?"
         )

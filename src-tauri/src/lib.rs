@@ -1,18 +1,20 @@
 mod audio;
 mod db;
 mod discord_presence;
+mod lyrics;
 mod music;
 mod types;
 
 use crate::audio::media_controls::MediaControls;
+use crate::audio::player::RepeatMode;
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
+use crate::lyrics::{fetch_lyrics, LyricsSource};
 use crate::types::{Album, ArtistSummary};
 use audio::player::AudioPlayer;
 use std::sync::Mutex;
-use tauri::{command, Listener, Manager, State, WebviewWindow};
+use tauri::{command, generate_handler, Listener, Manager, State, WebviewWindow};
 use types::Song;
-use crate::audio::player::RepeatMode;
 
 #[command]
 async fn scan_music(
@@ -197,6 +199,42 @@ fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
     player.set_repeat_mode(repeat_mode);
 }
 
+#[command]
+async fn get_lyrics(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    id: i64,
+) -> Result<LyricsSource, String> {
+    let (artist, title) = {
+        let db = state.lock().await;
+        let song = db
+            .get_song_by_id(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Song not found")?;
+
+        if let (Some(lyrics), Some(source)) = (song.lyrics, song.lyrics_source) {
+            if !lyrics.is_empty() {
+                let lyrics_source = LyricsSource {
+                    lyrics,
+                    source,
+                };
+
+                return Ok(lyrics_source);
+            }
+        }
+        (song.artist.clone(), song.title.clone())
+    };
+
+    let lyrics_source = fetch_lyrics(&artist, &title).await?;
+
+    let db = state.lock().await;
+    db.update_song_lyrics(id, lyrics_source.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(lyrics_source)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -247,7 +285,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(generate_handler![
             scan_music,
             start_playback,
             pause,
@@ -266,6 +304,7 @@ pub fn run() {
             fetch_state,
             toggle_shuffle,
             set_repeat_mode,
+            get_lyrics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
