@@ -280,7 +280,7 @@ pub fn run() {
                     let binding = handle.state::<Mutex<AudioPlayer>>();
                     let mut player = binding.lock().expect("Failed to lock audio player");
 
-                    action(&mut *player);
+                    action(&mut player);
                 });
             };
             register("media-resume", AudioPlayer::resume);
