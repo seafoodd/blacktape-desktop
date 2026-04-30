@@ -18,7 +18,8 @@ impl Database {
         sqlx::query_as::<_, Song>(
             "SELECT
                 id, path, title, artist, album, track_number,
-                duration_ms, cover_url, external_cover_url, genre, release_year
+                duration_ms, cover_url, external_cover_url, genre,
+                release_year, lyrics, lyrics_source
              FROM songs
              ORDER BY artist ASC, album ASC, track_number ASC",
         )
@@ -99,9 +100,9 @@ impl Database {
             "INSERT INTO songs (
                 path, title, artist, album, track_number,
                 duration_ms, cover_url, external_cover_url,
-                genre, release_year, lyrics
+                genre, release_year, lyrics, lyrics_source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET title = excluded.title",
         )
         .bind(&song.path)
@@ -130,9 +131,9 @@ impl Database {
                 "INSERT INTO songs (
                 path, title, artist, album, track_number,
                 duration_ms, cover_url, external_cover_url,
-                genre, release_year, lyrics
+                genre, release_year, lyrics, lyrics_source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 artist = excluded.artist,
