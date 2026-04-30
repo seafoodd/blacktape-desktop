@@ -49,7 +49,7 @@ async fn scan_music(
             .map_err(|e| e.to_string())?;
     }
 
-    let songs = music::scan::scan_music_dir(dir, covers_path);
+    let songs = music::scan::scan_music_dir(dir, &covers_path);
     db.insert_songs(songs.clone())
         .await
         .map_err(|e| e.to_string())?;

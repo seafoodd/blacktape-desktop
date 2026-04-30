@@ -6,11 +6,11 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
+pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
     let mut songs = Vec::new();
 
     if !covers_dir.exists() {
-        fs::create_dir_all(&covers_dir).ok();
+        fs::create_dir_all(covers_dir).ok();
     }
 
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
@@ -22,10 +22,10 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             continue;
         }
 
-        let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
+        let tagged_file = match Probe::open(path).and_then(Probe::read) {
             Ok(f) => f,
             Err(e) => {
-                println!("{}", e);
+                eprintln!("{e}");
                 continue;
             }
         };
@@ -46,9 +46,8 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             .unwrap_or_else(|| "Unknown Artist".to_string());
 
         let album = tag
-            .and_then(|t| t.album())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Unknown Album".to_string());
+            .and_then(Accessor::album)
+            .map_or_else(|| "Unknown Album".to_string(), |s| s.to_string());
 
         let mut cover_url = None;
 
@@ -74,22 +73,20 @@ pub fn scan_music_dir(dir: String, covers_dir: PathBuf) -> Vec<Song> {
             if let Some(t) = tag {
                 if let Some(pic) = t.pictures().first() {
                     let data = pic.data();
-                    let mime = pic.mime_type()
-                        .map(|m| m.as_str())
-                        .unwrap_or("image/jpeg");
+                    let mime = pic.mime_type().map(lofty::picture::MimeType::as_str).unwrap_or("image/jpeg");
 
-                    let album_key = format!("{}{}", artist, album);
+                    let album_key = format!("{artist}{album}");
 
                     let mut hasher = Sha256::new();
                     hasher.update(album_key.as_bytes());
                     let hash_result = hasher.finalize();
                     let hash = hash_result
                         .iter()
-                        .map(|b| format!("{:02x}", b))
+                        .map(|b| format!("{b:02x}"))
                         .collect::<String>();
 
                     let pic_ext = if mime.contains("png") { "png" } else { "jpg" };
-                    let filename = format!("{}.{}", hash, pic_ext);
+                    let filename = format!("{hash}.{pic_ext}");
                     let full_path = covers_dir.join(&filename);
 
                     if !full_path.exists() {
@@ -137,7 +134,7 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
     let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to read tags for {}: {}", path, e);
+            eprintln!("Failed to read tags for {path}: {e}");
             return None;
         }
     };

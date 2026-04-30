@@ -8,7 +8,7 @@ pub struct Database {
 
 impl Database {
     pub async fn new(db_path: &str) -> Self {
-        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path))
+        let pool = SqlitePool::connect(&format!("sqlite:{db_path}"))
             .await
             .expect("Failed to connect to database");
         Self { pool }
@@ -75,7 +75,7 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
-        println!("SAVED COVER URL: {:?}", url);
+        println!("SAVED COVER URL: {url:?}");
 
         Ok(())
     }
@@ -113,7 +113,7 @@ impl Database {
         .bind(&song.cover_url)
         .bind(&song.external_cover_url)
         .bind(&song.genre)
-        .bind(&song.release_year)
+        .bind(song.release_year)
         .bind(&song.lyrics)
         .bind(&song.lyrics_source)
         .execute(&self.pool)
@@ -153,7 +153,7 @@ impl Database {
             .bind(&song.cover_url)
             .bind(&song.external_cover_url)
             .bind(&song.genre)
-            .bind(&song.release_year)
+            .bind(song.release_year)
             .bind(&song.lyrics)
             .bind(&song.lyrics_source)
             .execute(&mut *tx)

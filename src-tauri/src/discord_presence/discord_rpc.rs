@@ -26,8 +26,8 @@ pub enum RpcError {
 impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RpcError::ConnectError(e) => write!(f, "Connection failed: {}", e),
-            RpcError::ActivityError(e) => write!(f, "Activity update failed: {}", e),
+            RpcError::ConnectError(e) => write!(f, "Connection failed: {e}"),
+            RpcError::ActivityError(e) => write!(f, "Activity update failed: {e}"),
             RpcError::TimeError => write!(f, "Failed to get system time"),
         }
     }
@@ -50,7 +50,7 @@ where
             Err(err) => {
                 // eprintln!("Attempt {}/{} failed: {:?}", attempt, max_attempts, err);
                 if attempt >= max_attempts {
-                    return Err(RpcError::ConnectError(format!("{:?}", err)));
+                    return Err(RpcError::ConnectError(format!("{err:?}")));
                 }
                 thread::sleep(delay);
                 attempt += 1;
@@ -92,7 +92,7 @@ impl DiscordRpcClient {
                 || {
                     self.client
                         .clear_activity()
-                        .map_err(|e| RpcError::ActivityError(format!("{:?}", e)))
+                        .map_err(|e| RpcError::ActivityError(format!("{e:?}")))
                 },
                 MAX_RETRIES,
                 RETRY_DELAY,

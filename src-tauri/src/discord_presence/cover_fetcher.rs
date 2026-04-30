@@ -81,7 +81,10 @@ impl CoverFetcher {
         match self.get_cover_art_url(&mbid) {
             Ok(Some(url)) => {
                 // Save in cache
-                self.cache.lock().unwrap().insert(song.path.clone(), url.clone());
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(song.path.clone(), url.clone());
                 Some(url)
             }
             Ok(None) => None,
@@ -96,17 +99,15 @@ impl CoverFetcher {
         let query = format!("release:\"{}\" AND artist:\"{}\"", song.album, song.artist);
         let encoded_query = urlencoding::encode(&query);
 
-        let url = format!(
-            "https://musicbrainz.org/ws/2/release/?query={}&fmt=xml&limit=8",
-            encoded_query
-        );
+        let url =
+            format!("https://musicbrainz.org/ws/2/release/?query={encoded_query}&fmt=xml&limit=8");
 
         // println!("Querying MusicBrainz: {}", url);
 
         let response = match self.client.get(&url).send() {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("HTTP request failed: {}", e);
+                eprintln!("HTTP request failed: {e}");
                 return None;
             }
         };
@@ -121,7 +122,7 @@ impl CoverFetcher {
         let xml_body = match response.text() {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("Failed to read response body: {}", e);
+                eprintln!("Failed to read response body: {e}");
                 return None;
             }
         };
@@ -131,7 +132,7 @@ impl CoverFetcher {
         let metadata: MusicBrainzMetadata = match from_str(&cleaned_xml) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Failed to parse XML: {}", e);
+                eprintln!("Failed to parse XML: {e}");
                 eprintln!(
                     "Cleaned XML snippet:\n{}",
                     cleaned_xml.chars().take(300).collect::<String>()
@@ -158,7 +159,7 @@ impl CoverFetcher {
     }
 
     fn get_cover_art_url(&self, mbid: &str) -> Result<Option<String>, reqwest::Error> {
-        let url = format!("https://coverartarchive.org/release/{}", mbid);
+        let url = format!("https://coverartarchive.org/release/{mbid}");
 
         // println!("Querying Cover Art Archive: {}", url);
 
