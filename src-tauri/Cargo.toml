@@ -1,6 +1,6 @@
 [package]
 name = "blacktape-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "A desktop music player that can download and organize music from different platforms."
 authors = ["seafood"]
 edition = "2021"
