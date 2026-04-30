@@ -74,6 +74,9 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await?;
+
+        println!("SAVED COVER URL: {:?}", url);
+
         Ok(())
     }
 

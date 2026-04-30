@@ -3,6 +3,7 @@ use crate::{
     audio::media_controls::MediaControls,
     types::{PlayerState, Song},
 };
+use rand::rng;
 use rand::seq::SliceRandom;
 use rodio::cpal::{
     self,
@@ -14,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use souvlaki::MediaMetadata;
 use std::time::Instant;
 use std::{fs::File, sync::Mutex, time::Duration};
-use rand::rng;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +46,8 @@ impl AudioPlayer {
 
         Self::spawn_device_watcher(handle.clone());
         Self::spawn_transition_watcher(handle.clone());
+
+        Self::spawn_cover_listener(&handle);
 
         let initial_device_id = Self::get_default_device_id().ok();
 
@@ -119,7 +121,7 @@ impl AudioPlayer {
 
                                 let Some(next_cursor) = player.get_next_cursor() else {
                                     player.stop();
-                                    return
+                                    return;
                                 };
 
                                 is_next = player.advance_to_next_in_queue(next_cursor);
@@ -203,6 +205,8 @@ impl AudioPlayer {
             .pause()
             .expect("Failed to pause media controls");
         self.emit_state();
+        self.update_current_metadata();
+        self.update_discord_song();
     }
 
     pub fn resume(&mut self) {
@@ -216,6 +220,8 @@ impl AudioPlayer {
             .play()
             .expect("Failed to resume media controls state");
         self.emit_state();
+        self.update_current_metadata();
+        self.update_discord_song();
     }
 
     pub fn stop(&mut self) {
@@ -226,6 +232,8 @@ impl AudioPlayer {
             .expect("Failed to stop media controls state");
         self.duration = None;
         self.emit_state();
+        self.update_current_metadata();
+        self.update_discord_song();
     }
 
     pub fn toggle(&mut self) {
@@ -561,40 +569,38 @@ impl AudioPlayer {
         };
 
         let pos_ms = self.player.get_pos().as_millis() as i64;
+        let is_paused = self.is_paused();
         let handle = self.handle.clone();
-        let handle_clone = self.handle.clone();
 
-        tauri::async_runtime::spawn(async move {
+        tauri::async_runtime::spawn_blocking(move || {
             let (song, duration) = song_data;
             let duration_ms = duration.map(|d| d.as_millis() as i64).unwrap_or(0);
 
-            let _ = tauri::async_runtime::spawn_blocking(move || {
-                let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
-                let mut lock = state.lock().unwrap();
+            let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
+            let mut lock = state.lock().unwrap();
 
-                if lock.is_none() {
-                    match DiscordRpcClient::new(handle_clone) {
-                        Ok(client) => *lock = Some(client),
-                        Err(e) => {
-                            eprintln!("Failed to create Discord client: {}", e);
-                            return;
-                        }
+            if lock.is_none() {
+                match DiscordRpcClient::new(handle.clone()) {
+                    Ok(client) => *lock = Some(client),
+                    Err(e) => {
+                        eprintln!("Failed to create Discord client: {}", e);
+                        return;
+                    }
+                }
+            }
+
+            if let Some(ref mut discord) = *lock {
+                if !discord.is_connected() {
+                    if discord.reconnect().is_err() {
+                        return;
                     }
                 }
 
-                if let Some(ref mut discord) = *lock {
-                    if !discord.is_connected() {
-                        if let Err(_) = discord.reconnect() {
-                            return;
-                        }
-                    }
-
-                    if let Err(e) = discord.update_song(&song, duration_ms, pos_ms) {
-                        eprintln!("Discord update failed, disconnecting: {}", e);
-                        discord.is_connected = false;
-                    }
+                if let Err(e) = discord.update_song(&song, duration_ms, pos_ms, is_paused) {
+                    eprintln!("Discord update failed, disconnecting: {}", e);
+                    discord.is_connected = false;
                 }
-            });
+            }
         });
     }
 
@@ -649,5 +655,33 @@ impl AudioPlayer {
 
     pub fn get_volume(&mut self) -> f32 {
         self.player.volume()
+    }
+
+    fn spawn_cover_listener(handle: &AppHandle) {
+        use tauri::Listener;
+
+        let listener_handle = handle.clone();
+
+        handle.listen_any("cover-found", move |event| {
+            let Ok(payload) = serde_json::from_str::<(i64, String)>(event.payload()) else {
+                return;
+            };
+            let (song_id, url) = payload;
+
+            let h = listener_handle.clone();
+
+            tauri::async_runtime::spawn(async move {
+                if let Some(state) = h.try_state::<Mutex<AudioPlayer>>() {
+                    if let Ok(mut player) = state.lock() {
+                        if let Some(ref mut song) = player.current_song {
+                            if song.id == Some(song_id) {
+                                song.external_cover_url = Some(url);
+                                println!("Sync: Song cover updated in AudioPlayer state.");
+                            }
+                        }
+                    }
+                }
+            });
+        });
     }
 }

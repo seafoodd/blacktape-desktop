@@ -72,26 +72,24 @@ impl CoverFetcher {
     }
 
     pub fn fetch_cover_url(&self, song: &Song) -> Option<String> {
-        let mbid = self.get_release_mbid(song)?;
-        // println!("Found MBID: {} for {} - {}", mbid, song.artist, song.album);
-
-        if let Some(cached_url) = self.cache.lock().unwrap().get(&mbid) {
-            // println!("Using cached cover URL");
+        if let Some(cached_url) = self.cache.lock().unwrap().get(&song.path) {
             return Some(cached_url.clone());
         }
+
+        let mbid = self.get_release_mbid(song)?;
+
         match self.get_cover_art_url(&mbid) {
             Ok(Some(url)) => {
                 // Save in cache
-                self.cache.lock().unwrap().insert(mbid.clone(), url.clone());
+                self.cache.lock().unwrap().insert(song.path.clone(), url.clone());
                 Some(url)
             }
             Ok(None) => None,
             Err(e) => {
-                eprintln!("Error fetching cover: {}", e);
+                eprintln!("Error fetching cover: {e}");
                 None
             }
         }
-        // self.get_cover_art_url(&mbid).expect("dfdf")
     }
 
     fn get_release_mbid(&self, song: &Song) -> Option<String> {
