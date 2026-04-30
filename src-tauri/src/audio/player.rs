@@ -601,9 +601,10 @@ impl AudioPlayer {
     fn reconnect_default_device(&mut self) -> Result<(), String> {
         println!("Attempting to reconnect to a default audio device...");
 
-        let was_playing = !self.is_paused();
-        let current_pos = self.player.get_pos();
-        let current_song = self.current_song.clone();
+        let prev_is_paused = self.is_paused();
+        let prev_volume = self.get_volume();
+        let prev_pos = self.player.get_pos();
+        let prev_song = self.current_song.clone();
 
         let new_sink = Self::create_sink()?;
         let new_player = Player::connect_new(&new_sink.mixer());
@@ -611,16 +612,18 @@ impl AudioPlayer {
         self._sink = new_sink;
         self.player = new_player;
 
-        if let Some(song) = current_song {
+        if let Some(song) = prev_song {
             if let Ok(file) = File::open(&song.path) {
                 if let Ok(source) = Decoder::try_from(file) {
                     self.player.append(source);
 
-                    if current_pos.as_millis() > 0 {
-                        let _ = self.player.try_seek(current_pos);
+                    if prev_pos.as_millis() > 0 {
+                        let _ = self.player.try_seek(prev_pos);
                     }
 
-                    if !was_playing {
+                    self.set_volume(prev_volume);
+
+                    if prev_is_paused {
                         self.player.pause();
                     } else {
                         self.player.play();
