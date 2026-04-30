@@ -25,7 +25,7 @@ pub enum RepeatMode {
 }
 
 pub struct AudioPlayer {
-    _sink: MixerDeviceSink,
+    sink: MixerDeviceSink,
     player: Player,
     duration: Option<Duration>,
     media_controls: MediaControls,
@@ -42,7 +42,7 @@ pub struct AudioPlayer {
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
         let sink = Self::create_sink().expect("Failed to open default audio stream");
-        let player = Player::connect_new(&sink.mixer());
+        let player = Player::connect_new(sink.mixer());
 
         Self::spawn_device_watcher(handle.clone());
         Self::spawn_transition_watcher(handle.clone());
@@ -52,7 +52,7 @@ impl AudioPlayer {
         let initial_device_id = Self::get_default_device_id().ok();
 
         Self {
-            _sink: sink,
+            sink,
             player,
             duration: None,
             media_controls,
@@ -107,7 +107,9 @@ impl AudioPlayer {
                 let state = handle.state::<Mutex<AudioPlayer>>();
 
                 let needs_emit = {
-                    let mut player = state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut player = state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                     if player.is_paused() {
                         false
@@ -125,7 +127,7 @@ impl AudioPlayer {
                                 };
 
                                 is_next = player.advance_to_next_in_queue(next_cursor);
-                                println!("seamless transition IS NEXT: {}", is_next);
+                                println!("seamless transition IS NEXT: {is_next}");
 
                                 sleep_time = duration.saturating_sub(current_pos);
                                 advanced = true;
@@ -138,7 +140,9 @@ impl AudioPlayer {
                 if needs_emit {
                     tokio::time::sleep(sleep_time).await;
 
-                    let mut player = state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut player = state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                     if !is_next {
                         player.stop();
@@ -169,17 +173,17 @@ impl AudioPlayer {
     pub fn play(&mut self, song: Song) {
         println!("Playing {}, {:#?}", song.title, song.duration_ms);
         let path = &song.path;
-        let file = match File::open(&path) {
+        let file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("Error: Could not open file {}: {}", path, e);
+                eprintln!("Error: Could not open file {path}: {e}");
                 return;
             }
         };
         let source = match Decoder::try_from(file) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error: Failed to decode audio for {}: {}", path, e);
+                eprintln!("Error: Failed to decode audio for {path}: {e}");
                 return;
             }
         };
@@ -189,7 +193,7 @@ impl AudioPlayer {
         self.player.append(source);
 
         self.player.play();
-        self.current_song = Some(song.clone());
+        self.current_song = Some(song);
 
         self.update_current_metadata();
         self.media_controls
@@ -261,7 +265,7 @@ impl AudioPlayer {
     }
 
     pub fn get_queue(&self) -> Vec<Song> {
-        self.queue.iter().cloned().collect()
+        self.queue.clone()
     }
 
     /// Advances the player to the next song in the queue.
@@ -293,9 +297,8 @@ impl AudioPlayer {
         self.stop();
         if let (Some(order), Some(cursor)) = (&self.play_order, self.cursor) {
             if let Some(&song_idx) = order.get(cursor) {
-                if let Some(song) = self.queue.get(song_idx) {
-                    let song_to_play = song.clone();
-                    self.play(song_to_play);
+                if let Some(song) = self.queue.get(song_idx).cloned() {
+                    self.play(song);
                 }
             }
         }
@@ -333,7 +336,7 @@ impl AudioPlayer {
         if self.shuffle_mode {
             if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
                 let current_actual_idx = order[cursor];
-                order.sort();
+                order.sort_unstable();
                 self.cursor = Some(current_actual_idx);
             }
             self.shuffle_mode = false;
@@ -355,7 +358,7 @@ impl AudioPlayer {
             order.shuffle(&mut rng);
             order.insert(0, current_idx);
             self.cursor = Some(0);
-            println!("SHSHSHSHSHSHS, {:?}", order);
+            println!("SHSHSHSHSHSHS, {order:?}");
         }
     }
 
@@ -367,7 +370,7 @@ impl AudioPlayer {
         let formatted_uri: String;
 
         let uri_ref = if let Some(path) = &song.cover_url {
-            formatted_uri = Self::format_cover_path(path.clone());
+            formatted_uri = Self::format_cover_path(path);
             Some(formatted_uri.as_str())
         } else {
             None
@@ -391,7 +394,7 @@ impl AudioPlayer {
             }
         }
 
-        println!("BUFFERING TOOK: {:#?}", now.elapsed())
+        println!("BUFFERING TOOK: {:#?}", now.elapsed());
     }
 
     pub fn next(&mut self) {
@@ -443,10 +446,8 @@ impl AudioPlayer {
             if let Some(prev_song) = self.get_song_at_cursor() {
                 self.play(prev_song);
             }
-        } else {
-            if let Some(current) = self.get_song_at_cursor() {
-                self.play(current);
-            }
+        } else if let Some(current) = self.get_song_at_cursor() {
+            self.play(current);
         }
     }
 
@@ -479,12 +480,9 @@ impl AudioPlayer {
         }
 
         if let Err(e) = self.player.try_seek(target) {
-            eprintln!("Seek failed: {:?}", e);
+            eprintln!("Seek failed: {e:?}");
         }
-        println!(
-            "seeking: {:?}, REMAININGGGGGGG {:?}, duration: {:?}",
-            target, remaining, duration
-        );
+        println!("seeking: {target:?}, REMAININGGGGGGG {remaining:?}, duration: {duration:?}");
         self.update_discord_song();
         self.update_current_metadata();
     }
@@ -553,7 +551,7 @@ impl AudioPlayer {
     //     })?
     // }
 
-    fn format_cover_path(path: String) -> String {
+    fn format_cover_path(path: &str) -> String {
         #[cfg(target_os = "windows")]
         let cover_path = format!("file://{}", path.replace('/', "\\"));
         #[cfg(not(target_os = "windows"))]
@@ -568,14 +566,15 @@ impl AudioPlayer {
             None => return,
         };
 
-        let pos_ms = self.player.get_pos().as_millis() as i64;
+        let pos_ms = i64::try_from(self.player.get_pos().as_millis()).unwrap_or(0);
         let is_paused = self.is_paused();
         let handle = self.handle.clone();
 
         tauri::async_runtime::spawn_blocking(move || {
             let (song, duration) = song_data;
-            let duration_ms = duration.map(|d| d.as_millis() as i64).unwrap_or(0);
-
+            let duration_ms = duration
+                .and_then(|d| i64::try_from(d.as_millis()).ok())
+                .unwrap_or(0);
             let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
             let mut lock = state.lock().unwrap();
 
@@ -583,21 +582,19 @@ impl AudioPlayer {
                 match DiscordRpcClient::new(handle.clone()) {
                     Ok(client) => *lock = Some(client),
                     Err(e) => {
-                        eprintln!("Failed to create Discord client: {}", e);
+                        eprintln!("Failed to create Discord client: {e}");
                         return;
                     }
                 }
             }
 
             if let Some(ref mut discord) = *lock {
-                if !discord.is_connected() {
-                    if discord.reconnect().is_err() {
-                        return;
-                    }
+                if !discord.is_connected() && discord.reconnect().is_err() {
+                    return;
                 }
 
                 if let Err(e) = discord.update_song(&song, duration_ms, pos_ms, is_paused) {
-                    eprintln!("Discord update failed, disconnecting: {}", e);
+                    eprintln!("Discord update failed, disconnecting: {e}");
                     discord.is_connected = false;
                 }
             }
@@ -613,9 +610,9 @@ impl AudioPlayer {
         let prev_song = self.current_song.clone();
 
         let new_sink = Self::create_sink()?;
-        let new_player = Player::connect_new(&new_sink.mixer());
+        let new_player = Player::connect_new(new_sink.mixer());
 
-        self._sink = new_sink;
+        self.sink = new_sink;
         self.player = new_player;
 
         if let Some(song) = prev_song {
@@ -645,7 +642,7 @@ impl AudioPlayer {
     }
 
     pub fn set_queue(&mut self, songs: Vec<Song>) {
-        println!("SETTING QUEUE: {:?}", songs);
+        println!("SETTING QUEUE: {songs:?}");
         self.queue = songs;
     }
 
