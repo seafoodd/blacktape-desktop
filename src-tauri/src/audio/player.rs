@@ -430,7 +430,7 @@ impl AudioPlayer {
     }
 
     pub fn previous(&mut self) {
-        if self.player.get_pos() > Duration::from_secs(3) {
+        if self.player.get_pos() > Duration::from_secs(5) {
             if let Some(current) = self.get_song_at_cursor() {
                 self.play(current);
                 return;
