@@ -1,20 +1,21 @@
 .leftSidebar {
     position: relative;
     min-width: 150px;
-    max-width: 600px;    /*background: var(--bg-secondary); !* Assuming you have theme variables *!*/
+    height: 100%;
+    max-width: 600px; /*background: var(--bg-secondary); !* Assuming you have theme variables *!*/
     /*border-right: 1px solid var(--border-color);*/
-    overflow-y: auto;
-    scrollbar-width: thin;
     border-inline: 1px solid rgb(169 169 169 / 0.5);
+    display: flex;
+    flex-direction: column;
     /*background-color: ;*/
 }
 
 .resizer {
     position: absolute;
-    right: 0;
+    right: -3px;
     top: 0;
     bottom: 0;
-    width: 5px;
+    width: 6px;
     cursor: col-resize;
     z-index: 10;
 }
@@ -34,6 +35,10 @@
     flex-direction: column;
     justify-content: start;
     align-items: start;
+    overflow-y: scroll;
+    scrollbar-width: thin;
+    min-height: 0;
+    flex: 1;
 }
 
 .artistImage {
