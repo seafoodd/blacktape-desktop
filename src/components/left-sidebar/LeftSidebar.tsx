@@ -21,7 +21,6 @@ const LeftSidebar = () => {
   const resize = useCallback(
     (mouseMoveEvent: MouseEvent) => {
       if (isResizing) {
-        // Limit the width between 150px and 600px
         const newWidth = Math.min(Math.max(150, mouseMoveEvent.clientX), 600);
         setSidebarWidth(newWidth);
       }

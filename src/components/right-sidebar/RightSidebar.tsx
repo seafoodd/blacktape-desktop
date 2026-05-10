@@ -10,7 +10,6 @@ const RightSidebar = () => {
   const stopResizing = useCallback(() => setIsResizing(false), []);
 
   const resize = useCallback((e: MouseEvent) => {
-    // Math for Right Sidebar: Window Width - Mouse X Position
     const newWidth = window.innerWidth - e.clientX;
     if (newWidth > 150 && newWidth < 600) {
       setSidebarWidth(newWidth);
@@ -20,7 +19,6 @@ const RightSidebar = () => {
   useEffect(() => {
     if (!isResizing) return;
 
-    // Apply styles to body to prevent text selection and show cursor during drag
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
 
@@ -36,23 +34,8 @@ const RightSidebar = () => {
   }, [isResizing, resize, stopResizing]);
 
   return (
-    <aside
-      className={styles.rightSidebar}
-      style={{ width: sidebarWidth }}
-    >
-      <div
-        className={styles.resizer}
-        onMouseDown={startResizing}
-        // style={{
-        //   position: "absolute",
-        //   left: 0,
-        //   top: 0,
-        //   bottom: 0,
-        //   width: "5px",
-        //   cursor: "col-resize",
-        //   zIndex: 10,
-        // }}
-      />
+    <aside className={styles.rightSidebar} style={{ width: sidebarWidth }}>
+      <div className={styles.resizer} onMouseDown={startResizing} />
       <Lyrics />
     </aside>
   );
