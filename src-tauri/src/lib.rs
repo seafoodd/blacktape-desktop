@@ -3,6 +3,7 @@ mod db;
 mod discord_presence;
 mod lyrics;
 mod music;
+mod search;
 mod types;
 
 use crate::audio::media_controls::MediaControls;
@@ -10,6 +11,7 @@ use crate::audio::player::RepeatMode;
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::lyrics::{fetch_lyrics, LyricsSource};
+use crate::search::SearchSuggestion;
 use crate::types::{Album, ArtistSummary};
 use audio::player::AudioPlayer;
 use std::sync::Mutex;
@@ -200,12 +202,14 @@ fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
 }
 
 #[command]
-async fn get_search_suggestions(query: String) -> Vec<String> {
-    let mut sugs: Vec<String> = Vec::new();
-    sugs.push("suggestion 1".to_string());
-    sugs.push("suggestion 2".to_string());
-    sugs.push("suggestion 33".to_string());
-    sugs
+async fn get_search_suggestions(query: String) -> Vec<SearchSuggestion> {
+    match search::bandcamp::search(query).await {
+        Ok(results) => results,
+        Err(e) => {
+            eprintln!("Search error: {e}");
+            Vec::new()
+        }
+    }
 }
 
 #[command]
@@ -223,10 +227,7 @@ async fn get_lyrics(
 
         if let (Some(lyrics), Some(source)) = (song.lyrics, song.lyrics_source) {
             if !lyrics.is_empty() {
-                let lyrics_source = LyricsSource {
-                    lyrics,
-                    source,
-                };
+                let lyrics_source = LyricsSource { lyrics, source };
 
                 return Ok(lyrics_source);
             }

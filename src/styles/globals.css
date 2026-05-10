@@ -26,10 +26,6 @@ h6 {
     line-height: 1.25;
 }
 
-p {
-    margin-bottom: var(--spacing-md);
-}
-
 a {
     color: var(--color-primary);
     transition: color 0.2s ease-in-out;
