@@ -10,10 +10,10 @@
 
 .resizer {
     position: absolute;
-    left: -3px;
+    left: -5px;
     top: 0;
     bottom: 0;
-    width: 6px;
+    width: 8px;
     cursor: col-resize;
     z-index: 10;
 }
