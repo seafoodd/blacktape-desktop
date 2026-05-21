@@ -121,16 +121,18 @@ impl AudioPlayer {
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 println!("start seamless transition");
 
-                                let Some(next_cursor) = player.get_next_cursor() else {
+                                if let Some(next_cursor) = player.get_next_cursor() {
+                                    is_next = player.advance_to_next_in_queue(next_cursor);
+                                    println!("seamless transition IS NEXT: {is_next}");
+
+                                    sleep_time = duration.saturating_sub(current_pos);
+                                    advanced = true;
+                                } else {
                                     player.stop();
-                                    return;
-                                };
-
-                                is_next = player.advance_to_next_in_queue(next_cursor);
-                                println!("seamless transition IS NEXT: {is_next}");
-
-                                sleep_time = duration.saturating_sub(current_pos);
-                                advanced = true;
+                                    is_next = false;
+                                    sleep_time = Duration::ZERO;
+                                    advanced = true;
+                                }
                             }
                         }
                         advanced
