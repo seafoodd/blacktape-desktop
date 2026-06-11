@@ -76,7 +76,7 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
-        println!("SAVED COVER URL: {url:?}");
+        // println!("SAVED COVER URL: {url:?}");
 
         Ok(())
     }

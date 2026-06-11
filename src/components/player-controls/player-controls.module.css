@@ -5,6 +5,15 @@
     flex-direction: column;
     background-color: rgb(255 255 255 / 0.05);
     position: relative;
+
+    transition: height 50ms linear, padding 50ms linear;
+
+    &.disabled {
+        height: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border: none;
+    }
 }
 
 .innerBlock {
@@ -13,6 +22,7 @@
     width: 100%;
     align-items: center;
     padding-inline: 12px;
+    overflow: hidden;
 }
 
 .progressBar {
@@ -22,7 +32,6 @@
     top: 0;
     left: 0;
     width: 100%;
-    cursor: pointer;
     transition: height 0.1s ease;
     /*border-top: 10px solid transparent;*/
     /*border-bottom: 10px solid transparent;*/
@@ -40,10 +49,12 @@
         transition: opacity 0.1s ease;
     }
 
-    &:hover {
+    &:not([disabled]):hover {
+        cursor: pointer;
         &::-webkit-slider-thumb {
             opacity: 1;
         }
+
         height: 4px;
     }
 }
@@ -57,10 +68,6 @@
     max-width: 120px;
 }
 
-.disabled {
-    background-color: rgb(255 0 0 / 0.1);
-}
-
 .leftControls {
     display: flex;
     gap: 10px;
@@ -69,6 +76,10 @@
 .leftControl {
     width: 32px;
     height: 32px;
+
+    &:disabled {
+        cursor: not-allowed;
+    }
     /*background-color: red;*/
     /*overflow: hidden;*/
 }
@@ -123,13 +134,35 @@
 }
 
 .rightControl {
+    transition: color 50ms linear;
+
     width: 30px;
     height: 30px;
     color: #838282;
+    position: relative;
+
+    &::after {
+        content: "";
+        position: absolute;
+        bottom: -4px;
+        left: 50%;
+        transform: translateX(-50%);
+
+        width: 0;
+        height: 3px;
+        background-color: var(--color-text);
+        border-radius: 9999px;
+
+        transition: width 50ms ease-in-out;
+    }
 }
 
 .rightControlActive {
     color: var(--color-text);
+
+    &::after {
+        width: 50%;
+    }
 }
 
 .volumeSlider {

@@ -75,6 +75,7 @@ const PlayerControls = () => {
         style={{
           background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #555 0)`,
         }}
+        disabled={!currentSong}
         min={0}
         max={1000}
         value={progress * 1000}
@@ -96,13 +97,25 @@ const PlayerControls = () => {
       />
       <div className={styles.innerBlock}>
         <div className={styles.leftControls}>
-          <button onClick={() => previous()} className={styles.leftControl}>
+          <button
+            onClick={() => previous()}
+            className={styles.leftControl}
+            disabled={!currentSong}
+          >
             <MdSkipPrevious />
           </button>
-          <button className={styles.leftControl} onClick={togglePlay}>
+          <button
+            className={styles.leftControl}
+            onClick={togglePlay}
+            disabled={!currentSong}
+          >
             {isPlaying ? <MdPause /> : <MdPlayArrow />}
           </button>
-          <button onClick={() => next()} className={styles.leftControl}>
+          <button
+            onClick={() => next()}
+            className={styles.leftControl}
+            disabled={!currentSong}
+          >
             <MdSkipNext />
           </button>
         </div>
@@ -168,7 +181,12 @@ const PlayerControls = () => {
           >
             <MdShuffle size={60} />
           </button>
-          <button className={styles.rightControl} onClick={handleMute}>
+          <button
+            className={clsx(styles.rightControl, {
+              [styles.rightControlActive]: volume > 0,
+            })}
+            onClick={handleMute}
+          >
             {volume > 0 ? <MdVolumeUp size={60} /> : <MdVolumeOff size={60} />}
           </button>
           <input

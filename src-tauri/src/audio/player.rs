@@ -123,7 +123,7 @@ impl AudioPlayer {
 
                                 if let Some(next_cursor) = player.get_next_cursor() {
                                     is_next = player.advance_to_next_in_queue(next_cursor);
-                                    println!("seamless transition IS NEXT: {is_next}");
+                                    // println!("seamless transition IS NEXT: {is_next}");
 
                                     sleep_time = duration.saturating_sub(current_pos);
                                     advanced = true;
@@ -151,7 +151,7 @@ impl AudioPlayer {
                     }
 
                     player.emit_state();
-                    player.update_discord_song();
+                    player.update_discord_song(Some(0));
                     player.update_current_metadata();
                 }
             }
@@ -173,7 +173,6 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
-        println!("Playing {}, {:#?}", song.title, song.duration_ms);
         let path = &song.path;
         let file = match File::open(path) {
             Ok(f) => f,
@@ -202,7 +201,7 @@ impl AudioPlayer {
             .play()
             .expect("Failed to resume media controls state");
         self.emit_state();
-        self.update_discord_song();
+        self.update_discord_song(Some(0));
     }
 
     pub fn pause(&mut self) {
@@ -212,7 +211,7 @@ impl AudioPlayer {
             .expect("Failed to pause media controls");
         self.emit_state();
         self.update_current_metadata();
-        self.update_discord_song();
+        self.update_discord_song(None);
     }
 
     pub fn resume(&mut self) {
@@ -227,7 +226,7 @@ impl AudioPlayer {
             .expect("Failed to resume media controls state");
         self.emit_state();
         self.update_current_metadata();
-        self.update_discord_song();
+        self.update_discord_song(None);
     }
 
     pub fn stop(&mut self) {
@@ -239,7 +238,6 @@ impl AudioPlayer {
         self.duration = None;
         self.emit_state();
         self.update_current_metadata();
-        self.update_discord_song();
     }
 
     pub fn toggle(&mut self) {
@@ -401,6 +399,7 @@ impl AudioPlayer {
 
     pub fn next(&mut self) {
         self.player.skip_one();
+        self.player.play();
 
         let Some(order) = &self.play_order else {
             return;
@@ -428,7 +427,7 @@ impl AudioPlayer {
         }
         self.emit_state();
         self.update_current_metadata();
-        self.update_discord_song();
+        self.update_discord_song(Some(0));
     }
 
     pub fn previous(&mut self) {
@@ -476,7 +475,6 @@ impl AudioPlayer {
             self.player.skip_one();
             self.advance_to_next_in_queue(next_cursor);
             self.emit_state();
-            self.update_discord_song();
             self.update_current_metadata();
             return;
         }
@@ -485,7 +483,10 @@ impl AudioPlayer {
             eprintln!("Seek failed: {e:?}");
         }
         println!("seeking: {target:?}, REMAININGGGGGGG {remaining:?}, duration: {duration:?}");
-        self.update_discord_song();
+
+        // let target_ms = i64::try_from(target.as_millis()).unwrap_or(0);
+        // self.update_discord_song(Some(target_ms));
+        // println!("UPDATING DISCORD SONG! seek() 2");
         self.update_current_metadata();
     }
 
@@ -562,13 +563,14 @@ impl AudioPlayer {
         cover_path
     }
 
-    fn update_discord_song(&self) {
+    fn update_discord_song(&self, force_position_ms: Option<i64>) {
         let song_data = match &self.current_song {
             Some(song) => (song.clone(), self.duration),
             None => return,
         };
 
-        let pos_ms = i64::try_from(self.player.get_pos().as_millis()).unwrap_or(0);
+        let pos_ms = force_position_ms
+            .unwrap_or_else(|| i64::try_from(self.player.get_pos().as_millis()).unwrap_or(0));
         let is_paused = self.is_paused();
         let handle = self.handle.clone();
 
@@ -676,6 +678,9 @@ impl AudioPlayer {
                             if song.id == Some(song_id) {
                                 song.external_cover_url = Some(url);
                                 println!("Sync: Song cover updated in AudioPlayer state.");
+                                let current_pos =
+                                    i64::try_from(player.player.get_pos().as_millis()).unwrap_or(0);
+                                player.update_discord_song(Some(current_pos));
                             }
                         }
                     }

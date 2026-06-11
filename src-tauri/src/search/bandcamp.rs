@@ -36,13 +36,20 @@ impl From<BandcampResult> for SearchSuggestion {
     fn from(res: BandcampResult) -> Self {
         let display_artist = res.band_name.unwrap_or_else(|| res.name.clone());
 
+        let img_src = match res.item_type.as_str() {
+            "a" => res.img.replace("/img/", "/img/a"),
+            "t" => res.img.replace("/img/", "/img/a"),
+
+            _ => res.img,
+        };
+
         Self {
             item_type: res.item_type,
             name: res.name,
             band_name: display_artist,
             album_name: res.album_name,
             item_url_path: res.item_url_path.unwrap_or_default(),
-            img: res.img.replace("/img/", "/img/a"),
+            img: img_src,
         }
     }
 }

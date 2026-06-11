@@ -86,7 +86,13 @@ impl DiscordRpcClient {
             .name(APP_NAME))
     }
 
-    pub fn update_song(&mut self, song: &Song, duration_ms: i64, position_ms: i64, is_paused: bool) -> Result<()> {
+    pub fn update_song(
+        &mut self,
+        song: &Song,
+        duration_ms: i64,
+        position_ms: i64,
+        is_paused: bool,
+    ) -> Result<()> {
         if is_paused {
             retry(
                 || {
@@ -108,24 +114,27 @@ impl DiscordRpcClient {
             .end(now + duration_ms - position_ms);
 
         let mut cover_url = song.external_cover_url.clone();
-            println!("COVR1: {:?}", cover_url);
 
         if cover_url.is_none() {
-            println!("COVR2: {:?}", cover_url);
             if let Some(fetched_url) = self.cover_fetcher.fetch_cover_url(song) {
                 cover_url = Some(fetched_url.clone());
-                let Some(song_id) = song.id else { return Ok(()) };
+                let Some(song_id) = song.id else {
+                    return Ok(());
+                };
                 let handle = self.handle.clone();
 
                 tauri::async_runtime::spawn(async move {
                     let db_state = handle.state::<tokio::sync::Mutex<Database>>();
                     let db = db_state.lock().await;
 
-                    if db.update_external_cover(song_id, &fetched_url).await.is_ok() {
+                    if db
+                        .update_external_cover(song_id, &fetched_url)
+                        .await
+                        .is_ok()
+                    {
                         handle.emit("cover-found", (song_id, fetched_url)).unwrap();
                     }
                 });
-
             }
         }
 

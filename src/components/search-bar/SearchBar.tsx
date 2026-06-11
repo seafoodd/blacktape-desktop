@@ -3,6 +3,7 @@ import styles from "./search-bar.module.css";
 import { invoke } from "@tauri-apps/api/core";
 import { AiOutlineArrowRight } from "react-icons/ai";
 import { BiDownload } from "react-icons/bi";
+import clsx from "clsx";
 
 type SearchSuggestion = {
   item_type: string;
@@ -16,10 +17,12 @@ type SearchSuggestion = {
 const formatSuggestionType = (type: string): string => {
   if (type === "a") {
     return "ALBUM";
+  } else if (type === "b") {
+    return "ARTIST";
   } else if (type === "t") {
     return "TRACK";
   } else {
-    return "";
+    return "UNKNOWN";
   }
 };
 
@@ -65,17 +68,24 @@ const SearchBar = () => {
           {suggestions.slice(0, 7).map((suggestion, index) => (
             <div key={index} className={styles.suggestion}>
               <img className={styles.cover} src={suggestion.img} alt="cover" />
-              <div className={styles.rightBlock}>
-                <p className={styles.title}>{suggestion.name}</p>
-                <p className={styles.artist}>by {suggestion.band_name}</p>
-                <p className={styles.type}>
+              <div className={clsx(styles.rightBlock, "truncate")}>
+                <p className={clsx(styles.title, "truncate")}>
+                  {suggestion.name}
+                </p>
+                <p className={clsx(styles.artist, "truncate")}>
+                  by {suggestion.band_name}
+                </p>
+                <p className={clsx(styles.type, "truncate")}>
                   {formatSuggestionType(suggestion.item_type)}
                 </p>
               </div>
               <div className={styles.tools}>
                 <button
                   className={styles.downloadButton}
-                  onClick={() => console.log("download")}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    console.log("download");
+                  }}
                 >
                   <BiDownload size={20} />
                 </button>

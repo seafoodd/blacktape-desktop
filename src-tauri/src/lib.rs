@@ -1,6 +1,7 @@
 mod audio;
 mod db;
 mod discord_presence;
+mod download;
 mod lyrics;
 mod music;
 mod search;
@@ -142,7 +143,6 @@ fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
 fn next(state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     player.next();
-    player.resume()
 }
 
 #[command]
@@ -173,7 +173,6 @@ fn toggle(state: State<Mutex<AudioPlayer>>) {
 fn set_volume(fraction: f32, state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     player.set_volume(fraction);
-    println!("SET VOLUME {}", fraction);
 }
 
 #[command]

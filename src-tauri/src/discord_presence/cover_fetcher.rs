@@ -1,8 +1,9 @@
-use std::{collections::HashMap, sync::Mutex};
-
 use quick_xml::de::from_str;
+use rand::RngExt;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::{collections::HashMap, fs, sync::Mutex};
 
 use crate::types::Song;
 
@@ -76,6 +77,21 @@ impl CoverFetcher {
             return Some(cached_url.clone());
         }
 
+        // Local image upload to Catbox
+        if let Some(local_art_bytes) = self.extract_local_artwork(song) {
+            if let Some(ref local_path_str) = song.cover_url {
+                if let Some(catbox_url) = self.upload_to_catbox(local_art_bytes, local_path_str) {
+                    self.cache
+                        .lock()
+                        .unwrap()
+                        .insert(song.path.clone(), catbox_url.clone());
+                    return Some(catbox_url);
+                }
+            }
+            println!("Catbox upload failed, falling back to MusicBrainz.");
+        }
+
+        // Fallback MusicBrainz image parse
         let mbid = self.get_release_mbid(song)?;
 
         match self.get_cover_art_url(&mbid) {
@@ -93,6 +109,69 @@ impl CoverFetcher {
                 None
             }
         }
+    }
+
+    fn extract_local_artwork(&self, song: &Song) -> Option<Vec<u8>> {
+        if let Some(ref local_path_str) = song.cover_url {
+            if !local_path_str.starts_with("http://") && !local_path_str.starts_with("https://") {
+                let path = Path::new(local_path_str);
+                if path.exists() && path.is_file() {
+                    if let Ok(bytes) = fs::read(path) {
+                        // println!("Loading pre-extracted cover art from database path: {}", local_path_str);
+                        return Some(bytes);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn upload_to_catbox(&self, mut image_bytes: Vec<u8>, cover_path: &str) -> Option<String> {
+        use reqwest::blocking::multipart;
+
+        if image_bytes.is_empty() || image_bytes.len() < 100 {
+            eprintln!("Skipping upload: Image file data is corrupt or empty.");
+            return None;
+        }
+
+        // append 4 random bytes to force catbox to create a fresh url
+        let mut rng = rand::rng();
+        let random_padding: [u8; 4] = rng.random();
+        image_bytes.extend_from_slice(&random_padding);
+
+        let extension = Path::new(cover_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg");
+
+        let file_name = format!("cover.{}", extension);
+
+        let form = multipart::Form::new()
+            .text("reqtype", "fileupload")
+            .text("userhash", "") // Anonymous upload
+            .part(
+                "fileToUpload",
+                multipart::Part::bytes(image_bytes).file_name(file_name), // Dynamic matching extension!
+            );
+
+        let response = self
+            .client
+            .post("https://catbox.moe/user/api.php")
+            .multipart(form)
+            .send()
+            .ok()?;
+
+        if response.status().is_success() {
+            if let Ok(url_text) = response.text() {
+                let trimmed = url_text.trim();
+                if trimmed.starts_with("https://") {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        None
     }
 
     fn get_release_mbid(&self, song: &Song) -> Option<String> {
