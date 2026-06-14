@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const CLIENT_ID: &str = "1490382526169219342";
 const SOURCE_CODE_URL: &str = "https://github.com/seafoodd/blacktape-desktop";
-const APP_NAME: &str = "Blacktape";
+const APP_NAME: &str = "Blacktape Music Player";
 const MAX_RETRIES: u32 = 10;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
