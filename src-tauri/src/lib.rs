@@ -3,21 +3,24 @@ mod db;
 mod discord_presence;
 mod download;
 mod lyrics;
-mod music;
+pub mod music;
 mod search;
-mod types;
+pub mod types;
 
 use crate::audio::media_controls::MediaControls;
 use crate::audio::player::RepeatMode;
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
+use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask};
 use crate::lyrics::{fetch_lyrics, LyricsSource};
 use crate::search::SearchSuggestion;
-use crate::types::{Album, ArtistSummary};
+use crate::types::{Album, ArtistSummary, DownloadType, Platform};
 use audio::player::AudioPlayer;
+use std::error::Error;
 use std::sync::Mutex;
-use tauri::{command, generate_handler, Listener, Manager, State, WebviewWindow};
-use types::Song;
+use tauri::{command, generate_handler, AppHandle, Listener, Manager, State, WebviewWindow};
+use tokio::task::JoinSet;
+pub use types::Song;
 
 #[command]
 async fn scan_music(
