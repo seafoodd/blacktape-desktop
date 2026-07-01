@@ -21,7 +21,7 @@ pub struct AutoSection {
     pub results: Vec<BandcampResult>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
 pub enum ItemType {
     Album,
     Artist,
@@ -76,12 +76,12 @@ impl From<BandcampResult> for SearchSuggestion {
     }
 }
 
-pub async fn search(query: String) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
+pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
     let client = Client::new();
     let url = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic";
 
     let request_body = SearchRequest {
-        search_text: query,
+        search_text: query.to_string(),
         search_filter: String::new(),
         full_page: false,
     };

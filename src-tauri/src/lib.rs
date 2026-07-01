@@ -14,7 +14,7 @@ use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask};
 use crate::lyrics::{fetch_lyrics, LyricsSource};
-use crate::search::SearchSuggestion;
+use crate::search::{process_raw_results, SearchSuggestion};
 use crate::types::{Album, ArtistSummary, DownloadType, Platform};
 use audio::player::AudioPlayer;
 use std::error::Error;
@@ -213,22 +213,22 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
         let q = query.clone();
         tasks.spawn(async move {
             match platform {
-                Platform::Bandcamp => search::bandcamp::search(q).await.map_err(|e| e.into()),
-                Platform::Youtube => search::youtube::search(q).await.map_err(|e| e.into()),
+                Platform::Bandcamp => search::bandcamp::search(&q).await.map_err(|e| e),
+                Platform::Youtube => search::youtube::search(&q).await.map_err(|e| e),
             }
         });
     }
 
-    let mut all_suggestions = Vec::new();
+    let mut raw_suggestions = Vec::new();
     while let Some(res) = tasks.join_next().await {
-        if let Ok(Ok(results)) = res {
-            all_suggestions.extend(results);
-        } else if let Ok(Err(e)) = res {
-            eprintln!("Search error: {e}");
+        match res {
+            Ok(Ok(results)) => raw_suggestions.extend(results),
+            Ok(Err(e)) => eprintln!("Platform search error: {e}"),
+            Err(e) => eprintln!("Task join error: {e}"),
         }
     }
 
-    all_suggestions
+    process_raw_results(raw_suggestions, &query)
 }
 
 #[command]

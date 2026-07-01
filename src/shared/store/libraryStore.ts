@@ -5,7 +5,7 @@ import {
   getArtistAlbums,
   getArtists,
 } from "@/shared/lib/audio.ts";
-import { searchPlatforms } from "@/shared/lib/search.ts";
+import { Platform, searchPlatforms } from "@/shared/lib/search.ts";
 
 export type ActiveView = "ARTIST_ALBUMS" | "SEARCH_RESULTS";
 
@@ -20,9 +20,13 @@ export type SearchSuggestion = {
   name: string;
   band_name: string;
   album_name?: string;
-  subscriber_count?: number;
   item_url_path: string;
   img: string;
+  subscriber_count?: number;
+  view_count?: number;
+  year?: number;
+  duration?: number;
+  platform: Platform;
 };
 
 enum SortType {
@@ -85,6 +89,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       const results: SearchSuggestion[] = await searchPlatforms(trimmedQuery, [
         "Bandcamp",
+        "Youtube",
       ]);
 
       set((state) => ({

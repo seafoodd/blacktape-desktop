@@ -64,7 +64,6 @@ const SearchBar = () => {
                 className={styles.cover}
                 src={suggestion.img}
                 referrerPolicy="no-referrer"
-                crossOrigin=""
                 alt="cover"
               />
               <div className={clsx(styles.rightBlock, "truncate")}>
@@ -98,7 +97,7 @@ const SearchBar = () => {
                   onClick={() => {
                     console.log("download", suggestion.item_url_path);
                     invoke("download", {
-                      platform: "Youtube",
+                      platform: suggestion.platform,
                       downloadType: suggestion.item_type,
                       url: suggestion.item_url_path,
                     });

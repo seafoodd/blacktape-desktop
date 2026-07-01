@@ -15,15 +15,27 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
         .await
         .map_err(|e| format!("Failed to read page payload: {}", e))?;
 
-    let tracks = parse_tracks_from_html(&html, base_url)?;
+    let mut tracks = parse_tracks_from_html(&html, base_url)?;
+    let album_meta = parse_album_meta(&html);
+
+    for (idx, track) in tracks.iter_mut().enumerate() {
+        if let Some(clean_title) = track.file_name.splitn(2, ". ").nth(1) {
+            track.title = clean_title.to_string();
+        }
+        track.album = album_meta.title.clone();
+        track.artists = album_meta.artists.clone();
+        track.track_number = Some((idx + 1) as i32);
+        track.genres = album_meta.genres.clone();
+        track.release_year = album_meta.release_year;
+    }
 
     Ok(AlbumDownload {
-        title: "".to_string(),
-        artists: vec![],
+        title: album_meta.title,
+        artists: album_meta.artists,
         tracks,
-        genres: None,
-        release_year: None,
-        external_cover_url: None,
+        genres: album_meta.genres,
+        release_year: album_meta.release_year,
+        external_cover_url: album_meta.external_cover_url,
     })
 }
 
@@ -67,6 +79,134 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
     }
 
     Ok(tracks)
+}
+
+struct AlbumMeta {
+    title: String,
+    artists: Vec<String>,
+    genres: Option<Vec<String>>,
+    release_year: Option<i32>,
+    external_cover_url: Option<String>,
+}
+
+fn parse_album_meta(html: &str) -> AlbumMeta {
+    let mut title = None;
+    let mut artists = Vec::new();
+    let mut genres = None;
+    let mut release_year = None;
+    let mut external_cover_url = None;
+
+    // Isolate the structured script block safely if present
+    let json_ld = extract_json_ld_block(html).unwrap_or_default();
+
+    // 1. EXTRACT ALBUM TITLE & ARTIST NAME
+    // Layer A: Extract from universal Open Graph metadata (highly uniform format: "Title, by Artist")
+    if let Some(caps) = Regex::new(r#"<meta[^>]*property="og:title"[^>]*content="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        let og_content = caps.get(1).unwrap().as_str();
+        if let Some(idx) = og_content.rfind(", by ") {
+            title = Some(og_content[..idx].to_string());
+            artists.push(og_content[idx + 5..].to_string());
+        } else {
+            title = Some(og_content.to_string());
+        }
+    }
+
+    // Layer B Fallback: Extract from structural Schema JSON-LD metadata
+    if title.is_none() {
+        if let Some(caps) = Regex::new(r#""name"\s*:\s*"([^"]+)""#)
+            .ok()
+            .and_then(|r| r.captures(&json_ld))
+        {
+            title = Some(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+    if artists.is_empty() {
+        if let Some(caps) = Regex::new(r#""byArtist"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)""#)
+            .ok()
+            .and_then(|r| r.captures(&json_ld))
+        {
+            artists.push(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+
+    // Layer C Fallback: Document `<title>` parsing
+    if title.is_none() || artists.is_empty() {
+        if let Some(caps) = Regex::new(r#"<title>\s*([^|]+?)\s*\|\s*([^<]+?)\s*</title>"#)
+            .ok()
+            .and_then(|r| r.captures(html))
+        {
+            if title.is_none() {
+                title = Some(caps.get(1).unwrap().as_str().trim().to_string());
+            }
+            if artists.is_empty() {
+                artists.push(caps.get(2).unwrap().as_str().trim().to_string());
+            }
+        }
+    }
+
+    // 2. EXTRACT EXTERNAL COVER URL
+    if let Some(caps) = Regex::new(r#"<meta[^>]*property="og:image"[^>]*content="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        external_cover_url = Some(caps.get(1).unwrap().as_str().to_string());
+    } else if let Some(caps) = Regex::new(r#"<link[^>]*rel="image_src"[^>]*href="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        external_cover_url = Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    // 3. EXTRACT RELEASE YEAR
+    if let Some(caps) = Regex::new(r#""datePublished"\s*:\s*"[^"]*?(\d{4})""#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        release_year = caps.get(1).unwrap().as_str().parse::<u32>().ok();
+    } else if let Some(caps) = Regex::new(r#"(?i)released\s+(?:\d{1,2}\s+[a-z]+\s+)?\b(\d{4})\b"#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        release_year = caps.get(1).unwrap().as_str().parse::<u32>().ok();
+    }
+
+    // 4. EXTRACT GENRES (KEYWORDS)
+    if let Some(caps) = Regex::new(r#""keywords"\s*:\s*\[([^\]]+)\]"#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        let keywords_block = caps.get(1).unwrap().as_str();
+        let mut tags = Vec::new();
+        if let Some(kw_re) = Regex::new(r#""([^"]+)""#).ok() {
+            for kw_cap in kw_re.captures_iter(keywords_block) {
+                tags.push(kw_cap.get(1).unwrap().as_str().to_string());
+            }
+        }
+        if !tags.is_empty() {
+            genres = Some(tags);
+        }
+    }
+
+    AlbumMeta {
+        title: title.unwrap_or_else(|| "Unknown Album".to_string()),
+        artists: if artists.is_empty() {
+            vec!["Unknown Artist".to_string()]
+        } else {
+            artists
+        },
+        genres,
+        release_year: Some(release_year.unwrap().cast_signed()),
+        external_cover_url,
+    }
+}
+
+fn extract_json_ld_block(html: &str) -> Option<String> {
+    let re = Regex::new(r#"(?s)<script\s+type="application/ld\+json">([\s\S]*?)</script>"#).ok()?;
+    re.captures(html)
+        .map(|caps| caps.get(1).unwrap().as_str().to_string())
 }
 
 #[cfg(test)]

@@ -243,35 +243,35 @@ pub async fn download_batch(
         let dpapi_failed = err.contains("Failed to decrypt with DPAPI");
         let missing_db = err.contains("could not find") && err.contains("cookies database");
 
-        if needs_auth || dpapi_failed || missing_db {
-            println!("[ytdlp::youtube] Auth barrier or DPAPI error encountered. Cycling browser profiles...");
-
-            let fallbacks = ["firefox", "chrome", "edge", "brave", "safari"];
-            for browser in fallbacks {
-                println!(
-                    "[ytdlp::youtube] Attempting authentication fallback via profile: {}",
-                    browser
-                );
-                let mut retry_args = base_args.clone();
-                retry_args.push("--cookies-from-browser");
-                retry_args.push(browser);
-
-                let retry_result = execute(app, &retry_args).await;
-                if retry_result.is_ok() {
-                    result = retry_result;
-                    break;
-                } else if let Err(ref retry_err) = retry_result {
-                    // If the specific browser failed due to DPAPI or age gating, keep cycling
-                    let still_blocked = retry_err.contains("Sign in to confirm your age")
-                        || retry_err.contains("Failed to decrypt with DPAPI");
-
-                    if !still_blocked {
-                        result = retry_result;
-                        break;
-                    }
-                }
-            }
-        }
+        // if needs_auth || dpapi_failed || missing_db {
+        //     println!("[ytdlp::youtube] Auth barrier or DPAPI error encountered. Cycling browser profiles...");
+        //
+        //     let fallbacks = ["firefox", "chrome", "edge", "brave", "safari"];
+        //     for browser in fallbacks {
+        //         println!(
+        //             "[ytdlp::youtube] Attempting authentication fallback via profile: {}",
+        //             browser
+        //         );
+        //         let mut retry_args = base_args.clone();
+        //         retry_args.push("--cookies-from-browser");
+        //         retry_args.push(browser);
+        //
+        //         let retry_result = execute(app, &retry_args).await;
+        //         if retry_result.is_ok() {
+        //             result = retry_result;
+        //             break;
+        //         } else if let Err(ref retry_err) = retry_result {
+        //             // If the specific browser failed due to DPAPI or age gating, keep cycling
+        //             let still_blocked = retry_err.contains("Sign in to confirm your age")
+        //                 || retry_err.contains("Failed to decrypt with DPAPI");
+        //
+        //             if !still_blocked {
+        //                 result = retry_result;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        // }
     }
     // Clean up tracking file asset from disk silently once done
     let _ = fs::remove_file(batch_file_path);
