@@ -80,6 +80,16 @@
     font-size: 14px;
 }
 
+.followers {
+    color: var(--color-muted);
+    font-size: 15px;
+    text-transform: lowercase;
+
+    &:first-letter {
+        text-transform: uppercase;
+    }
+}
+
 .browseButton {
     display: flex;
     align-items: center;

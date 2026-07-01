@@ -1,11 +1,12 @@
-mod audio;
-mod db;
+pub mod audio;
+pub mod db;
 mod discord_presence;
-mod download;
+pub mod download;
 mod lyrics;
 pub mod music;
 mod search;
 pub mod types;
+pub mod utils;
 
 use crate::audio::media_controls::MediaControls;
 use crate::audio::player::RepeatMode;
@@ -25,7 +26,7 @@ pub use types::Song;
 #[command]
 async fn scan_music(
     dir: String,
-    app: tauri::AppHandle,
+    app: AppHandle,
     state: State<'_, tokio::sync::Mutex<Database>>,
 ) -> Result<Vec<Song>, String> {
     if !std::path::Path::new(&dir).exists() {
@@ -204,14 +205,30 @@ fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
 }
 
 #[command]
-async fn get_search_suggestions(query: String) -> Vec<SearchSuggestion> {
-    match search::bandcamp::search(query).await {
-        Ok(results) => results,
-        Err(e) => {
+async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<SearchSuggestion> {
+    let mut tasks: JoinSet<Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>>> =
+        JoinSet::new();
+
+    for platform in platforms {
+        let q = query.clone();
+        tasks.spawn(async move {
+            match platform {
+                Platform::Bandcamp => search::bandcamp::search(q).await.map_err(|e| e.into()),
+                Platform::Youtube => search::youtube::search(q).await.map_err(|e| e.into()),
+            }
+        });
+    }
+
+    let mut all_suggestions = Vec::new();
+    while let Some(res) = tasks.join_next().await {
+        if let Ok(Ok(results)) = res {
+            all_suggestions.extend(results);
+        } else if let Ok(Err(e)) = res {
             eprintln!("Search error: {e}");
-            Vec::new()
         }
     }
+
+    all_suggestions
 }
 
 #[command]
@@ -247,6 +264,57 @@ async fn get_lyrics(
     Ok(lyrics_source)
 }
 
+#[command]
+async fn download(
+    app_handle: AppHandle,
+    queue_state: State<'_, DownloadQueue>,
+    platform: Platform,
+    download_type: DownloadType,
+    url: String,
+) -> Result<String, String> {
+    let home_dir = app_handle.path().home_dir().map_err(|e| e.to_string())?;
+    let download_dir = home_dir.join("blacktape-lib").to_str().unwrap().to_string();
+
+    let payload = match download_type {
+        DownloadType::Album => DownloadPayload::AlbumURL(url),
+        DownloadType::Track => DownloadPayload::TrackURL(url),
+    };
+
+    // let payload = if download_type == "album" {
+    //     DownloadPayload::Batch {
+    //         tracks: vec![TrackDownload {
+    //             url,
+    //             file_name: "Unknown".to_string(),
+    //         }],
+    //     }
+    // } else {
+    //     let video_id = url
+    //         .split("v=")
+    //         .nth(1)
+    //         .unwrap_or("track")
+    //         .split('&')
+    //         .next()
+    //         .unwrap_or("track")
+    //         .to_string();
+    //     DownloadPayload::Single(TrackDownload {
+    //         url,
+    //         file_name: format!("yt_{}", video_id),
+    //     })
+    // };
+
+    // Slam it onto the background pipeline processing engine instantly
+    queue_state
+        .tx
+        .send(DownloadTask {
+            platform,
+            payload,
+            output_dir: download_dir,
+        })
+        .map_err(|e| e.to_string())?;
+
+    Ok("Task queued successfully".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -276,6 +344,16 @@ pub fn run() {
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
             let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
             app.manage(tokio::sync::Mutex::new(db));
+
+            let updater_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = ytdlp::check_and_update(updater_handle).await {
+                    eprintln!("[blacktape Error] yt-dlp lifecycle sync failed: {e}");
+                }
+            });
+
+            let tx = download::init_queue_worker(app.handle().clone());
+            app.manage(download::DownloadQueue { tx });
 
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
                 let handle = app_handle.clone();
@@ -317,7 +395,8 @@ pub fn run() {
             toggle_shuffle,
             set_repeat_mode,
             get_lyrics,
-            get_search_suggestions
+            get_search_suggestions,
+            download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

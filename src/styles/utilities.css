@@ -20,6 +20,14 @@
     font-weight: 700;
 }
 
+.uppercase {
+    text-transform: uppercase;
+}
+
+.lowercase {
+    text-transform: uppercase;
+}
+
 .truncate {
     white-space: nowrap;
     overflow: hidden;

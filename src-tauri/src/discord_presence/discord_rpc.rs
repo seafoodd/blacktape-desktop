@@ -211,3 +211,57 @@ fn current_timestamp_ms() -> Result<i64> {
         .map(|d| d.as_millis() as i64)
         .map_err(|_| RpcError::TimeError)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn test_retry_mechanism_success_eventually() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        // Fail twice, succeed on the 3rd attempt
+        let result = retry(
+            move || {
+                let current = counter_clone.fetch_add(1, Ordering::SeqCst);
+                if current < 2 {
+                    Err("temporary failure")
+                } else {
+                    Ok("success!")
+                }
+            },
+            5,
+            Duration::from_millis(1),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success!");
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_retry_mechanism_exhausted_fallback() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        let result = retry(
+            move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                let err: std::result::Result<(), &str> = Err("permanent blowup");
+                err
+            },
+            3,
+            Duration::from_millis(1),
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RpcError::ConnectError(msg) => assert!(msg.contains("permanent blowup")),
+            _ => panic!("Expected a ConnectError variant"),
+        }
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+}

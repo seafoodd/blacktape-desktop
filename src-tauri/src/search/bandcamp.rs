@@ -1,6 +1,8 @@
 use crate::search::SearchSuggestion;
+use crate::types::Platform;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 
 #[derive(Serialize)]
 struct SearchRequest {
@@ -19,6 +21,14 @@ pub struct AutoSection {
     pub results: Vec<BandcampResult>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum ItemType {
+    Album,
+    Artist,
+    Track,
+    Unknown,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BandcampResult {
     #[serde(rename = "type")]
@@ -34,27 +44,39 @@ pub struct BandcampResult {
 
 impl From<BandcampResult> for SearchSuggestion {
     fn from(res: BandcampResult) -> Self {
+        let item_type = match res.item_type.as_str() {
+            "a" => ItemType::Album,
+            "t" => ItemType::Track,
+            "b" => ItemType::Artist,
+            _ => ItemType::Unknown,
+        };
+
         let display_artist = res.band_name.unwrap_or_else(|| res.name.clone());
 
-        let img_src = match res.item_type.as_str() {
-            "a" => res.img.replace("/img/", "/img/a"),
-            "t" => res.img.replace("/img/", "/img/a"),
+        let img_src = match item_type {
+            ItemType::Album => res.img.replace("/img/", "/img/a"),
+            ItemType::Track => res.img.replace("/img/", "/img/a"),
 
             _ => res.img,
         };
 
         Self {
-            item_type: res.item_type,
+            item_type,
             name: res.name,
             band_name: display_artist,
             album_name: res.album_name,
+            subscriber_count: None,
+            view_count: None,
+            year: None,
             item_url_path: res.item_url_path.unwrap_or_default(),
             img: img_src,
+            duration: None,
+            platform: Platform::Bandcamp,
         }
     }
 }
 
-pub async fn search(query: String) -> Result<Vec<SearchSuggestion>, Box<dyn std::error::Error>> {
+pub async fn search(query: String) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
     let client = Client::new();
     let url = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic";
 

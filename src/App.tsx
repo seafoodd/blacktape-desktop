@@ -6,14 +6,15 @@ import { useEffect } from "react";
 import styles from "./app.module.css";
 import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
 
-import ArtistAlbums from "@/components/artist-albums/ArtistAlbums.tsx";
+import ArtistAlbums from "@/pages/artist-albums/ArtistAlbums.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import RightSidebar from "@/components/right-sidebar/RightSidebar.tsx";
 import SearchBar from "@/components/search-bar/SearchBar.tsx";
+import SearchResults from "@/pages/search-results/SearchResults.tsx";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
-  const { fetchTabs } = useLibraryStore();
+  const { fetchTabs, activeView } = useLibraryStore();
 
   async function handlePickFolder() {
     const dir = await pickFolder();
@@ -42,7 +43,8 @@ function App() {
 
         {/* Main Content */}
         <main className={styles.main}>
-          <ArtistAlbums />
+          {activeView === "ARTIST_ALBUMS" && <ArtistAlbums />}
+          {activeView === "SEARCH_RESULTS" && <SearchResults />}
         </main>
 
         <RightSidebar />

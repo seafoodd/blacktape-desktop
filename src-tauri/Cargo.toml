@@ -20,14 +20,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 #yt-dlp = "=2.7.2"
 rustypipe = "0.11.4"
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "test"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.10.1"
 rodio = { version = "0.22.2", default-features = true, features = ["symphonia-all"] }
 lofty = "0.24.0"
-walkdir = "2.5.0"
 tauri-plugin-dialog = "2.6.0"
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 discord-rich-presence = "1.1.0"
@@ -43,6 +42,9 @@ rayon = "1.12.0"
 jwalk = "0.8.1"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 dashmap = "7.0.0-rc2"
+tempfile = "3.27.0"
+winapi = { version = "0.3.9", features = ["fileapi", "winnt"] }
+strsim = "0.11.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

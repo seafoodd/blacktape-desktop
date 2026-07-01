@@ -26,14 +26,51 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
         .map(|e| e.path())
         .filter(|p| {
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            matches!(ext, "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aiff")
+            matches!(
+                ext,
+                "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aiff" | "opus"
+            )
         })
         .collect();
+
+    println!(
+        "[Scanner] Found {} matching files by extension on disk. Inspecting containers...",
+        entries.len()
+    );
 
     entries
         .into_par_iter()
         .filter_map(|path| {
-            let tagged_file = Probe::open(&path).and_then(|p| p.read()).ok()?;
+            // 1. Break open the Probe steps to explicitly log parsing or IO errors
+            let probe = match Probe::open(&path) {
+                Ok(p) => p,
+                Err(err) => {
+                    eprintln!("[Scanner Error] IO/Probe failed to open file structure at {:?}: {}", path, err);
+                    return None;
+                }
+            };
+
+            let tagged_file = match probe.read() {
+                Ok(tf) => tf,
+                Err(err) => {
+                    eprintln!(
+                        "[Scanner Error] Lofty metadata stream reading failed for extension '{:?}' at {:?}: {}",
+                        path.extension().unwrap_or_default(),
+                        path,
+                        err
+                    );
+                    return None;
+                }
+            };
+
+            // Optional metrics tracking print
+            println!(
+                "[Scanner Success] Parsed {:?} - Format: {:?} | Bitrate: {:?} kbps",
+                path.file_name().unwrap_or_default(),
+                tagged_file.file_type(),
+                tagged_file.properties().audio_bitrate()
+            );
+
             let tag = tagged_file
                 .primary_tag()
                 .or_else(|| tagged_file.first_tag());
@@ -66,10 +103,10 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
                         "front.jpg",
                         "front.png",
                     ]
-                    .iter()
-                    .map(|name| p.join(name))
-                    .find(|file| file.exists())
-                    .map(|file| file.to_string_lossy().to_string())
+                        .iter()
+                        .map(|name| p.join(name))
+                        .find(|file| file.exists())
+                        .map(|file| file.to_string_lossy().to_string())
                 });
                 final_cover = entry.value().clone();
             }
@@ -113,6 +150,109 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
         })
         .collect()
 }
+
+// pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
+//     if !covers_dir.exists() {
+//         let _ = fs::create_dir_all(covers_dir);
+//     }
+//
+//     let dir_covers: Arc<DashMap<PathBuf, Option<String>>> = Arc::new(DashMap::new());
+//     let written_hashes: Arc<DashSet<String>> = Arc::new(DashSet::new());
+//
+//     let entries: Vec<PathBuf> = WalkDir::new(&dir)
+//         .into_iter()
+//         .filter_map(Result::ok)
+//         .filter(|e| e.file_type().is_file())
+//         .map(|e| e.path())
+//         .filter(|p| {
+//             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+//             matches!(ext, "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aiff" | "webm" | "opus")
+//         })
+//         .collect();
+//
+//     entries
+//         .into_par_iter()
+//         .filter_map(|path| {
+//             let tagged_file = Probe::open(&path).and_then(|p| p.read()).ok()?;
+//             let tag = tagged_file
+//                 .primary_tag()
+//                 .or_else(|| tagged_file.first_tag());
+//
+//             let title = tag
+//                 .and_then(|t| t.title().map(|s| s.to_string()))
+//                 .unwrap_or_else(|| {
+//                     path.file_stem()
+//                         .and_then(|s| s.to_str())
+//                         .unwrap_or("Unknown")
+//                         .to_string()
+//                 });
+//
+//             let artist = tag
+//                 .and_then(|t| t.artist().map(|s| s.to_string()))
+//                 .unwrap_or_else(|| "Unknown Artist".to_string());
+//             let album = tag
+//                 .and_then(|t| t.album().map(|s| s.to_string()))
+//                 .unwrap_or_else(|| "Unknown Album".to_string());
+//
+//             let parent = path.parent().map(|p| p.to_path_buf());
+//             let mut final_cover = None;
+//
+//             if let Some(p) = &parent {
+//                 let entry = dir_covers.entry(p.clone()).or_insert_with(|| {
+//                     [
+//                         "cover.jpg",
+//                         "cover.png",
+//                         "folder.jpg",
+//                         "front.jpg",
+//                         "front.png",
+//                     ]
+//                     .iter()
+//                     .map(|name| p.join(name))
+//                     .find(|file| file.exists())
+//                     .map(|file| file.to_string_lossy().to_string())
+//                 });
+//                 final_cover = entry.value().clone();
+//             }
+//
+//             if final_cover.is_none() {
+//                 if let Some(pic) = tag.and_then(|t| t.pictures().first()) {
+//                     let hash_input = format!("{artist}{album}");
+//                     let hash = format!("{:016x}", hash64(hash_input.as_bytes()));
+//                     let ext = if pic
+//                         .mime_type()
+//                         .map_or(false, |m| m.as_str().contains("png"))
+//                     {
+//                         "png"
+//                     } else {
+//                         "jpg"
+//                     };
+//                     let full_path = covers_dir.join(format!("{hash}.{ext}"));
+//
+//                     if written_hashes.insert(hash) && !full_path.exists() {
+//                         let _ = fs::write(&full_path, pic.data());
+//                     }
+//                     final_cover = Some(full_path.to_string_lossy().to_string());
+//                 }
+//             }
+//
+//             Some(Song {
+//                 id: None,
+//                 path: path.to_string_lossy().to_string(),
+//                 title,
+//                 artist,
+//                 album,
+//                 duration_ms: tagged_file.properties().duration().as_millis() as u64,
+//                 track_number: tag.and_then(|t| t.track()).map(|n| n as i32),
+//                 genre: tag.and_then(|t| t.genre()).map(|g| g.to_string()),
+//                 release_year: tag.and_then(|t| t.date()).map(|d| d.year as i32),
+//                 cover_url: final_cover,
+//                 external_cover_url: None,
+//                 lyrics: None,
+//                 lyrics_source: None,
+//             })
+//         })
+//         .collect()
+// }
 
 pub fn old_scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
     let mut songs = Vec::new();
@@ -222,16 +362,6 @@ pub fn old_scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
             lyrics: None,
             lyrics_source: None,
         };
-        println!(
-            "Scanned song: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
-            song.title,
-            song.artist,
-            song.album,
-            song.duration_ms,
-            song.track_number,
-            song.genre,
-            song.release_year
-        );
 
         songs.push(song);
     }

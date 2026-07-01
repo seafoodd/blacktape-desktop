@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::audio::player::RepeatMode;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug, Deserialize, Clone, sqlx::FromRow)]
 pub struct Song {
@@ -16,6 +16,19 @@ pub struct Song {
     pub external_cover_url: Option<String>,
     pub lyrics: Option<String>,
     pub lyrics_source: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DownloadType {
+    Album,
+    Track,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Platform {
+    Youtube,
+    Bandcamp,
+    // Soundcloud,
 }
 
 #[derive(Serialize, Clone, Debug)]

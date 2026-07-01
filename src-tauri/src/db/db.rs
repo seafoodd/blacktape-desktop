@@ -3,7 +3,7 @@ use crate::types::{Album, ArtistSummary, Song};
 use sqlx::sqlite::SqlitePool;
 
 pub struct Database {
-    pool: SqlitePool,
+    pub pool: SqlitePool,
 }
 
 impl Database {

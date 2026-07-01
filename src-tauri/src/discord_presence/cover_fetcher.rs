@@ -117,7 +117,6 @@ impl CoverFetcher {
                 let path = Path::new(local_path_str);
                 if path.exists() && path.is_file() {
                     if let Ok(bytes) = fs::read(path) {
-                        // println!("Loading pre-extracted cover art from database path: {}", local_path_str);
                         return Some(bytes);
                     }
                 }
@@ -263,4 +262,71 @@ fn strip_xml_namespaces(xml: &str) -> String {
     xml.replace("xmlns=\"http://musicbrainz.org/ns/mmd-2.0#\"", "")
         .replace("xmlns:ns2=\"http://musicbrainz.org/ns/ext#-2.0\"", "")
         .replace("ns2:", "")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_xml_namespaces() {
+        let dirty_xml = r#"<metadata xmlns="http://musicbrainz.org/ns/mmd-2.0#" xmlns:ns2="http://musicbrainz.org/ns/ext#-2.0"><release-list><release ns2:score="100"></release></release-list></metadata>"#;
+        let cleaned = strip_xml_namespaces(dirty_xml);
+
+        assert!(!cleaned.contains("xmlns="));
+        assert!(!cleaned.contains("ns2:"));
+    }
+
+    #[test]
+    fn test_musicbrainz_xml_deserialization() {
+        let sample_xml = r#"
+        <metadata>
+            <release-list count="1">
+                <release id="c3374222-26cb-4034-8c88-f685fb7098e6" score="100">
+                    <title>Random Access Memories</title>
+                </release>
+            </release-list>
+        </metadata>
+        "#;
+
+        let parsed: Result<MusicBrainzMetadata, _> = quick_xml::de::from_str(sample_xml);
+        assert!(
+            parsed.is_ok(),
+            "Failed to parse MusicBrainz XML: {:?}",
+            parsed.err()
+        );
+
+        let metadata = parsed.unwrap();
+        assert_eq!(metadata.release_list.releases.len(), 1);
+
+        let release = &metadata.release_list.releases[0];
+        assert_eq!(release.id, "c3374222-26cb-4034-8c88-f685fb7098e6");
+        assert_eq!(release.title, "Random Access Memories");
+        assert_eq!(release.score, Some(100));
+    }
+
+    #[test]
+    fn test_cover_art_archive_json_deserialization() {
+        let sample_json = r#"{
+            "images": [
+                {
+                    "front": true,
+                    "approved": true,
+                    "image": "https://coverartarchive.org/api/original.jpg",
+                    "thumbnails": { "large": "https://coverartarchive.org/api/large.jpg" }
+                }
+            ]
+        }"#;
+
+        let parsed: Result<CoverArtArchiveResponse, _> = serde_json::from_str(sample_json);
+        assert!(parsed.is_ok(), "Failed to parse CoverArt Archive JSON");
+
+        let response = parsed.unwrap();
+        assert_eq!(response.images.len(), 1);
+        assert!(response.images[0].front);
+        assert_eq!(
+            response.images[0].thumbnails.large,
+            "https://coverartarchive.org/api/large.jpg"
+        );
+    }
 }
