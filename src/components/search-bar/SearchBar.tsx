@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
 import { invoke } from "@tauri-apps/api/core";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
-import { BiDownload, BiFilterAlt } from "react-icons/bi";
+import { BiDownload, BiFilterAlt, BiInfoCircle } from "react-icons/bi";
 import clsx from "clsx";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
@@ -26,6 +26,7 @@ type Platform = "All" | "Youtube" | "Bandcamp" | "Local";
 const SearchBar = () => {
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState<string>(query);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
 
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState<boolean>(false);
   const [activeCategory, setActiveCategory] = useState<FilterCategory>("All");
@@ -40,6 +41,9 @@ const SearchBar = () => {
   };
 
   useEffect(() => {
+    if (query.trim() !== "") {
+      setIsSearching(true);
+    }
     const handler = setTimeout(() => {
       setDebouncedQuery(query);
     }, 200);
@@ -49,7 +53,15 @@ const SearchBar = () => {
 
   useEffect(() => {
     setSearchQuery(debouncedQuery);
-    executeSearch(debouncedQuery);
+    if (debouncedQuery.trim() === "") {
+      setIsSearching(false);
+      return;
+    }
+
+    // Once the async search execution resolves, switch off loading state
+    executeSearch(debouncedQuery).finally(() => {
+      setIsSearching(false);
+    });
   }, [debouncedQuery, setSearchQuery, executeSearch]);
 
   const filteredResults = useMemo(() => {
@@ -63,6 +75,8 @@ const SearchBar = () => {
       return matchesCategory && matchesPlatform;
     });
   }, [searchResults, activeCategory, activePlatform]);
+
+  const showOverlay = query.trim() !== "";
 
   return (
     <div className={styles.container}>
@@ -165,79 +179,104 @@ const SearchBar = () => {
         )}
       </div>
 
-      {/* Standard Overlay Panel for Search Suggestion Items */}
-      {filteredResults.length > 0 && (
+      {/* Unified Overlay Layout Panel */}
+      {showOverlay && (
         <div className={styles.suggestions}>
           <div className={styles.suggestionsList}>
-            {filteredResults.slice(0, 20).map((suggestion, index) => (
-              <div key={index} className={styles.suggestion}>
-                <img
-                  className={clsx(styles.cover, {
-                    [styles.artist]: suggestion.item_type === ItemType.Artist,
-                  })}
-                  src={suggestion.img}
-                  referrerPolicy="no-referrer"
-                  alt="cover"
-                />
-                <div className={clsx(styles.rightBlock, "truncate")}>
-                  <p className={clsx(styles.title, "truncate")}>
-                    {suggestion.name}
-                  </p>
-                  <p className={clsx(styles.artist, "truncate")}>
-                    {suggestion.item_type === ItemType.Artist ? (
-                      <span className={styles.followers}>
-                        {suggestion.subscriber_count ? (
-                          <span className={"uppercase"}>
-                            {formatCompactNumber(suggestion.subscriber_count)}{" "}
-                            subscribers
-                          </span>
-                        ) : (
-                          ""
-                        )}
-                      </span>
-                    ) : (
-                      `by ${suggestion.band_name}`
-                    )}
-                  </p>
-                  <div className={styles.metaRow}>
-                    <span className={styles.type}>
-                      {formatSuggestionType(suggestion.item_type)}
-                    </span>
-                    {suggestion.platform && (
-                      <span className={styles.badge}>
-                        {suggestion.platform}
-                      </span>
-                    )}
+            {isSearching ? (
+              /* Skeleton Loading Blocks Condition */
+              Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className={styles.skeletonItem}>
+                  <div className={styles.skeletonCover} />
+                  <div className={styles.skeletonRightBlock}>
+                    <div className={styles.skeletonLineTitle} />
+                    <div className={styles.skeletonLineMeta} />
                   </div>
                 </div>
-                <div className={styles.tools}>
-                  <button
-                    className={styles.downloadButton}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      invoke("download", {
-                        platform: suggestion.platform,
-                        downloadType: suggestion.item_type,
-                        url: suggestion.item_url_path,
-                      });
-                    }}
-                  >
-                    {suggestion.item_type !== ItemType.Artist && (
-                      <BiDownload size={20} />
-                    )}
-                  </button>
-                </div>
+              ))
+            ) : filteredResults.length === 0 ? (
+              /* Fallback Condition for Zero Matched Results */
+              <div className={styles.noResults}>
+                <BiInfoCircle size={24} />
+                <p>No results found matching your active filter criteria</p>
               </div>
-            ))}
+            ) : (
+              /* Render Loaded Data Items */
+              filteredResults.slice(0, 20).map((suggestion, index) => (
+                <div key={index} className={styles.suggestion}>
+                  <img
+                    className={clsx(styles.cover, {
+                      [styles.artist]: suggestion.item_type === ItemType.Artist,
+                    })}
+                    src={suggestion.img}
+                    referrerPolicy="no-referrer"
+                    alt="cover"
+                  />
+                  <div className={clsx(styles.rightBlock, "truncate")}>
+                    <p className={clsx(styles.title, "truncate")}>
+                      {suggestion.name}
+                    </p>
+                    <p className={clsx(styles.artist, "truncate")}>
+                      {suggestion.item_type === ItemType.Artist ? (
+                        <span className={styles.followers}>
+                          {suggestion.subscriber_count ? (
+                            <span className={"uppercase"}>
+                              {formatCompactNumber(suggestion.subscriber_count)}{" "}
+                              subscribers
+                            </span>
+                          ) : (
+                            ""
+                          )}
+                        </span>
+                      ) : (
+                        `by ${suggestion.band_name}`
+                      )}
+                    </p>
+                    <div className={styles.metaRow}>
+                      <span className={styles.type}>
+                        {formatSuggestionType(suggestion.item_type)}
+                      </span>
+                      {suggestion.platform && (
+                        <span className={styles.badge}>
+                          {suggestion.platform}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className={styles.tools}>
+                    <button
+                      className={styles.downloadButton}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        invoke("download", {
+                          platform: suggestion.platform,
+                          downloadType: suggestion.item_type,
+                          url: suggestion.item_url_path,
+                        }).catch((e) => {
+                          console.log("Download error: ", e);
+                        });
+                      }}
+                    >
+                      {suggestion.item_type !== ItemType.Artist && (
+                        <BiDownload size={20} />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-          <a
-            className={styles.browseButton}
-            href="#"
-            onClick={handleBrowseAll}
-            onMouseDown={(e) => e.preventDefault()}
-          >
-            Browse all results <AiOutlineArrowRight size={20} />
-          </a>
+
+          {!isSearching && filteredResults.length > 0 && (
+            <a
+              className={styles.browseButton}
+              href="#"
+              onClick={handleBrowseAll}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              Browse all results <AiOutlineArrowRight size={20} />
+            </a>
+          )}
         </div>
       )}
     </div>

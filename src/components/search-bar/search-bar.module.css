@@ -32,7 +32,7 @@
     width: 100%;
     height: 100%;
     padding-left: 40px;
-    padding-right: 44px; /* Space for filter icon */
+    padding-right: 44px;
     color: white;
     font-size: 15px;
 
@@ -62,12 +62,10 @@
     }
 }
 
-/* Changes the filter color if active filter tags are active */
 .filterActive {
     color: var(--color-primary-light) !important;
 }
 
-/* Popover panel dashboard configuration placement context layers */
 .filterPopover {
     position: absolute;
     top: 38px;
@@ -94,7 +92,7 @@
     font-weight: 700;
     text-transform: uppercase;
     color: var(--color-muted);
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
 }
 
 .pillGrid {
@@ -131,12 +129,11 @@
     }
 }
 
-/* Base Dropdown List overlay results */
-/*.container:not(:focus-within) {*/
-/*    .suggestions {*/
-/*        display: none;*/
-/*    }*/
-/*}*/
+.container:not(:focus-within) {
+    .suggestions {
+        display: none;
+    }
+}
 
 .suggestions {
     position: absolute;
@@ -151,13 +148,14 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
     display: flex;
     flex-direction: column;
-    max-height: 480px;
+    max-height: 80vh;
 }
 
 .suggestionsList {
     display: flex;
     flex-direction: column;
-    max-height: 400px;
+    max-height: 480px;
+    height: 100%;
     overflow-y: auto;
     scrollbar-width: thin;
     scroll-behavior: smooth;
@@ -175,6 +173,10 @@
         background-color: var(--color-surface);
         cursor: pointer;
     }
+}
+
+.suggestion:nth-child(1) {
+    border-top: none;
 }
 
 .cover {
@@ -264,5 +266,84 @@
 
     &:hover {
         color: var(--color-primary-light);
+    }
+}
+
+.noResults {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--color-muted);
+    font-size: 14px;
+}
+
+.skeletonItem {
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 72px;
+    border-top: 1px solid var(--color-muted);
+    overflow: hidden;
+    position: relative;
+}
+
+.skeletonItem:nth-child(1) {
+    border-top: none;
+}
+
+.skeletonCover {
+    height: 56px;
+    aspect-ratio: 1 / 1;
+    background-color: rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+}
+
+.skeletonRightBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 60%;
+}
+
+.skeletonLineTitle {
+    height: 14px;
+    width: 100%;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+}
+
+.skeletonLineMeta {
+    height: 10px;
+    width: 40%;
+    background-color: rgba(255, 255, 255, 0.04);
+    border-radius: 2px;
+}
+
+.skeletonItem::after {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.03) 20%,
+            rgba(255, 255, 255, 0.06) 60%,
+            rgba(255, 255, 255, 0) 100%
+    );
+    animation: shimmer 1.4s infinite;
+    content: '';
+}
+
+@keyframes shimmer {
+    100% {
+        transform: translateX(100%);
     }
 }
