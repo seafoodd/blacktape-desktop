@@ -6,9 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
-use crate::utils::{sanitize, set_hidden};
+use crate::utils::set_hidden;
 use lofty::config::WriteOptions;
 use lofty::picture::{Picture, PictureType};
 use lofty::probe::Probe;
@@ -187,15 +187,20 @@ pub async fn download_batch(
     app: &AppHandle,
     tracks: &[TrackDownload],
     output_dir: &str,
-) -> Result<String, String> {
+) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
     let app_data = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-    let batch_file_path = app_data.join("yt_batch_queue.txt");
 
     if !app_data.exists() {
         fs::create_dir_all(&app_data).map_err(|e| e.to_string())?;
     }
+    let timestamp = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let session_id = format!("batch_{}", timestamp);
 
-    // Write ONLY the raw URLs to the file—no arguments, no complex escaping
+    let batch_file_path = app_data.join(format!("{}.txt", session_id));
+
     let file_content: String = tracks
         .iter()
         .map(|t| t.url.as_str())
@@ -204,170 +209,72 @@ pub async fn download_batch(
 
     fs::write(&batch_file_path, file_content).map_err(|e| e.to_string())?;
 
-    let temp_stage_dir = format!("{}/.temp", output_dir);
-    let stage_path = Path::new(&temp_stage_dir);
+    let temp_dir = format!("{output_dir}/.temp");
+    let temp_batch_dir = format!("{output_dir}/.temp/{session_id}");
+    let temp_path = Path::new(&temp_dir);
+    let temp_batch_path = Path::new(&temp_batch_dir);
 
-    if !stage_path.exists() {
-        fs::create_dir_all(stage_path).map_err(|e| e.to_string())?;
-
-        let _ = set_hidden(stage_path, true);
+    if !temp_path.exists() {
+        fs::create_dir_all(temp_path).map_err(|e| e.to_string())?;
+        let _ = set_hidden(temp_path, true);
     }
 
-    let output_template = format!("{temp_stage_dir}/%(id)s.%(ext)s");
+    let output_template = format!("{temp_batch_dir}/%(autonumber)s.%(ext)s");
     let batch_path_str = batch_file_path
         .to_str()
         .ok_or("Invalid temporary batch path encoding")?;
 
     #[rustfmt::skip]
     let base_args = vec![
-        // "-f", "251/bestaudio",
-        "-f", "ba[ext=m4a]/bestaudio[ext=m4a]",
+        "-f", "ba[ext=m4a]/bestaudio",
         "--ignore-errors",
         "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
         "--no-warnings",
         "--no-check-certificates",
-        "--cookies", "Z:\\cookies.txt",
         "-a", batch_path_str,
         "-o", &output_template,
     ];
 
     println!(
-        "[ytdlp::youtube] Streaming single-process batch download of size {} into temporary workspace...",
+        "[ytdlp] [{}] Streaming batch download of size {}...",
+        session_id,
         tracks.len()
     );
 
-    let mut result = execute(app, &base_args).await;
-
-    if let Err(ref err) = result {
-        let needs_auth = err.contains("Sign in to confirm your age");
-        let dpapi_failed = err.contains("Failed to decrypt with DPAPI");
-        let missing_db = err.contains("could not find") && err.contains("cookies database");
-
-        // if needs_auth || dpapi_failed || missing_db {
-        //     println!("[ytdlp::youtube] Auth barrier or DPAPI error encountered. Cycling browser profiles...");
-        //
-        //     let fallbacks = ["firefox", "chrome", "edge", "brave", "safari"];
-        //     for browser in fallbacks {
-        //         println!(
-        //             "[ytdlp::youtube] Attempting authentication fallback via profile: {}",
-        //             browser
-        //         );
-        //         let mut retry_args = base_args.clone();
-        //         retry_args.push("--cookies-from-browser");
-        //         retry_args.push(browser);
-        //
-        //         let retry_result = execute(app, &retry_args).await;
-        //         if retry_result.is_ok() {
-        //             result = retry_result;
-        //             break;
-        //         } else if let Err(ref retry_err) = retry_result {
-        //             // If the specific browser failed due to DPAPI or age gating, keep cycling
-        //             let still_blocked = retry_err.contains("Sign in to confirm your age")
-        //                 || retry_err.contains("Failed to decrypt with DPAPI");
-        //
-        //             if !still_blocked {
-        //                 result = retry_result;
-        //                 break;
-        //             }
-        //         }
-        //     }
-        // }
-    }
-    // Clean up tracking file asset from disk silently once done
+    let result = execute(app, &base_args).await;
     let _ = fs::remove_file(batch_file_path);
-
     result?;
 
-    println!(
-        "[Post-Processor] Processing {} downloaded files with Lofty...",
-        tracks.len()
-    );
-    let base_output = Path::new(output_dir);
-    let stage_path = Path::new(&temp_stage_dir);
+    let mut downloaded = Vec::new();
 
-    for track in tracks.iter() {
-        let clean_track_name = sanitize(&track.title);
-
-        // Extract the YouTube ID from the track URL (e.g., watch?v=0VuqQlORCLM -> 0VuqQlORCLM)
-        let video_id = track.url.split("v=").nth(1).unwrap_or("");
-        if video_id.is_empty() {
-            eprintln!("[Error] Could not extract video ID from URL: {}", track.url);
-            continue;
-        }
-
-        // Scan staging dir looking for a file matching that specific video ID
+    for (index, track) in tracks.iter().enumerate() {
         let mut temp_file_path = None;
-        if let Ok(entries) = fs::read_dir(stage_path) {
+
+        if let Ok(entries) = fs::read_dir(temp_batch_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if file_stem == video_id {
-                        temp_file_path = Some(path);
-                        break;
+                    if let Ok(file_num) = file_stem.parse::<usize>() {
+                        if file_num == index + 1 {
+                            temp_file_path = Some(path);
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        let temp_file_path = match temp_file_path {
-            Some(path) => path,
-            None => {
-                eprintln!(
-                    "[Warning] Staged target file missing for title: {}",
-                    track.title
-                );
-                continue;
-            }
-        };
-
-        // Keep track of whatever extension yt-dlp actually used (.webm, .m4a, etc.)
-        let actual_ext = temp_file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mp3"); // fallback
-
-        // 1. Inject Metadata with Lofty
-        if let Err(err) = apply_metadata_tags(&temp_file_path, track).await {
+        if let Some(path) = temp_file_path {
+            downloaded.push((path, track.clone()));
+        } else {
             eprintln!(
-                "[Metadata Error] Failed tag mapping for {}: {}",
-                track.title, err
+                "[Warning] [{}] Staged file missing for: {}",
+                session_id, track.title
             );
         }
-
-        // 2. Compute Target Directories
-        let artist_folder = if !track.artists.is_empty() {
-            sanitize(&track.artists[0])
-        } else {
-            "Unknown Artist".to_string()
-        };
-
-        let album_folder = if !track.album.is_empty() {
-            sanitize(&track.album)
-        } else {
-            "Unknown Album".to_string()
-        };
-
-        let final_dest_dir = base_output.join(artist_folder).join(album_folder);
-        if let Err(e) = fs::create_dir_all(&final_dest_dir) {
-            return Err(format!("Could not create structural user folders: {}", e));
-        }
-
-        // Use the actual extension found during staging
-        let final_file_name = match track.track_number {
-            Some(num) => format!("{:02} - {}.{}", num, clean_track_name, actual_ext),
-            None => format!("{}.{}", clean_track_name, actual_ext),
-        };
-
-        let destination_path = final_dest_dir.join(final_file_name);
-
-        // Move target out of staging into our structured library tree
-        fs::rename(&temp_file_path, &destination_path)
-            .map_err(|e| format!("Failed shifting file from staging into library: {}", e))?;
     }
-    // Clean up the empty `.temp` hidden layout folder
-    let _ = fs::remove_dir(stage_path);
 
-    Ok("Batch collection fully processed, tagged, and organized.".to_string())
+    Ok(downloaded)
 }
 
 async fn apply_metadata_tags(file_path: &Path, track: &TrackDownload) -> Result<(), String> {

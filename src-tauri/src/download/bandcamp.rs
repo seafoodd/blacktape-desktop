@@ -198,7 +198,7 @@ fn parse_album_meta(html: &str) -> AlbumMeta {
             artists
         },
         genres,
-        release_year: Some(release_year.unwrap().cast_signed()),
+        release_year: release_year.map(|y| y as i32),
         external_cover_url,
     }
 }

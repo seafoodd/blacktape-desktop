@@ -211,7 +211,7 @@ fn calculate_relevance(
     // We add a solid baseline to Bandcamp items so they can survive head-to-head score metrics,
     // ensuring the high-quality source takes the top slot if the metadata matches.
     if item.platform == Platform::Bandcamp {
-        score += 45.0;
+        score += 25.0;
     }
 
     let mut popularity_bonus = 0.0;

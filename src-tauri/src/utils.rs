@@ -26,12 +26,45 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
 }
 
 pub fn sanitize(name: &str) -> String {
-    let sanitized: String = name.replace(['/', '\\', '?', '%', '*', ':', '|', '"', '<', '>'], "");
+    let unescaped = html_escape::decode_html_entities(name);
+    let sanitized: String =
+        unescaped.replace(['/', '\\', '?', '%', '*', ':', '|', '"', '<', '>'], "");
     if sanitized.starts_with('.') {
         return sanitized[1..].to_string();
     }
     sanitized
 }
+
+pub fn remove_empty_parents_up_to(path: &Path, root_dir: &Path) {
+    let mut current = path;
+
+    while let Some(parent) = current.parent() {
+        if parent == root_dir || !parent.starts_with(root_dir) {
+            break;
+        }
+
+        match std::fs::read_dir(parent) {
+            Ok(mut entries) => {
+                if entries.next().is_none() {
+                    println!("[Cleanup] Removing empty parent directory: {:?}", parent);
+                    if let Err(e) = std::fs::remove_dir(parent) {
+                        eprintln!(
+                            "[Cleanup Error] Failed to remove empty parent {:?}: {}",
+                            parent, e
+                        );
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+
+        current = parent;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::sanitize;
