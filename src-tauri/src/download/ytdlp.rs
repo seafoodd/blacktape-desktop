@@ -1,19 +1,12 @@
 use crate::download::TrackDownload;
-use lofty::file::TaggedFileExt;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::str::FromStr;
 use std::time::{Instant, SystemTime};
 
 use crate::utils::set_hidden;
-use lofty::config::WriteOptions;
-use lofty::picture::{Picture, PictureType};
-use lofty::probe::Probe;
-use lofty::tag::items::Timestamp;
-use lofty::tag::{Accessor, Tag, TagExt};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 use tokio::process::Command;
 
@@ -219,10 +212,22 @@ pub async fn download_batch(
         let _ = set_hidden(temp_path, true);
     }
 
+    if !temp_batch_path.exists() {
+        fs::create_dir_all(temp_batch_path).map_err(|e| e.to_string())?;
+    }
+
     let output_template = format!("{temp_batch_dir}/%(autonumber)s.%(ext)s");
     let batch_path_str = batch_file_path
         .to_str()
         .ok_or("Invalid temporary batch path encoding")?;
+
+    let app_data_dir = app.path().app_data_dir().unwrap();
+    let edge_profile_path = app_data_dir
+        .join("browser-profiles")
+        .join("EBWebView")
+        .join("Default");
+
+    let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
 
     #[rustfmt::skip]
     let base_args = vec![
@@ -231,6 +236,8 @@ pub async fn download_batch(
         "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
         "--no-warnings",
         "--no-check-certificates",
+        "--cookies-from-browser", &cookie_arg,
+        "--extractor-args", "youtube:player_client=music",
         "-a", batch_path_str,
         "-o", &output_template,
     ];
@@ -243,7 +250,13 @@ pub async fn download_batch(
 
     let result = execute(app, &base_args).await;
     let _ = fs::remove_file(batch_file_path);
-    result?;
+
+    if let Err(err) = result {
+        if temp_batch_path.exists() {
+            let _ = fs::remove_dir_all(temp_batch_path);
+        }
+        return Err(err);
+    }
 
     let mut downloaded = Vec::new();
 
@@ -275,56 +288,4 @@ pub async fn download_batch(
     }
 
     Ok(downloaded)
-}
-
-async fn apply_metadata_tags(file_path: &Path, track: &TrackDownload) -> Result<(), String> {
-    // Probe structural byte layouts to find primary containers (ID3v2 for MP3)
-    let mut tagged_file = Probe::open(file_path)
-        .map_err(|e| e.to_string())?
-        .guess_file_type()
-        .map_err(|e| e.to_string())?
-        .read()
-        .map_err(|e| e.to_string())?;
-
-    // Grab or initialize the primary native audio tag
-    let tag = match tagged_file.primary_tag_mut() {
-        Some(existing_tag) => existing_tag,
-        None => {
-            let primary_type = tagged_file.primary_tag_type();
-            tagged_file.insert_tag(Tag::new(primary_type));
-            tagged_file.primary_tag_mut().unwrap()
-        }
-    };
-
-    tag.set_title(track.title.clone());
-    tag.set_artist(track.artists.join(", "));
-    tag.set_album(track.album.clone());
-
-    if let Some(year) = track.release_year {
-        if let Ok(timestamp) = Timestamp::from_str(&year.to_string()) {
-            tag.set_date(timestamp);
-        }
-    }
-    if let Some(track_num) = track.track_number {
-        tag.set_track(track_num as u32);
-    }
-
-    // Embed local cover art if it exists
-    if let Some(parent_dir) = file_path.parent() {
-        let local_cover = parent_dir.join("cover.jpg");
-        if local_cover.exists() {
-            if let Ok(mut img_file) = File::open(&local_cover) {
-                if let Ok(picture) = Picture::from_reader(&mut img_file) {
-                    let mut final_pic = picture;
-                    final_pic.set_pic_type(PictureType::CoverFront);
-                    tag.push_picture(final_pic);
-                }
-            }
-        }
-    }
-
-    // Commit changes back to the filesystem binary stream
-    tag.save_to_path(file_path, WriteOptions::default())
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }

@@ -1,0 +1,203 @@
+.container {
+    padding: 24px 32px;
+    height: 100%;
+    overflow-y: auto;
+    color: var(--color-text);
+}
+
+.emptyContainer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--color-muted);
+    font-size: 18px;
+}
+
+.header {
+    margin-bottom: 32px;
+}
+
+.header h2 {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.header span {
+    color: var(--color-primary-light);
+}
+
+.content {
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+}
+
+.section h3 {
+    font-size: 20px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+}
+
+/* Grids for Albums and Artists */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 24px;
+}
+
+.card {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.03);
+    padding: 12px;
+    border-radius: 8px;
+    transition: background-color 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.card:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.cover {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.artistCover {
+    border-radius: 50%; /* Make artist images circular */
+}
+
+.cardInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.title {
+    font-size: 14px;
+    font-weight: 600;
+    color: white;
+}
+
+.subtitle {
+    font-size: 13px;
+    color: var(--color-muted);
+}
+
+/* Card Hover overlay for downloading albums */
+.cardOverlay {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.card:hover .cardOverlay {
+    opacity: 1;
+}
+
+.downloadBtn {
+    background-color: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+}
+
+.downloadBtn:hover {
+    transform: scale(1.05);
+    background-color: var(--color-primary-light);
+}
+
+/* Tracks List layout */
+.trackList {
+    display: flex;
+    flex-direction: column;
+}
+
+.trackRow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    transition: background-color 0.1s ease;
+}
+
+.trackRow:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.trackCover {
+    width: 48px;
+    height: 48px;
+    border-radius: 4px;
+    object-fit: cover;
+}
+
+.trackInfo {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: 0; /* allows truncation to work */
+}
+
+.trackTitle {
+    font-size: 15px;
+    font-weight: 500;
+    color: white;
+}
+
+.trackArtist {
+    font-size: 13px;
+    color: var(--color-muted);
+}
+
+.trackDownloadBtn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    padding: 8px;
+    transition: color 0.2s ease;
+}
+
+.trackRow:hover .trackDownloadBtn {
+    color: white;
+}
+
+.trackDownloadBtn:hover {
+    color: var(--color-primary-light) !important;
+}
+
+.platformBadge {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    font-weight: 700;
+    position: absolute;
+    top: 16px;
+    left: 16px;
+}
+
+.trackRow .platformBadge {
+    position: static;
+}

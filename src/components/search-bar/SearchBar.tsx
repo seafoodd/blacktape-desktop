@@ -20,29 +20,38 @@ const formatSuggestionType = (type: ItemType): string => {
   }
 };
 
-type FilterCategory = "All" | ItemType;
 type Platform = "All" | "Youtube" | "Bandcamp" | "Local";
 
 const SearchBar = () => {
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState<string>(query);
   const [isSearching, setIsSearching] = useState<boolean>(false);
-
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState<boolean>(false);
-  const [activeCategory, setActiveCategory] = useState<FilterCategory>("All");
-  const [activePlatform, setActivePlatform] = useState<Platform>("All");
+  const [showDropdown, setShowDropdown] = useState<boolean>(false);
 
-  const { searchResults, setSearchQuery, executeSearch, setActiveView } =
-    useLibraryStore();
+  const {
+    searchResults,
+    setSearchQuery,
+    executeSearch,
+    commitSearch,
+    activeCategory,
+    activePlatform,
+    setActiveCategory,
+    setActivePlatform,
+  } = useLibraryStore();
 
   const handleBrowseAll = (e: React.MouseEvent) => {
     e.preventDefault();
-    setActiveView("SEARCH_RESULTS");
+    commitSearch(query);
+    setShowDropdown(false);
   };
 
   useEffect(() => {
     if (query.trim() !== "") {
       setIsSearching(true);
+      setShowDropdown(true);
+    } else {
+      setShowDropdown(false);
     }
     const handler = setTimeout(() => {
       setDebouncedQuery(query);
@@ -76,7 +85,7 @@ const SearchBar = () => {
     });
   }, [searchResults, activeCategory, activePlatform]);
 
-  const showOverlay = query.trim() !== "";
+  // const showOverlay = query.trim() !== "";
 
   return (
     <div className={styles.container}>
@@ -89,6 +98,13 @@ const SearchBar = () => {
           placeholder="Search music..."
           value={query}
           onInput={(e) => setQuery(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && query.trim() !== "") {
+              commitSearch(query);
+              setShowDropdown(false);
+              e.currentTarget.blur();
+            }
+          }}
         />
 
         <button
@@ -99,7 +115,7 @@ const SearchBar = () => {
               styles.filterActive,
           )}
           onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
-          onBlur={() => setTimeout(() => setIsFilterMenuOpen(false), 200)}
+          onBlur={() => setIsFilterMenuOpen(false)}
         >
           <BiFilterAlt size={18} />
         </button>
@@ -180,7 +196,7 @@ const SearchBar = () => {
       </div>
 
       {/* Unified Overlay Layout Panel */}
-      {showOverlay && (
+      {showDropdown && (
         <div className={styles.suggestions}>
           <div className={styles.suggestionsList}>
             {isSearching ? (

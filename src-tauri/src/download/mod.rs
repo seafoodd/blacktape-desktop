@@ -7,7 +7,6 @@ use lofty::probe::Probe;
 use lofty::tag::items::Timestamp;
 use lofty::tag::{Accessor, Tag, TagExt};
 use std::fs::{self, File};
-use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
@@ -114,8 +113,10 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
                         match download_res {
                             Ok(data) => data,
                             Err(err) => {
-                                if target_folder_created && target_library_dir.exists() {
-                                    let _ = fs::remove_dir_all(&target_library_dir);
+                                if target_folder_created &&
+                                    target_library_dir != root_library_dir &&
+                                    target_library_dir.exists() &&
+                                    fs::remove_dir_all(&target_library_dir).is_ok() {
                                     remove_empty_parents_up_to(&target_library_dir, &root_library_dir);
                                 }
                                 return Err(err);
