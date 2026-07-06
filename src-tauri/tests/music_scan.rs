@@ -1,7 +1,7 @@
 use std::fs;
 use tempfile::tempdir;
 
-use blacktape_desktop_lib::music::scan::{old_scan_music_dir, scan_music_dir};
+use blacktape_desktop_lib::scan::{old_scan_music_dir, scan_music_dir};
 
 #[tokio::test]
 async fn test_parallel_vs_sequential_scanner() {

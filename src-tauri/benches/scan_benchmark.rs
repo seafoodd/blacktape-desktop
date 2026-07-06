@@ -1,4 +1,4 @@
-use blacktape_desktop_lib::music::scan::{old_scan_music_dir, scan_music_dir};
+use blacktape_desktop_lib::scan::{old_scan_music_dir, scan_music_dir};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::path::PathBuf;
 

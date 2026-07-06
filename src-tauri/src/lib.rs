@@ -1,15 +1,20 @@
 pub mod audio;
+pub mod auth;
 pub mod db;
 mod discord_presence;
 pub mod download;
 mod lyrics;
-pub mod music;
+pub mod scan;
 mod search;
 pub mod types;
 pub mod utils;
 
+use crate::audio::commands::{
+    fetch_state, get_is_paused, get_position, get_volume, next, pause, previous, resume, seek,
+    set_repeat_mode, set_volume, start_playback, stop, toggle, toggle_shuffle,
+};
 use crate::audio::media_controls::MediaControls;
-use crate::audio::player::RepeatMode;
+use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask};
@@ -19,15 +24,9 @@ use crate::types::{Album, ArtistSummary, DownloadType, Platform};
 use audio::player::AudioPlayer;
 use std::error::Error;
 use std::sync::Mutex;
-use tauri::{
-    command, generate_handler, AppHandle, Listener, Manager, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
-use tokio::fs::{read_to_string, File};
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tauri::{command, generate_handler, AppHandle, Listener, Manager, State, WebviewWindow};
 use tokio::task::JoinSet;
 pub use types::Song;
-use url::Url;
 
 #[command]
 async fn scan_music(
@@ -62,7 +61,7 @@ async fn scan_music(
             .map_err(|e| e.to_string())?;
     }
 
-    let songs = music::scan::scan_music_dir(dir, &covers_path);
+    let songs = scan::scan_music_dir(dir, &covers_path);
     db.insert_songs(songs.clone())
         .await
         .map_err(|e| e.to_string())?;
@@ -88,118 +87,6 @@ async fn get_artist_albums(
     db.get_artist_albums(artist_name)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[command]
-async fn start_playback(
-    queue: Vec<i64>,
-    current_index: usize,
-    db_state: State<'_, tokio::sync::Mutex<Database>>,
-    player_state: State<'_, Mutex<AudioPlayer>>,
-) -> Result<(), String> {
-    let db = db_state.lock().await;
-
-    let mut master_songs = Vec::new();
-    for id in queue {
-        if let Ok(Some(s)) = db.get_song_by_id(id).await {
-            master_songs.push(s);
-        }
-    }
-
-    if master_songs.is_empty() {
-        return Err("Queue is empty or songs could not be loaded".to_string());
-    }
-
-    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
-
-    player.start_playback(master_songs, current_index);
-
-    Ok(())
-}
-
-#[command]
-fn pause(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.pause();
-}
-
-#[command]
-fn resume(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.resume();
-}
-
-#[command]
-fn stop(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.stop();
-}
-
-#[command]
-fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.seek(fraction);
-}
-
-#[command]
-fn next(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.next();
-}
-
-#[command]
-fn previous(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.previous()
-}
-
-#[command]
-fn get_position(state: State<Mutex<AudioPlayer>>) -> f32 {
-    let player = state.lock().unwrap();
-    player.position()
-}
-
-#[command]
-fn get_is_paused(state: State<Mutex<AudioPlayer>>) -> bool {
-    let player = state.lock().unwrap();
-    player.is_paused()
-}
-
-#[command]
-fn toggle(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.toggle();
-}
-
-#[command]
-fn set_volume(fraction: f32, state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.set_volume(fraction);
-}
-
-#[command]
-fn get_volume(state: State<Mutex<AudioPlayer>>) -> f32 {
-    let mut player = state.lock().unwrap();
-    player.get_volume()
-}
-
-#[command]
-fn fetch_state(state: State<Mutex<AudioPlayer>>) {
-    let player = state.lock().unwrap();
-    player.emit_state();
-}
-
-#[command]
-fn toggle_shuffle(state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.toggle_shuffle();
-}
-
-#[command]
-fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
-    let mut player = state.lock().unwrap();
-    println!("Setting repeat mode to: {:?}", repeat_mode);
-    player.set_repeat_mode(repeat_mode);
 }
 
 #[command]
@@ -290,198 +177,6 @@ async fn download(
     Ok("Task queued successfully".to_string())
 }
 
-#[command]
-async fn cookies_are_ready(
-    app: AppHandle,
-    window: WebviewWindow,
-    payload: String,
-) -> Result<(), String> {
-    println!("[blacktape::auth] IPC Cookie payload received!");
-
-    if let Err(e) = write_netscape_cookies(&app, &payload).await {
-        eprintln!("[blacktape::auth ERROR] Failed to write cookie file: {}", e);
-        return Err(e);
-    }
-
-    println!("[blacktape::auth] Cookies successfully stored. Closing auth window.");
-    let _ = window.close();
-    Ok(())
-}
-
-#[command]
-async fn launch_youtube_login(app: AppHandle) -> Result<(), String> {
-    println!("[blacktape::auth] launch_youtube_login command invoked.");
-
-    let login_url_str = "https://accounts.google.com/ServiceLogin?service=youtube";
-    let target_url = Url::parse(login_url_str).map_err(|e| e.to_string())?;
-
-    let app_handle_clone = app.clone();
-
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        "youtube-login",
-        WebviewUrl::External(target_url),
-    )
-        .data_directory(app.path().app_data_dir().unwrap().join("browser-profiles"))
-        .title("Blacktape | Sign into YouTube")
-        .inner_size(500.0, 600.0)
-        .resizable(false)
-        .always_on_top(true)
-        // 1. Inject a secure window listener that listens ONLY for an internal browser message
-        .initialization_script(r#"
-        window.addEventListener("message", (event) => {
-            if (event.data && event.data.type === "BLACKTAPE_EXTRACT_COOKIES") {
-                // Send it back via a standard message structure that Tauri handles internally
-                console.log("[blacktape frontend] Extraction triggered. Sending cookies up...");
-                window.location.href = "tauri://cookies?data=" + encodeURIComponent(document.cookie);
-            }
-        });
-    "#)
-        .on_navigation(move |url| {
-            println!("[blacktape::auth] Navigation detected to: {}", url);
-
-            // 2. Catch our custom protocol redirect containing the cookies!
-            if url.scheme() == "tauri" && url.host_str() == Some("cookies") {
-                let app_handle_task = app_handle_clone.clone();
-
-                // Extract the query parameter from our custom URI redirection
-                let query_str = url.query().unwrap_or("");
-                let cookies_encoded = query_str.replace("data=", "");
-                let clean_cookies = percent_encoding::percent_decode_str(&cookies_encoded)
-                    .decode_utf8_lossy()
-                    .to_string();
-
-                tauri::async_runtime::spawn(async move {
-                    println!("[blacktape::auth] Custom URI intercepted! Writing cookies...");
-                    if let Err(e) = write_netscape_cookies(&app_handle_task, &clean_cookies).await {
-                        eprintln!("[blacktape::auth ERROR] Failed to write cookie file: {}", e);
-                    }
-
-                    if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
-                        println!("[blacktape::auth] Successfully stored cookies. Closing login window.");
-                        let _ = win.close();
-                    }
-                });
-                return false; // Stop navigation here so it doesn't actually try to route to "tauri://cookies"
-            }
-
-            let host = url.host_str();
-            let path = url.path();
-
-            if host == Some("www.youtube.com") && (path == "/" || path.is_empty()) {
-                println!("[blacktape::auth] YouTube landing detected! Checking for extraction trigger...");
-
-                let app_handle_task = app_handle_clone.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
-                        println!("[blacktape::auth] Dispatching collection trigger via postMessage...");
-                        // Safely triggers the initialization script handler
-                        let _ = win.eval("window.postMessage({ type: 'BLACKTAPE_EXTRACT_COOKIES' }, '*');");
-                    }
-                });
-            }
-            true
-        });
-
-    let _login_window = builder.build().map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-async fn write_netscape_cookies(app: &AppHandle, cookies_str: &str) -> Result<(), String> {
-    println!(
-        "[blacktape::auth] write_netscape_cookies invoked with string length: {}",
-        cookies_str.len()
-    );
-
-    let mut cookie_file_path = app.path().app_data_dir().map_err(|e| {
-        eprintln!("[blacktape::auth ERROR] Failed to get app_data_dir: {}", e);
-        e.to_string()
-    })?;
-    cookie_file_path.push("youtube_cookies.txt");
-    println!(
-        "[blacktape::auth] Target cookie file path: {:?}",
-        cookie_file_path
-    );
-
-    let file = File::create(&cookie_file_path).await.map_err(|e| {
-        eprintln!(
-            "[blacktape::auth ERROR] Failed to create cookie file: {}",
-            e
-        );
-        e.to_string()
-    })?;
-
-    let mut writer = BufWriter::new(file);
-
-    writer
-        .write_all(b"# Netscape HTTP Cookie File\n")
-        .await
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_all(b"# This file was generated by Blacktape. Do not edit.\n\n")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut cookie_count = 0;
-    for cookie in cookies_str.split(';') {
-        let parts: Vec<&str> = cookie.trim().splitn(2, '=').collect();
-        if parts.len() == 2 {
-            let name = parts[0];
-            let value = parts[1];
-            cookie_count += 1;
-
-            let line = format!(".youtube.com\tTRUE\t/\tTRUE\t0\t{}\t{}\n", name, value);
-            writer.write_all(line.as_bytes()).await.map_err(|e| {
-                eprintln!("[blacktape::auth ERROR] Failed writing cookie line: {}", e);
-                e.to_string()
-            })?;
-        }
-    }
-    println!(
-        "[blacktape::auth] Parsed and prepared {} cookies to write.",
-        cookie_count
-    );
-
-    writer.flush().await.map_err(|e| {
-        eprintln!("[blacktape::auth ERROR] Failed to flush BufWriter: {}", e);
-        e.to_string()
-    })?;
-
-    println!(
-        "[blacktape::auth SUCCESS] Authenticated yt-dlp cookies saved to: {:?}",
-        cookie_file_path
-    );
-    Ok(())
-}
-
-#[command]
-async fn check_auth_status(app: AppHandle) -> bool {
-    let mut cookie_file = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(_) => return false,
-    };
-    cookie_file.push("youtube_cookies.txt");
-
-    // 1. If your exported file doesn't exist, they aren't logged in
-    if !cookie_file.exists() {
-        return false;
-    }
-
-    // 2. Read the exported Netscape file
-    let contents = match read_to_string(cookie_file).await {
-        Ok(text) => text,
-        Err(_) => return false,
-    };
-
-    // 3. Verify that your login extraction keys exist in the text file
-    // yt-dlp generally needs keys like SID, HSID, or SSID to confirm auth
-    let has_sid = contents.contains("SID");
-    let has_sapisid = contents.contains("SAPISID");
-
-    has_sid && has_sapisid
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -543,7 +238,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(generate_handler![
-            scan_music,
+            // Player Commands
             start_playback,
             pause,
             resume,
@@ -554,16 +249,22 @@ pub fn run() {
             get_is_paused,
             get_position,
             toggle,
-            get_artists,
-            get_artist_albums,
             set_volume,
             get_volume,
             fetch_state,
             toggle_shuffle,
             set_repeat_mode,
+            // Scan
+            scan_music,
+            // DB Queries
+            get_artists,
+            get_artist_albums,
             get_lyrics,
+            // Search
             get_search_suggestions,
+            // Download
             download,
+            // Auth
             launch_youtube_login,
             cookies_are_ready,
             check_auth_status
