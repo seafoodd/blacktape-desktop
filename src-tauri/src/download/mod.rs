@@ -10,7 +10,6 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 pub mod bandcamp;
@@ -66,96 +65,7 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
         println!("[Queue Worker] Core pipeline active. Awaiting jobs...");
 
         while let Some(task) = rx.recv().await {
-            println!("RECEIVED TASK {task:?}");
-            let output_dir = task.output_dir.clone();
-            let app_handle = app_handle.clone();
-
-            let result: Result<String, String> = async move {
-                let root_library_dir = PathBuf::from(&output_dir);
-                let mut target_library_dir = PathBuf::from(&output_dir);
-                let mut cover_path = None;
-                let mut target_folder_created = false;
-
-                let downloaded_files: Vec<(PathBuf, TrackDownload)> = match task.payload {
-                    DownloadPayload::AlbumURL(url) => {
-                        let album_info = match task.platform {
-                            Platform::Bandcamp => bandcamp::parse_album(&url).await?,
-                            Platform::Youtube => youtube::parse_album(&url).await?,
-                        };
-
-                        if !album_info.artists.is_empty() {
-                            let primary_artist = sanitize(&album_info.artists[0]);
-                            let sanitized_album = sanitize(&album_info.title);
-                            target_library_dir = target_library_dir.join(&primary_artist).join(&sanitized_album);
-                        }
-
-                        tokio::fs::create_dir_all(&target_library_dir).await.map_err(|e| {
-                            format!("Failed to create library folder structure: {}", e)
-                        })?;
-                        target_folder_created = true;
-
-                        // Pre-fetch album cover if it exists
-                        if let Some(ref cover_url) = album_info.external_cover_url {
-                            println!("[Queue Worker] Pre-fetching album artwork: {}", cover_url);
-                            if let Err(err) = download_album_cover(cover_url, &target_library_dir).await {
-                                eprintln!("[Queue Worker] Artwork warning (non-fatal): {}", err);
-                            } else {
-                                cover_path = Some(target_library_dir.join("cover.jpg"));
-                            }
-                        }
-
-                        let download_res = match task.platform {
-                            Platform::Youtube | Platform::Bandcamp => {
-                                ytdlp::download_batch(&app_handle, &album_info.tracks, &output_dir).await
-                            }
-                        };
-
-                        match download_res {
-                            Ok(data) => data,
-                            Err(err) => {
-                                if target_folder_created &&
-                                    target_library_dir != root_library_dir &&
-                                    target_library_dir.exists() &&
-                                    fs::remove_dir_all(&target_library_dir).is_ok() {
-                                    remove_empty_parents_up_to(&target_library_dir, &root_library_dir);
-                                }
-                                return Err(err);
-                            }
-                        }
-                    }
-                    DownloadPayload::TrackURL(_url) => {
-                        return Err("TrackURL extraction not implemented yet".into());
-                    }
-                    DownloadPayload::Single(track) => {
-                        // Single download fallback handling using YouTube
-                        ytdlp::download_batch(&app_handle, &[track], &output_dir).await?
-                    }
-                    DownloadPayload::Batch { tracks } => {
-                        ytdlp::download_batch(&app_handle, &tracks, &output_dir).await?
-                    }
-                };
-
-                println!("[Queue Worker] Executing shared post-processor tagging and folder allocation operations...");
-
-                for (temp_file, track) in downloaded_files.iter() {
-                    if let Err(err) = process_and_move_track(temp_file, track, &target_library_dir, cover_path.as_deref()) {
-                        eprintln!("[Post-Processor Error] Mapping failed for {}: {}", track.title, err);
-                    }
-                }
-
-                if let Some((first_temp_file, _)) = downloaded_files.first() {
-                    if let Some(temp_stage_dir) = first_temp_file.parent() {
-                        if temp_stage_dir.exists() {
-                            let _ = fs::remove_dir_all(temp_stage_dir);
-                        }
-                    }
-                }
-
-                Ok("Batch pipeline processing complete".to_string())
-            }
-                .await;
-
-            match result {
+            match handle_download_task(task, app_handle.clone()).await {
                 Ok(_) => println!("[Queue Worker] Successfully processed download task."),
                 Err(e) => eprintln!("[Queue Worker] Task failure error branch: {}", e),
             }
@@ -163,6 +73,113 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
     });
 
     tx
+}
+
+/// Orchestrates the entire download and post-processing pipeline for a given task.
+async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Result<(), String> {
+    println!("RECEIVED TASK {task:?}");
+    let output_dir_path = PathBuf::from(&task.output_dir);
+
+    // 1. Determine target directories and fetch/download files based on payload type
+    let (target_library_dir, downloaded_files, cover_path) = match task.payload {
+        DownloadPayload::AlbumURL(url) => {
+            process_album_url(task.platform, &url, &task.output_dir, &app_handle).await?
+        }
+        DownloadPayload::TrackURL(_) => {
+            return Err("TrackURL extraction not implemented yet".into());
+        }
+        DownloadPayload::Single(track) => {
+            let files = ytdlp::download_batch(&app_handle, &[track], &task.output_dir).await?;
+            (output_dir_path.clone(), files, None)
+        }
+        DownloadPayload::Batch { tracks } => {
+            let files = ytdlp::download_batch(&app_handle, &tracks, &task.output_dir).await?;
+            (output_dir_path.clone(), files, None)
+        }
+    };
+
+    println!("[Queue Worker] Executing shared post-processor tagging and folder allocation operations...");
+
+    // 2. Process, tag, and move each downloaded track to its final destination
+    for (temp_file, track) in &downloaded_files {
+        if let Err(err) =
+            process_and_move_track(temp_file, track, &target_library_dir, cover_path.as_deref())
+        {
+            eprintln!(
+                "[Post-Processor Error] Mapping failed for {}: {}",
+                track.title, err
+            );
+        }
+    }
+
+    // 3. Cleanup temporary staging directory
+    if let Some((first_temp_file, _)) = downloaded_files.first() {
+        if let Some(temp_stage_dir) = first_temp_file.parent() {
+            if temp_stage_dir.exists() {
+                let _ = fs::remove_dir_all(temp_stage_dir);
+            }
+        }
+    }
+
+    println!("[Queue Worker] Batch pipeline processing complete.");
+    Ok(())
+}
+
+/// Handles parsing, directory creation, cover fetching, and batch downloading for Album URLs.
+async fn process_album_url(
+    platform: Platform,
+    url: &str,
+    output_dir: &str,
+    app_handle: &AppHandle,
+) -> Result<(PathBuf, Vec<(PathBuf, TrackDownload)>, Option<PathBuf>), String> {
+    let root_library_dir = PathBuf::from(output_dir);
+    let mut target_library_dir = root_library_dir.clone();
+
+    let album_info = match platform {
+        Platform::Bandcamp => bandcamp::parse_album(url).await?,
+        Platform::Youtube => youtube::parse_album(url).await?,
+    };
+
+    // Construct structured artist/album path if artist data is available
+    if let Some(primary_artist) = album_info.artists.first() {
+        let primary_artist = sanitize(primary_artist);
+        let sanitized_album = sanitize(&album_info.title);
+        target_library_dir = target_library_dir
+            .join(primary_artist)
+            .join(sanitized_album);
+    }
+
+    let target_folder_created = target_library_dir != root_library_dir;
+    if target_folder_created {
+        tokio::fs::create_dir_all(&target_library_dir)
+            .await
+            .map_err(|e| format!("Failed to create library folder structure: {}", e))?;
+    }
+
+    // Pre-fetch album cover if provided
+    let mut cover_path = None;
+    if let Some(cover_url) = &album_info.external_cover_url {
+        println!("[Queue Worker] Pre-fetching album artwork: {}", cover_url);
+        if let Err(err) = download_album_cover(cover_url, &target_library_dir).await {
+            eprintln!("[Queue Worker] Artwork warning (non-fatal): {}", err);
+        } else {
+            cover_path = Some(target_library_dir.join("cover.jpg"));
+        }
+    }
+
+    // Download tracks and handle cleanup if the batch download fails
+    match ytdlp::download_batch(app_handle, &album_info.tracks, output_dir).await {
+        Ok(files) => Ok((target_library_dir, files, cover_path)),
+        Err(err) => {
+            if target_folder_created
+                && target_library_dir.exists()
+                && fs::remove_dir_all(&target_library_dir).is_ok()
+            {
+                remove_empty_parents_up_to(&target_library_dir, &root_library_dir);
+            }
+            Err(err)
+        }
+    }
 }
 
 /// Shared business logic handler that transforms files from unstructured scratch locations
@@ -180,7 +197,7 @@ pub fn process_and_move_track(
     // Fallback detection logic to preserve file compression format container extensions
     let actual_ext = source_file
         .extension()
-        .and_then(|e| e.to_str())
+        .and_then(|ext| ext.to_str())
         .unwrap_or("mp3");
 
     // Inject tag mappings via Lofty before moving files
@@ -202,7 +219,8 @@ pub fn process_and_move_track(
 
     // Commit directory safety check
     if !target_album_dir.exists() {
-        fs::create_dir_all(target_album_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(target_album_dir)
+            .map_err(|e| format!("Failed to create target album dir: {}", e))?;
     }
 
     // Shift file out of staging to destination
@@ -212,6 +230,7 @@ pub fn process_and_move_track(
     Ok(())
 }
 
+/// Reads the downloaded file and injects metadata tags (ID3, Vorbis, etc.) using Lofty.
 fn apply_metadata_tags(
     file_path: &Path,
     track: &TrackDownload,
@@ -242,18 +261,18 @@ fn apply_metadata_tags(
             tag.set_date(timestamp);
         }
     }
+
     if let Some(track_num) = track.track_number {
         tag.set_track(track_num as u32);
     }
 
-    // Embed cover artwork if provided and found on disk
+    // Embed cover artwork if found on disk
     if let Some(path) = cover_path {
         if path.exists() {
             if let Ok(mut img_file) = File::open(path) {
-                if let Ok(picture) = Picture::from_reader(&mut img_file) {
-                    let mut final_pic = picture;
-                    final_pic.set_pic_type(PictureType::CoverFront);
-                    tag.push_picture(final_pic);
+                if let Ok(mut picture) = Picture::from_reader(&mut img_file) {
+                    picture.set_pic_type(PictureType::CoverFront);
+                    tag.push_picture(picture);
                 }
             }
         }
@@ -261,9 +280,11 @@ fn apply_metadata_tags(
 
     tag.save_to_path(file_path, WriteOptions::default())
         .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
+/// Downloads an image from a URL and saves it as `cover.jpg` in the specified directory.
 pub async fn download_album_cover(url: &str, output_directory: &Path) -> Result<(), String> {
     let response = reqwest::get(url)
         .await
@@ -275,11 +296,8 @@ pub async fn download_album_cover(url: &str, output_directory: &Path) -> Result<
         .map_err(|e| format!("Failed to read image bytes: {}", e))?;
 
     let file_path = output_directory.join("cover.jpg");
-    let mut file = tokio::fs::File::create(file_path)
-        .await
-        .map_err(|e| format!("Failed to create cover file: {}", e))?;
 
-    file.write_all(&bytes)
+    tokio::fs::write(file_path, &bytes)
         .await
         .map_err(|e| format!("Failed to write artwork data: {}", e))?;
 
