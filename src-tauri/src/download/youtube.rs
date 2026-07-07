@@ -1,5 +1,5 @@
 use crate::download::{ytdlp, AlbumDownload, TrackDownload};
-use crate::utils::sanitize;
+use crate::utils::sanitize_fs;
 use rustypipe::client::RustyPipe;
 use tauri::AppHandle;
 
@@ -58,7 +58,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
         .into_iter()
         .enumerate()
         .map(|(idx, track)| {
-            let sanitized_name = sanitize(&track.name);
+            let sanitized_name = sanitize_fs(&track.name);
 
             TrackDownload {
                 title: track.name.clone(),

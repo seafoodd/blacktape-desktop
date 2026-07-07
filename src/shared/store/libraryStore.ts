@@ -6,6 +6,24 @@ import {
   getArtists,
 } from "@/shared/lib/audio.ts";
 import { Platform, searchPlatforms } from "@/shared/lib/search.ts";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+
+export type DownloadStatus =
+  | "idle"
+  | "downloading"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export interface DownloadProgress {
+  id: string;
+  url: string;
+  status: DownloadStatus;
+  current: number;
+  total: number;
+  message: string;
+}
 
 export type ActiveView = "ARTIST_ALBUMS" | "SEARCH_RESULTS";
 
@@ -71,6 +89,16 @@ interface LibraryState {
 
   fetchTabs: (query?: string) => Promise<void>;
   setSelectedTab: (identifier: string) => void;
+
+  // Download tracking
+  activeDownloads: Record<string, DownloadProgress>;
+  _listenersInitialized: boolean;
+  initDownloadListeners: () => Promise<void>;
+  startDownload: (
+    platform: string,
+    downloadType: string,
+    url: string,
+  ) => Promise<void>;
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -129,7 +157,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   commitSearch: (query) => {
-    // Lock the current live results into the main window view
     set((state) => ({
       submittedQuery: query,
       committedResults: state.searchResults,
@@ -154,6 +181,150 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     if (sortType === SortType.Artist) {
       results = await getArtists(query);
     }
+
     set({ tabs: results });
+  },
+
+  activeDownloads: {},
+  _listenersInitialized: false,
+
+  initDownloadListeners: async () => {
+    if (get()._listenersInitialized) return;
+    set({ _listenersInitialized: true });
+
+    await listen<{ task_id: string; message: string }>(
+      "download-task-started",
+      (event) => {
+        set((state) => ({
+          activeDownloads: {
+            ...state.activeDownloads,
+            [event.payload.task_id]: {
+              ...state.activeDownloads[event.payload.task_id],
+              id: event.payload.task_id,
+              status: "downloading",
+              message: event.payload.message,
+            },
+          },
+        }));
+      },
+    );
+
+    await listen<{
+      task_id: string;
+      current: number;
+      total: number;
+      track_title: string;
+    }>("download-task-progress", (event) => {
+      const { task_id, current, total, track_title } = event.payload;
+      console.log("download-task-progress", event.payload);
+      set((state) => {
+        const existing = state.activeDownloads[task_id];
+        if (!existing) return {};
+        return {
+          activeDownloads: {
+            ...state.activeDownloads,
+            [task_id]: {
+              ...existing,
+              status: "downloading",
+              current,
+              total,
+              message: track_title,
+            },
+          },
+        };
+      });
+    });
+
+    await listen<{ task_id: string; message: string }>(
+      "download-task-completed",
+      (event) => {
+        set((state) => {
+          const existing = state.activeDownloads[event.payload.task_id];
+          if (!existing) return {};
+          return {
+            activeDownloads: {
+              ...state.activeDownloads,
+              [event.payload.task_id]: {
+                ...existing,
+                status: "completed",
+                message: event.payload.message,
+              },
+            },
+          };
+        });
+
+        console.log(event.payload.message, ": ", event.payload.task_id);
+        console.log(get().activeDownloads);
+
+        get()
+          .fetchTabs()
+          .catch((e) =>
+            console.error("Auto-fetch failed", event.payload.task_id, e),
+          );
+      },
+    );
+
+    await listen<{ task_id: string; message: string }>(
+      "download-task-failed",
+      (event) => {
+        set((state) => {
+          const existing = state.activeDownloads[event.payload.task_id];
+          if (!existing) return {};
+          return {
+            activeDownloads: {
+              ...state.activeDownloads,
+              [event.payload.task_id]: {
+                ...existing,
+                status: "failed",
+                message: event.payload.message,
+              },
+            },
+          };
+        });
+      },
+    );
+  },
+
+  startDownload: async (platform, downloadType, url) => {
+    const taskId = crypto.randomUUID();
+
+    set((state) => ({
+      activeDownloads: {
+        ...state.activeDownloads,
+        [taskId]: {
+          id: taskId,
+          url,
+          status: "idle",
+          current: 0,
+          total: 0,
+          message: "Queueing...",
+        },
+      },
+    }));
+
+    try {
+      await invoke("download", {
+        id: taskId,
+        platform,
+        downloadType,
+        url,
+      });
+    } catch (e) {
+      console.error("Download invoke failed:", e);
+      set((state) => {
+        const existing = state.activeDownloads[taskId];
+        if (!existing) return {};
+        return {
+          activeDownloads: {
+            ...state.activeDownloads,
+            [taskId]: {
+              ...existing,
+              status: "failed",
+              message: String(e),
+            },
+          },
+        };
+      });
+    }
   },
 }));

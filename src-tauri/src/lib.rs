@@ -153,6 +153,7 @@ async fn get_lyrics(
 async fn download(
     app_handle: AppHandle,
     queue_state: State<'_, DownloadQueue>,
+    id: String,
     platform: Platform,
     download_type: DownloadType,
     url: String,
@@ -168,6 +169,7 @@ async fn download(
     queue_state
         .tx
         .send(DownloadTask {
+            id,
             platform,
             payload,
             output_dir: download_dir,

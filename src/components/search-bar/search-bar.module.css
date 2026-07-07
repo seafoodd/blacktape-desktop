@@ -171,7 +171,7 @@
 
     &:hover {
         background-color: var(--color-surface);
-        cursor: pointer;
+        cursor: default;
     }
 }
 
@@ -267,6 +267,16 @@
     &:hover {
         color: var(--color-primary-light);
     }
+}
+
+.downloadStatus {
+    background: none;
+    border: none;
+    color: var(--color-primary-light);
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .noResults {

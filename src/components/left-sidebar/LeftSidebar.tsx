@@ -50,6 +50,7 @@ const LeftSidebar = () => {
       console.log("fetch tabs error: ", e);
     });
   }, []);
+
   return (
     <aside className={styles.leftSidebar} style={{ width: sidebarWidth }}>
       <h3 className={styles.leftSidebarTitle}>Artists</h3>

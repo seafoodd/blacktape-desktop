@@ -1,4 +1,4 @@
-use crate::download::TrackDownload;
+use crate::download::{ProgressEvent, TrackDownload};
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::Write;
@@ -7,7 +7,8 @@ use std::process::Stdio;
 use std::time::{Instant, SystemTime};
 
 use crate::utils::set_hidden;
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
 #[derive(Deserialize)]
@@ -180,6 +181,7 @@ pub async fn download_batch(
     app: &AppHandle,
     tracks: &[TrackDownload],
     output_dir: &str,
+    task_id: &str,
 ) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
     let app_data = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
 
@@ -241,22 +243,111 @@ pub async fn download_batch(
         "-a", batch_path_str,
         "-o", &output_template,
     ];
-
+    ////////////////////////////
     println!(
         "[ytdlp] [{}] Streaming batch download of size {}...",
         session_id,
         tracks.len()
     );
 
-    let result = execute(app, &base_args).await;
-    let _ = fs::remove_file(batch_file_path);
-
-    if let Err(err) = result {
-        if temp_batch_path.exists() {
-            let _ = fs::remove_dir_all(temp_batch_path);
-        }
-        return Err(err);
+    let binary_path = get_path(app);
+    if !binary_path.exists() {
+        return Err("yt-dlp binary is missing.".to_string());
     }
+
+    let mut cmd = Command::new(binary_path);
+    cmd.args(&base_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        const FLAGS: u32 = 0x08000000 | 0x00004000;
+        cmd.creation_flags(FLAGS);
+    }
+
+    // Spawn the process instead of waiting for it
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+
+    // Spawn a background task to read stderr so the process doesn't deadlock if it logs too much
+    let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+    let mut stderr_lines = tokio::io::BufReader::new(stderr).lines();
+    let stderr_handle = tokio::spawn(async move {
+        let mut err_msg = String::new();
+        while let Ok(Some(line)) = stderr_lines.next_line().await {
+            err_msg.push_str(&line);
+            err_msg.push('\n');
+        }
+        err_msg
+    });
+
+    let total_tracks = tracks.len();
+    let mut last_count = 0;
+
+    // Poll the directory while yt-dlp is running
+    loop {
+        let mut current_count = 0;
+
+        // Count completed files (files that don't have the .part extension)
+        if let Ok(mut entries) = tokio::fs::read_dir(temp_batch_path).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                let is_part = path.extension().and_then(|s| s.to_str()) == Some("part");
+                if !is_part {
+                    current_count += 1;
+                }
+            }
+        }
+
+        // Emit progress event if a new song finished downloading
+        if current_count > last_count {
+            last_count = current_count;
+            let _ = app.emit(
+                "download-task-progress",
+                ProgressEvent {
+                    task_id: task_id.to_string(),
+                    current: current_count,
+                    total: total_tracks,
+                    track_title: format!(
+                        "Downloaded {} of {} songs to temp",
+                        current_count, total_tracks
+                    ),
+                },
+            );
+        }
+
+        // Check if yt-dlp has finished
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let err_msg = stderr_handle.await.unwrap_or_default();
+
+                let _ = fs::remove_file(&batch_file_path);
+
+                if !status.success() {
+                    if temp_batch_path.exists() {
+                        let _ = fs::remove_dir_all(temp_batch_path);
+                    }
+                    return Err(err_msg.trim().to_string());
+                }
+                break; // Success!
+            }
+            Ok(None) => {
+                // Still running, wait 500ms before checking again
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            Err(e) => {
+                let _ = stderr_handle.await;
+                return Err(e.to_string());
+            }
+        }
+    }
+
+    // if let Err(err) = result {
+    //     if temp_batch_path.exists() {
+    //         let _ = fs::remove_dir_all(temp_batch_path);
+    //     }
+    //     return Err(err);
+    // }
 
     let mut downloaded = Vec::new();
 

@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
-import { invoke } from "@tauri-apps/api/core";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
 import { BiDownload, BiFilterAlt, BiInfoCircle } from "react-icons/bi";
 import clsx from "clsx";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { FaCheckCircle } from "react-icons/fa";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -38,7 +38,14 @@ const SearchBar = () => {
     activePlatform,
     setActiveCategory,
     setActivePlatform,
+    startDownload,
+    activeDownloads,
+    initDownloadListeners,
   } = useLibraryStore();
+
+  useEffect(() => {
+    initDownloadListeners().catch(console.error);
+  }, [initDownloadListeners]);
 
   const handleBrowseAll = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -67,7 +74,6 @@ const SearchBar = () => {
       return;
     }
 
-    // Once the async search execution resolves, switch off loading state
     executeSearch(debouncedQuery).finally(() => {
       setIsSearching(false);
     });
@@ -84,8 +90,6 @@ const SearchBar = () => {
       return matchesCategory && matchesPlatform;
     });
   }, [searchResults, activeCategory, activePlatform]);
-
-  // const showOverlay = query.trim() !== "";
 
   return (
     <div className={styles.container}>
@@ -195,12 +199,10 @@ const SearchBar = () => {
         )}
       </div>
 
-      {/* Unified Overlay Layout Panel */}
       {showDropdown && (
         <div className={styles.suggestions}>
           <div className={styles.suggestionsList}>
             {isSearching ? (
-              /* Skeleton Loading Blocks Condition */
               Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className={styles.skeletonItem}>
                   <div className={styles.skeletonCover} />
@@ -211,75 +213,108 @@ const SearchBar = () => {
                 </div>
               ))
             ) : filteredResults.length === 0 ? (
-              /* Fallback Condition for Zero Matched Results */
               <div className={styles.noResults}>
                 <BiInfoCircle size={24} />
                 <p>No results found matching your active filter criteria</p>
               </div>
             ) : (
-              /* Render Loaded Data Items */
-              filteredResults.slice(0, 20).map((suggestion, index) => (
-                <div key={index} className={styles.suggestion}>
-                  <img
-                    className={clsx(styles.cover, {
-                      [styles.artist]: suggestion.item_type === ItemType.Artist,
-                    })}
-                    src={suggestion.img}
-                    referrerPolicy="no-referrer"
-                    alt="cover"
-                  />
-                  <div className={clsx(styles.rightBlock, "truncate")}>
-                    <p className={clsx(styles.title, "truncate")}>
-                      {suggestion.name}
-                    </p>
-                    <p className={clsx(styles.artist, "truncate")}>
-                      {suggestion.item_type === ItemType.Artist ? (
-                        <span className={styles.followers}>
-                          {suggestion.subscriber_count ? (
-                            <span className={"uppercase"}>
-                              {formatCompactNumber(suggestion.subscriber_count)}{" "}
-                              subscribers
-                            </span>
+              filteredResults.slice(0, 20).map((suggestion, index) => {
+                const activeDownload = Object.values(activeDownloads).find(
+                  (d) => d.url === suggestion.item_url_path,
+                );
+
+                return (
+                  <div key={index} className={styles.suggestion}>
+                    <img
+                      className={clsx(styles.cover, {
+                        [styles.artist]:
+                          suggestion.item_type === ItemType.Artist,
+                      })}
+                      src={suggestion.img}
+                      referrerPolicy="no-referrer"
+                      alt="cover"
+                    />
+                    <div className={clsx(styles.rightBlock, "truncate")}>
+                      <p className={clsx(styles.title, "truncate")}>
+                        {suggestion.name}
+                      </p>
+                      <p className={clsx(styles.artist, "truncate")}>
+                        {suggestion.item_type === ItemType.Artist ? (
+                          <span className={styles.followers}>
+                            {suggestion.subscriber_count ? (
+                              <span className={"uppercase"}>
+                                {formatCompactNumber(
+                                  suggestion.subscriber_count,
+                                )}{" "}
+                                subscribers
+                              </span>
+                            ) : (
+                              ""
+                            )}
+                          </span>
+                        ) : (
+                          `by ${suggestion.band_name}`
+                        )}
+                      </p>
+                      <div className={styles.metaRow}>
+                        <span className={styles.type}>
+                          {formatSuggestionType(suggestion.item_type)}
+                        </span>
+                        {suggestion.platform && (
+                          <span className={styles.badge}>
+                            {suggestion.platform}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className={styles.tools}>
+                      {suggestion.item_type !== ItemType.Artist && (
+                        <>
+                          {!activeDownload ||
+                          activeDownload.status === "failed" ? (
+                            <button
+                              className={styles.downloadButton}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                startDownload(
+                                  suggestion.platform,
+                                  suggestion.item_type,
+                                  suggestion.item_url_path,
+                                ).catch((e) => {
+                                  console.log("Download error: ", e);
+                                });
+                              }}
+                            >
+                              <BiDownload size={20} />
+                            </button>
                           ) : (
-                            ""
+                            <div className={styles.downloadStatus}>
+                              {activeDownload.status === "completed" && (
+                                <FaCheckCircle size={20} />
+                              )}
+                              {(activeDownload.status === "idle" ||
+                                activeDownload.status === "downloading" ||
+                                activeDownload.status === "processing") && (
+                                <span>
+                                  {activeDownload.current > 0
+                                    ? Math.round(
+                                        (activeDownload.current /
+                                          activeDownload.total) *
+                                          100,
+                                      )
+                                    : 0}
+                                  %
+                                </span>
+                              )}
+                            </div>
                           )}
-                        </span>
-                      ) : (
-                        `by ${suggestion.band_name}`
-                      )}
-                    </p>
-                    <div className={styles.metaRow}>
-                      <span className={styles.type}>
-                        {formatSuggestionType(suggestion.item_type)}
-                      </span>
-                      {suggestion.platform && (
-                        <span className={styles.badge}>
-                          {suggestion.platform}
-                        </span>
+                        </>
                       )}
                     </div>
                   </div>
-                  <div className={styles.tools}>
-                    <button
-                      className={styles.downloadButton}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        invoke("download", {
-                          platform: suggestion.platform,
-                          downloadType: suggestion.item_type,
-                          url: suggestion.item_url_path,
-                        }).catch((e) => {
-                          console.log("Download error: ", e);
-                        });
-                      }}
-                    >
-                      {suggestion.item_type !== ItemType.Artist && (
-                        <BiDownload size={20} />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
