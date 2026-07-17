@@ -4,8 +4,9 @@ import {
   ArtistSummary,
   getArtistAlbums,
   getArtists,
+  Platform,
 } from "@/shared/lib/audio.ts";
-import { Platform, searchPlatforms } from "@/shared/lib/search.ts";
+import { searchPlatforms } from "@/shared/lib/search.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -140,8 +141,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     try {
       const results: SearchSuggestion[] = await searchPlatforms(trimmedQuery, [
-        "Bandcamp",
-        "Youtube",
+        "bandcamp",
+        "youtube",
       ]);
 
       set((state) => ({

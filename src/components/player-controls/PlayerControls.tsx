@@ -146,7 +146,7 @@ const PlayerControls = () => {
                 </div>
                 <div className={clsx(styles.currentSongArtist, "truncate")}>
                   {[
-                    currentSong.artist,
+                    currentSong.album_artist,
                     currentSong.album,
                     currentSong.release_year,
                   ]
