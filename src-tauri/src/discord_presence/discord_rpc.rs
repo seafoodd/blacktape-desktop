@@ -148,11 +148,13 @@ impl DiscordRpcClient {
                                                  // .small_url(SOURCE_CODE_URL)
                                                  // .small_text(APP_NAME)
 
+        let display_artists = song.artists.join(", ");
+
         let activity = self
             .activity
             .clone()
             .details(song.title.to_string())
-            .state(song.artist.to_string()) // first description line
+            .state(display_artists) // first description line
             .assets(assets)
             .timestamps(timestamps)
             .state_url(SOURCE_CODE_URL)

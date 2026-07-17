@@ -43,7 +43,11 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
         .map_err(|e| format!("RustyPipe failed to fetch album: {}", e))?;
 
     let title = album.name.clone();
-    let artists = album.artists.iter().map(|a| a.name.clone()).collect();
+    let artists: Vec<String> = album.artists.iter().map(|a| a.name.clone()).collect();
+    let album_artist = artists
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Unknown Artist".into());
 
     let external_cover_url = album
         .cover
@@ -63,12 +67,14 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
             TrackDownload {
                 title: track.name.clone(),
                 artists: track.artists.iter().map(|a| a.name.clone()).collect(),
+                album_artist: album_artist.clone(),
                 album: title.clone(),
                 track_number: Some((idx + 1) as i32),
                 genres: None,
                 release_year,
                 url: format!("https://music.youtube.com/watch?v={}", track.id),
                 file_name: format!("{}.mp3", sanitized_name),
+                source_item_id: Some(track.id.clone()),
             }
         })
         .collect();
@@ -80,6 +86,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
     Ok(AlbumDownload {
         title,
         artists,
+        album_artist,
         tracks: track_downloads,
         genres: None,
         release_year,
@@ -88,7 +95,6 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
 }
 
 fn extract_browse_id(browse_url: &str) -> Result<&str, String> {
-    // Catch explicit playlist URLs early
     if browse_url.contains("playlist") || browse_url.contains("list=") {
         return Err("Unsupported URL type: Only YouTube Music browse/album URLs are supported, not playlists.".to_string());
     }
@@ -140,99 +146,3 @@ mod tests {
         assert!(result.unwrap_err().contains("Unsupported URL type"));
     }
 }
-
-// pub async fn download_track_directly(
-//     stream_url: &str,
-//     output_dir: &str,
-//     file_name: &str,
-// ) -> Result<PathBuf, String> {
-//     println!("[blacktape-debug] Starting direct track download...");
-//     println!(
-//         "[blacktape-debug] Target Dir: {}, File: {}",
-//         output_dir, file_name
-//     );
-//
-//     // 1. Create a client with a modern browser user-agent
-//     let client = reqwest::Client::builder()
-//         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-//         .build()
-//         .map_err(|e| e.to_string())?;
-//
-//     // 2. Add standard video-streaming fetch headers to look like a native media player asset request
-//     let response = client
-//         .get(stream_url)
-//         .header("Accept", "*/*")
-//         .header("Accept-Language", "en-US,en;q=0.9")
-//         .header("Sec-Fetch-Mode", "cors")
-//         .header("Sec-Fetch-Site", "cross-site")
-//         // This is crucial: keeps the connection alive across chunk boundaries
-//         .header("Connection", "keep-alive")
-//         .send()
-//         .await
-//         .map_err(|e: reqwest::Error| format!("Network Request Failed: {}", e))?;
-//
-//     // 1. Debug HTTP Status Code
-//     let status = response.status();
-//     println!("[blacktape-debug] HTTP Response Status: {}", status);
-//     if !status.is_success() {
-//         eprintln!("[blacktape-debug] Google Video server rejected the stream URL request.");
-//         return Err(format!("Server returned error status: {}", status));
-//     }
-//
-//     let full_path = Path::new(output_dir).join(format!("{}.m4a", file_name));
-//     println!("[blacktape-debug] Creating file at path: {:?}", full_path);
-//
-//     let mut file = File::create(&full_path)
-//         .await
-//         .map_err(|e: std::io::Error| {
-//             let err_msg = format!("Failed to create local file: {}", e);
-//             eprintln!("[blacktape-debug] {}", err_msg);
-//             err_msg
-//         })?;
-//
-//     let mut stream = response;
-//     let mut total_bytes_written = 0;
-//     let mut chunk_count = 0;
-//
-//     println!("[blacktape-debug] Beginning data stream loop...");
-//
-//     // 2. Track Chunk Arrival
-//     while let Some(chunk) = stream.chunk().await.map_err(|e: reqwest::Error| {
-//         let err_msg = format!("Error reading stream chunk: {}", e);
-//         eprintln!("[blacktape-debug] {}", err_msg);
-//         err_msg
-//     })? {
-//         chunk_count += 1;
-//         let bytes: &[u8] = &chunk;
-//         let chunk_size = bytes.len();
-//
-//         // 3. Track File Writes
-//         file.write_all(bytes).await.map_err(|e: std::io::Error| {
-//             let err_msg = format!("Error writing chunk to disk: {}", e);
-//             eprintln!("[blacktape-debug] {}", err_msg);
-//             err_msg
-//         })?;
-//
-//         total_bytes_written += chunk_size;
-//
-//         // Print progress every 20 chunks so your terminal doesn't get utterly spammed
-//         if chunk_count % 20 == 0 {
-//             println!(
-//                 "[blacktape-debug] Stream progress: Chunk #{}, Received {} KB (Total: {} MB)",
-//                 chunk_count,
-//                 chunk_size / 1024,
-//                 total_bytes_written / (1024 * 1024)
-//             );
-//         }
-//     }
-//
-//     // Flush remaining bytes to ensure everything is saved safely to disk
-//     file.flush().await.map_err(|e| e.to_string())?;
-//
-//     println!(
-//         "[blacktape-debug] Download complete! Saved {} total bytes to {:?}",
-//         total_bytes_written, full_path
-//     );
-//
-//     Ok(full_path)
-// }

@@ -1,5 +1,5 @@
 use blacktape_desktop_lib::db::db::Database;
-use blacktape_desktop_lib::types::Song;
+use blacktape_desktop_lib::types::{Platform, QualityTier, Song};
 
 async fn setup_test_db() -> Database {
     let db = Database::new(":memory:").await;
@@ -36,7 +36,8 @@ async fn test_song_insertion_and_mapping() {
         id: None,
         path: "/music/track1.mp3".to_string(),
         title: "Test Track".to_string(),
-        artist: "The Testers".to_string(),
+        artists: vec!["Artist 1".to_string(), "Artist 2".to_string()],
+        album_artist: "Artist 1".to_string(),
         album: "Beta Album".to_string(),
         track_number: Some(1),
         duration_ms: 180_000,
@@ -46,6 +47,12 @@ async fn test_song_insertion_and_mapping() {
         release_year: Some(2026),
         lyrics: None,
         lyrics_source: None,
+        source: Platform::Youtube,
+        source_url: None,
+        source_item_id: None,
+        canonical_track_slug: "".to_string(),
+        canonical_album_slug: "".to_string(),
+        quality_tier: QualityTier::Low,
     };
 
     let insert_res = db.insert_song(mock_song.clone()).await;
@@ -69,7 +76,7 @@ async fn test_artist_summary_aggregation() {
         id: None,
         path: "a.mp3".into(),
         title: "Bohemian Rhapsody".into(),
-        artist: "Queen".into(),
+        artists: vec!["Queen".to_string()],
         album: "A Night at the Opera".into(),
         track_number: Some(1),
         duration_ms: 355_000,
@@ -79,13 +86,21 @@ async fn test_artist_summary_aggregation() {
         release_year: Some(1795),
         lyrics: None,
         lyrics_source: None,
+        source: Platform::Youtube,
+        source_url: None,
+        source_item_id: None,
+        canonical_track_slug: "".to_string(),
+        canonical_album_slug: "".to_string(),
+        album_artist: "Queen".to_string(),
+        quality_tier: QualityTier::Low,
     };
 
     let song_b = Song {
         id: None,
         path: "b.mp3".into(),
         title: "We Will Rock You".into(),
-        artist: "Queen".into(),
+        artists: vec!["Queen".to_string()],
+        album_artist: "Queen".to_string(),
         album: "News of the World".into(),
         track_number: Some(1),
         duration_ms: 122_000,
@@ -95,6 +110,12 @@ async fn test_artist_summary_aggregation() {
         release_year: Some(1977),
         lyrics: None,
         lyrics_source: None,
+        source: Platform::Youtube,
+        source_url: None,
+        source_item_id: None,
+        canonical_track_slug: "".to_string(),
+        canonical_album_slug: "".to_string(),
+        quality_tier: QualityTier::Low,
     };
 
     db.insert_song(song_a).await.unwrap();

@@ -376,9 +376,11 @@ impl AudioPlayer {
             None
         };
 
+        let display_artists = song.artists.join(", ");
+
         self.media_controls.update_metadata(MediaMetadata {
             title: Some(&song.title),
-            artist: Some(&song.artist),
+            artist: Some(&display_artists),
             album: Some(&song.album),
             duration: Some(Duration::from_millis(song.duration_ms)),
             cover_url: uri_ref,

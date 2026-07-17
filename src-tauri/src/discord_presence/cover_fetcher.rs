@@ -174,7 +174,10 @@ impl CoverFetcher {
     }
 
     fn get_release_mbid(&self, song: &Song) -> Option<String> {
-        let query = format!("release:\"{}\" AND artist:\"{}\"", song.album, song.artist);
+        let query = format!(
+            "release:\"{}\" AND artist:\"{}\"",
+            song.album, song.album_artist
+        );
         let encoded_query = urlencoding::encode(&query);
 
         let url =
@@ -289,7 +292,7 @@ mod tests {
         </metadata>
         "#;
 
-        let parsed: Result<MusicBrainzMetadata, _> = quick_xml::de::from_str(sample_xml);
+        let parsed: Result<MusicBrainzMetadata, _> = from_str(sample_xml);
         assert!(
             parsed.is_ok(),
             "Failed to parse MusicBrainz XML: {:?}",

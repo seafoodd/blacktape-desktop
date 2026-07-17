@@ -100,6 +100,7 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
             match platform {
                 Platform::Bandcamp => search::bandcamp::search(&q).await,
                 Platform::Youtube => search::youtube::search(&q).await,
+                _ => Ok(Vec::new()),
             }
         });
     }
@@ -136,7 +137,7 @@ async fn get_lyrics(
                 return Ok(lyrics_source);
             }
         }
-        (song.artist.clone(), song.title.clone())
+        (song.album_artist.clone(), song.title.clone())
     };
 
     let lyrics_source = fetch_lyrics(&artist, &title).await?;

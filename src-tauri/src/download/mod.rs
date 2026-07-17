@@ -1,6 +1,8 @@
 use crate::db::db::Database;
 use crate::types::Platform;
-use crate::utils::{remove_empty_parents_up_to, sanitize_fs};
+use crate::utils::{
+    determine_quality, make_canonical_slug, remove_empty_parents_up_to, sanitize_fs,
+};
 use crate::Song;
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
@@ -42,16 +44,19 @@ pub struct TrackDownload {
     pub file_name: String,
     pub title: String,
     pub artists: Vec<String>,
+    pub album_artist: String,
     pub album: String,
     pub track_number: Option<i32>,
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
+    pub source_item_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AlbumDownload {
     pub title: String,
     pub artists: Vec<String>,
+    pub album_artist: String,
     pub tracks: Vec<TrackDownload>,
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
@@ -64,6 +69,15 @@ pub enum DownloadPayload {
     Batch { tracks: Vec<TrackDownload> },
     AlbumURL(String),
     TrackURL(String),
+}
+
+impl DownloadPayload {
+    pub fn is_album(&self) -> bool {
+        match self {
+            DownloadPayload::AlbumURL(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +115,10 @@ async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Resu
     let task_id = task.id.clone();
     println!("RECEIVED TASK {task:?}");
 
+    let platform = task.platform.clone();
+    let output_dir_str = task.output_dir.clone();
+    let is_album_payload = task.payload.is_album();
+
     let _ = app_handle.emit(
         "download-task-started",
         TaskEvent {
@@ -109,7 +127,7 @@ async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Resu
         },
     );
 
-    let output_dir_path = PathBuf::from(&task.output_dir);
+    let output_dir_path = PathBuf::from(&output_dir_str);
 
     let app_data = app_handle.path().app_data_dir().unwrap();
     let covers_path = app_data.join("covers");
@@ -119,16 +137,16 @@ async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Resu
 
     let download_result = match task.payload {
         DownloadPayload::AlbumURL(url) => {
-            process_album_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await
+            process_album_url(platform, &url, &output_dir_str, &app_handle, &task_id).await
         }
         DownloadPayload::TrackURL(_) => Err("TrackURL extraction not implemented yet".into()),
         DownloadPayload::Single(track) => {
-            ytdlp::download_batch(&app_handle, &[track], &task.output_dir, &task_id)
+            ytdlp::download_batch(&app_handle, &[track], &output_dir_str, &task_id)
                 .await
                 .map(|files| (output_dir_path.clone(), files, None))
         }
         DownloadPayload::Batch { tracks } => {
-            ytdlp::download_batch(&app_handle, &tracks, &task.output_dir, &task_id)
+            ytdlp::download_batch(&app_handle, &tracks, &output_dir_str, &task_id)
                 .await
                 .map(|files| (output_dir_path.clone(), files, None))
         }
@@ -164,12 +182,21 @@ async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Resu
             },
         );
 
+        let track_target_dir = if is_album_payload {
+            target_library_dir.clone()
+        } else {
+            target_library_dir
+                .join(sanitize_fs(&track.album_artist))
+                .join(sanitize_fs(&track.album))
+        };
+
         match process_and_move_track(
             temp_file,
             track,
-            &target_library_dir,
+            &track_target_dir,
             cover_path.as_deref(),
             &covers_path,
+            platform.clone(),
         ) {
             Ok(song) => new_songs.push(song),
             Err(err) => {
@@ -242,6 +269,9 @@ async fn process_album_url(
     let album_info = match platform {
         Platform::Bandcamp => bandcamp::parse_album(url).await?,
         Platform::Youtube => youtube::parse_album(url).await?,
+        Platform::Local => {
+            return Err("Local files cannot be processed via remote URL pipelines.".into());
+        }
     };
 
     let _ = app_handle.emit(
@@ -257,13 +287,16 @@ async fn process_album_url(
         },
     );
 
-    if let Some(primary_artist) = album_info.artists.first() {
-        let primary_artist = sanitize_fs(primary_artist);
-        let sanitized_album = sanitize_fs(&album_info.title);
-        target_library_dir = target_library_dir
-            .join(primary_artist)
-            .join(sanitized_album);
+    let album_artist_fallback = album_info.album_artist.clone();
+
+    let mut structural_tracks = album_info.tracks.clone();
+    for track in &mut structural_tracks {
+        track.album_artist = album_artist_fallback.clone();
     }
+
+    let folder_artist = sanitize_fs(&album_artist_fallback);
+    let sanitized_album = sanitize_fs(&album_info.title);
+    target_library_dir = target_library_dir.join(folder_artist).join(sanitized_album);
 
     let target_folder_created = target_library_dir != root_library_dir;
     if target_folder_created {
@@ -293,7 +326,7 @@ async fn process_album_url(
         }
     }
 
-    match ytdlp::download_batch(app_handle, &album_info.tracks, output_dir, task_id).await {
+    match ytdlp::download_batch(app_handle, &structural_tracks, output_dir, task_id).await {
         Ok(files) => Ok((target_library_dir, files, cover_path)),
         Err(err) => {
             if target_folder_created
@@ -315,6 +348,7 @@ pub fn process_and_move_track(
     target_album_dir: &Path,
     cover_path: Option<&Path>,
     covers_dir: &Path,
+    platform: Platform,
 ) -> Result<Song, String> {
     if !source_file.exists() {
         return Err(format!("Source track stream missing: {:?}", source_file));
@@ -325,7 +359,9 @@ pub fn process_and_move_track(
         .and_then(|ext| ext.to_str())
         .unwrap_or("mp3");
 
-    if let Err(err) = apply_metadata_tags(source_file, track, cover_path) {
+    let album_artist = &track.album_artist;
+
+    if let Err(err) = apply_metadata_tags(source_file, track, &album_artist, cover_path, platform) {
         eprintln!(
             "[Metadata Tagging Warning] Non-fatal issue processing ID3 headers: {}",
             err
@@ -389,11 +425,16 @@ pub fn process_and_move_track(
         }
     }
 
+    let canonical_track_slug = make_canonical_slug(&album_artist, &track.title);
+    let canonical_album_slug = make_canonical_slug(&album_artist, &track.album);
+    let quality_tier = determine_quality(actual_ext, &tagged_file);
+
     Ok(Song {
         id: None,
         path: destination_path.to_string_lossy().to_string(),
         title: track.title.clone(),
-        artist: track.artists.join(", "),
+        artists: track.artists.clone(),
+        album_artist: album_artist.clone(),
         album: track.album.clone(),
         duration_ms,
         track_number: track.track_number,
@@ -403,13 +444,21 @@ pub fn process_and_move_track(
         external_cover_url: None,
         lyrics: None,
         lyrics_source: None,
+        source: platform,
+        source_url: Some(track.url.clone()),
+        source_item_id: track.source_item_id.clone(),
+        canonical_track_slug,
+        canonical_album_slug,
+        quality_tier,
     })
 }
 
 fn apply_metadata_tags(
     file_path: &Path,
     track: &TrackDownload,
+    album_artist: &str,
     cover_path: Option<&Path>,
+    source: Platform,
 ) -> Result<(), String> {
     let mut tagged_file = Probe::open(file_path)
         .map_err(|e| e.to_string())?
@@ -430,6 +479,19 @@ fn apply_metadata_tags(
     tag.set_title(track.title.clone());
     tag.set_artist(track.artists.join(", "));
     tag.set_album(track.album.clone());
+
+    tag.insert_text(lofty::tag::ItemKey::AlbumArtist, album_artist.to_string());
+
+    if let Some(ref source_id) = track.source_item_id {
+        let source_str = match source {
+            Platform::Youtube => "YouTube",
+            Platform::Bandcamp => "Bandcamp",
+            Platform::Local => "Local",
+        };
+
+        let tracking_payload = format!("blacktape_source:{}|id:{}", source_str, source_id);
+        tag.insert_text(lofty::tag::ItemKey::Comment, tracking_payload);
+    }
 
     if let Some(year) = track.release_year {
         if let Ok(timestamp) = Timestamp::from_str(&year.to_string()) {

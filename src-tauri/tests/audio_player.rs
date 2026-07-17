@@ -1,12 +1,12 @@
 use blacktape_desktop_lib::audio::player::RepeatMode;
-use blacktape_desktop_lib::types::Song;
+use blacktape_desktop_lib::types::{Platform, QualityTier, Song};
 
 fn create_mock_song(id: i64, title: &str, duration_ms: u64) -> Song {
     Song {
         id: Some(id),
         path: format!("/mock/path/song_{}.mp3", id),
         title: title.to_string(),
-        artist: "Test Artist".to_string(),
+        artists: vec![],
         album: "Test Album".to_string(),
         duration_ms,
         track_number: None,
@@ -16,6 +16,13 @@ fn create_mock_song(id: i64, title: &str, duration_ms: u64) -> Song {
         external_cover_url: None,
         lyrics: None,
         lyrics_source: None,
+        source: Platform::Youtube,
+        source_url: None,
+        source_item_id: None,
+        canonical_track_slug: "".to_string(),
+        canonical_album_slug: "".to_string(),
+        album_artist: "".to_string(),
+        quality_tier: QualityTier::Low,
     }
 }
 

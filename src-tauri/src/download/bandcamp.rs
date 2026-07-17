@@ -18,12 +18,19 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
     let mut tracks = parse_tracks_from_html(&html, base_url)?;
     let album_meta = parse_album_meta(&html);
 
+    let album_artist_fallback = album_meta
+        .artists
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Unknown Artist".into());
+
     for (idx, track) in tracks.iter_mut().enumerate() {
         if let Some(clean_title) = track.file_name.splitn(2, ". ").nth(1) {
             track.title = clean_title.to_string();
         }
         track.album = album_meta.title.clone();
         track.artists = album_meta.artists.clone();
+        track.album_artist = album_artist_fallback.clone();
         track.track_number = Some((idx + 1) as i32);
         track.genres = album_meta.genres.clone();
         track.release_year = album_meta.release_year;
@@ -32,6 +39,7 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
     Ok(AlbumDownload {
         title: album_meta.title,
         artists: album_meta.artists,
+        album_artist: album_artist_fallback,
         tracks,
         genres: album_meta.genres,
         release_year: album_meta.release_year,
@@ -65,10 +73,12 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
             file_name: format!("{:02}. {}", track_count, track_name),
             title: "".to_string(),
             artists: vec![],
+            album_artist: "".to_string(),
             album: "".to_string(),
             track_number: None,
             genres: None,
             release_year: None,
+            source_item_id: None,
         });
 
         track_count += 1;

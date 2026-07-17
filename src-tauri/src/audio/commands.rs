@@ -12,14 +12,25 @@ pub async fn start_playback(
 ) -> Result<(), String> {
     let db = db_state.lock().await;
     let mut master_songs = Vec::new();
+
     for id in queue {
-        if let Ok(Some(s)) = db.get_song_by_id(id).await {
-            master_songs.push(s);
+        match db.get_song_by_id(id).await {
+            Ok(Some(s)) => master_songs.push(s),
+            Ok(None) => eprintln!("[Playback Error] Song ID {} not found in database", id),
+            Err(err) => {
+                eprintln!(
+                    "[Playback Error] SQLx failed to decode song ID {}: {:?}",
+                    id, err
+                );
+            }
         }
     }
 
     if master_songs.is_empty() {
-        return Err("Queue is empty or songs could not be loaded".to_string());
+        return Err(
+            "Queue is empty or songs could not be loaded. Check console logs for details."
+                .to_string(),
+        );
     }
 
     let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;

@@ -1,3 +1,5 @@
+use crate::types::QualityTier;
+use lofty::file::AudioFile;
 use std::path::Path;
 use winapi::um::fileapi;
 use winapi::um::winnt::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL};
@@ -77,6 +79,59 @@ pub fn remove_empty_parents_up_to(path: &Path, root_dir: &Path) {
         }
 
         current = parent;
+    }
+}
+
+pub fn make_canonical_slug(artist: &str, entity: &str) -> String {
+    let combined = format!("{} {}", artist, entity);
+    combined
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<&str>>()
+        .join("-")
+}
+
+pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> QualityTier {
+    let bitrate = tagged_file.properties().audio_bitrate().unwrap_or(0);
+
+    match ext.to_lowercase().as_str() {
+        "flac" | "wav" | "alac" | "aiff" => QualityTier::Lossless,
+
+        "opus" => {
+            if bitrate >= 128 {
+                QualityTier::High
+            } else if bitrate >= 64 {
+                QualityTier::Standard
+            } else {
+                QualityTier::Low
+            }
+        }
+
+        "m4a" | "aac" | "ogg" => {
+            if bitrate >= 192 {
+                QualityTier::High
+            } else if bitrate >= 128 {
+                QualityTier::Standard
+            } else {
+                QualityTier::Low
+            }
+        }
+
+        "mp3" => {
+            if bitrate >= 256 {
+                QualityTier::High
+            } else if bitrate >= 192 {
+                QualityTier::Standard
+            } else {
+                QualityTier::Low
+            }
+        }
+
+        _ => QualityTier::Low,
     }
 }
 
