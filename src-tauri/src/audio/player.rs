@@ -413,7 +413,7 @@ impl AudioPlayer {
         let mut next_cursor = current_cursor + 1;
 
         if next_cursor >= order.len() {
-            if self.repeat_mode == RepeatMode::Queue || self.repeat_mode == RepeatMode::Track {
+            if self.repeat_mode != RepeatMode::Off {
                 next_cursor = 0;
             } else {
                 self.emit_state();

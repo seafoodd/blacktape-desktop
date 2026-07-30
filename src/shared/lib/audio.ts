@@ -41,9 +41,9 @@ export type Album = {
 };
 
 export enum RepeatMode {
-  Off = "off",
-  Queue = "queue",
-  Track = "track",
+  Off = "Off",
+  Queue = "Queue",
+  Track = "Track",
 }
 
 export const scanMusic = (dir: string): Promise<Song[]> =>
