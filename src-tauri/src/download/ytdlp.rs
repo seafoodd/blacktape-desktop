@@ -233,7 +233,10 @@ pub async fn download_batch(
 
     #[rustfmt::skip]
     let base_args = vec![
-        "-f", "ba[ext=m4a]/bestaudio",
+        // "-f", "ba[ext=webm]/ba",
+        "--audio-quality", "0",
+        "--extract-audio",
+        "--audio-format", "opus",
         "--ignore-errors",
         "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
         "--no-warnings",
@@ -243,7 +246,7 @@ pub async fn download_batch(
         "-a", batch_path_str,
         "-o", &output_template,
     ];
-    ////////////////////////////
+
     println!(
         "[ytdlp] [{}] Streaming batch download of size {}...",
         session_id,

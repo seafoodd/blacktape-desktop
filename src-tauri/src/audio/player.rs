@@ -1,4 +1,5 @@
 use crate::discord_presence::DiscordRpcClient;
+use crate::download::opus_source::OpusSource;
 use crate::{
     audio::media_controls::MediaControls,
     types::{PlayerState, Song},
@@ -13,6 +14,7 @@ use rodio::cpal::{
 use rodio::{Decoder, MixerDeviceSink, Player, Source};
 use serde::{Deserialize, Serialize};
 use souvlaki::MediaMetadata;
+use std::path::Path;
 use std::time::Instant;
 use std::{fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,10 +26,13 @@ pub enum RepeatMode {
     Queue,
 }
 
+type BoxedSource = Box<dyn Source<Item = f32> + Send>;
+
 pub struct AudioPlayer {
     sink: MixerDeviceSink,
     player: Player,
     duration: Option<Duration>,
+    seek_offset: Duration,
     media_controls: MediaControls,
     current_song: Option<Song>,
     handle: AppHandle,
@@ -55,6 +60,7 @@ impl AudioPlayer {
             sink,
             player,
             duration: None,
+            seek_offset: Duration::ZERO,
             media_controls,
             current_song: None,
             handle,
@@ -99,12 +105,13 @@ impl AudioPlayer {
     fn spawn_transition_watcher(handle: AppHandle) {
         tauri::async_runtime::spawn(async move {
             let mut sleep_time: Duration = Duration::ZERO;
-            let mut is_next = false;
 
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
                 let state = handle.state::<Mutex<AudioPlayer>>();
+
+                let mut pending_transition: Option<(usize, Song)> = None;
 
                 let needs_emit = {
                     let mut player = state
@@ -114,7 +121,7 @@ impl AudioPlayer {
                     if player.is_paused() {
                         false
                     } else {
-                        let current_pos = player.player.get_pos();
+                        let current_pos = player.seek_offset + player.player.get_pos();
                         let mut advanced = false;
 
                         if let Some(duration) = player.duration {
@@ -122,14 +129,16 @@ impl AudioPlayer {
                                 println!("start seamless transition");
 
                                 if let Some(next_cursor) = player.get_next_cursor() {
-                                    is_next = player.advance_to_next_in_queue(next_cursor);
-                                    // println!("seamless transition IS NEXT: {is_next}");
-
-                                    sleep_time = duration.saturating_sub(current_pos);
-                                    advanced = true;
+                                    if let Some(next_song) =
+                                        player.buffer_next_in_queue(next_cursor)
+                                    {
+                                        pending_transition = Some((next_cursor, next_song));
+                                        sleep_time = duration.saturating_sub(current_pos);
+                                        advanced = true;
+                                    }
                                 } else {
                                     player.stop();
-                                    is_next = false;
+                                    pending_transition = None;
                                     sleep_time = Duration::ZERO;
                                     advanced = true;
                                 }
@@ -146,7 +155,12 @@ impl AudioPlayer {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-                    if !is_next {
+                    if let Some((next_cursor, next_song)) = pending_transition.take() {
+                        player.cursor = Some(next_cursor);
+                        player.current_song = Some(next_song.clone());
+                        player.duration = Some(Duration::from_millis(next_song.duration_ms));
+                        player.seek_offset = Duration::ZERO;
+                    } else {
                         player.stop();
                     }
 
@@ -173,22 +187,19 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
-        let path = &song.path;
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("Error: Could not open file {path}: {e}");
-                return;
-            }
-        };
-        let source = match Decoder::try_from(file) {
+        let source = match Self::decode_source(&song.path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error: Failed to decode audio for {path}: {e}");
+                eprintln!("Error playing {}: {e}", song.path);
                 return;
             }
         };
-        self.duration = source.total_duration();
+
+        self.duration = source
+            .total_duration()
+            .or_else(|| Some(Duration::from_millis(song.duration_ms)));
+
+        self.seek_offset = Duration::ZERO; // RESET OFFSET ON PLAY
 
         self.player.clear();
         self.player.append(source);
@@ -202,6 +213,23 @@ impl AudioPlayer {
             .expect("Failed to resume media controls state");
         self.emit_state();
         self.update_discord_song(Some(0));
+    }
+
+    fn decode_source(path_str: &str) -> Result<BoxedSource, Box<dyn std::error::Error>> {
+        let path = Path::new(path_str);
+
+        // 1. If it's an .opus file, use your custom OpusSource
+        if path.extension().and_then(|ext| ext.to_str()) == Some("opus") {
+            let opus_source = OpusSource::open(path)?;
+            return Ok(Box::new(opus_source));
+        }
+
+        // 2. Fall back to Rodio's generic decoder for MP3, WAV, FLAC, etc.
+        let file = File::open(path)?;
+        let decoder = Decoder::try_from(file)?;
+
+        // Box and return
+        Ok(Box::new(decoder))
     }
 
     pub fn pause(&mut self) {
@@ -278,9 +306,23 @@ impl AudioPlayer {
             self.buffer_next_silent(&next_song);
             self.current_song = Some(next_song.clone());
             self.duration = Some(Duration::from_millis(next_song.duration_ms));
+            self.seek_offset = Duration::ZERO;
             true
         } else {
             false
+        }
+    }
+
+    fn buffer_next_in_queue(&mut self, next_cursor: usize) -> Option<Song> {
+        if let Some(next_song) = self
+            .queue
+            .get(self.play_order.as_ref()?[next_cursor])
+            .cloned()
+        {
+            self.buffer_next_silent(&next_song);
+            Some(next_song)
+        } else {
+            None
         }
     }
 
@@ -358,7 +400,6 @@ impl AudioPlayer {
             order.shuffle(&mut rng);
             order.insert(0, current_idx);
             self.cursor = Some(0);
-            println!("SHSHSHSHSHSHS, {order:?}");
         }
     }
 
@@ -390,12 +431,9 @@ impl AudioPlayer {
     fn buffer_next_silent(&mut self, song: &Song) {
         let now = Instant::now();
         println!("Silent buffer: {}, {:?}", song.title, song.id);
-        if let Ok(file) = File::open(&song.path) {
-            if let Ok(source) = Decoder::try_from(file) {
-                self.player.append(source);
-            }
+        if let Ok(source) = Self::decode_source(&song.path) {
+            self.player.append(source);
         }
-
         println!("BUFFERING TOOK: {:#?}", now.elapsed());
     }
 
@@ -427,13 +465,15 @@ impl AudioPlayer {
         if !self.advance_to_next_in_queue(next_cursor) {
             self.stop();
         }
+
         self.emit_state();
         self.update_current_metadata();
         self.update_discord_song(Some(0));
     }
 
     pub fn previous(&mut self) {
-        if self.player.get_pos() > Duration::from_secs(5) {
+        let absolute_pos = self.seek_offset + self.player.get_pos();
+        if absolute_pos > Duration::from_secs(5) {
             if let Some(current) = self.get_song_at_cursor() {
                 self.play(current);
                 return;
@@ -455,21 +495,38 @@ impl AudioPlayer {
     }
 
     pub fn seek(&mut self, fraction: f32) {
-        let Some(duration) = self.duration else {
+        println!("[SEEK LOG] Triggered seek with fraction: {fraction}");
+
+        let duration = self.duration.or_else(|| {
+            self.current_song
+                .as_ref()
+                .map(|s| Duration::from_millis(s.duration_ms))
+        });
+
+        let Some(duration) = duration else {
+            eprintln!("[SEEK LOG] Error: Duration is None and no current song available.");
             return;
         };
+
+        self.duration = Some(duration);
         let target = duration.mul_f32(fraction);
         let remaining = duration.saturating_sub(target);
 
-        println!("PLAYER {}", self.player.len());
+        println!(
+            "[SEEK LOG] Duration: {duration:?}, Target: {target:?}, Remaining: {remaining:?}, Player Queue Len: {}",
+            self.player.len()
+        );
 
         if self.player.len() < 1 {
+            println!("[SEEK LOG] Queue empty. Reloading current song...");
             if let Some(song) = self.current_song.clone() {
-                return self.play(song);
+                self.play(song);
+                return;
             }
         }
 
-        if remaining < Duration::new(1, 0) {
+        if remaining < Duration::from_secs(1) {
+            println!("[SEEK LOG] Near end of track (<1s remaining). Skipping to next track.");
             let Some(next_cursor) = self.get_next_cursor() else {
                 return self.next();
             };
@@ -481,21 +538,33 @@ impl AudioPlayer {
             return;
         }
 
-        if let Err(e) = self.player.try_seek(target) {
-            eprintln!("Seek failed: {e:?}");
+        println!("[SEEK LOG] Attempting rodio player.try_seek({target:?})...");
+        match self.player.try_seek(target) {
+            Ok(()) => {
+                println!("[SEEK LOG] try_seek succeeded natively.");
+                self.seek_offset = Duration::ZERO;
+            }
+            Err(e) => {
+                eprintln!("[SEEK LOG] Error: try_seek failed natively: {e:?}");
+            }
         }
-        println!("seeking: {target:?}, REMAININGGGGGGG {remaining:?}, duration: {duration:?}");
 
-        // let target_ms = i64::try_from(target.as_millis()).unwrap_or(0);
-        // self.update_discord_song(Some(target_ms));
-        // println!("UPDATING DISCORD SONG! seek() 2");
+        let raw_pos = self.player.get_pos();
+        let calculated_progress = (raw_pos.as_secs_f32() / duration.as_secs_f32()).min(1.0);
+
+        println!(
+            "[SEEK LOG] Position state after seek -> Raw rodio pos: {raw_pos:?}, Calculated fraction: {calculated_progress}"
+        );
+
+        let target_ms = i64::try_from(target.as_millis()).unwrap_or(0);
+        self.update_discord_song(Some(target_ms));
         self.update_current_metadata();
+        self.emit_state();
     }
-
     pub fn position(&self) -> f32 {
         if let Some(duration) = self.duration {
-            let pos = self.player.get_pos();
-            return (pos.as_secs_f32() / duration.as_secs_f32()).min(1.0);
+            let actual_pos = self.seek_offset + self.player.get_pos();
+            return (actual_pos.as_secs_f32() / duration.as_secs_f32()).min(1.0);
         }
         0.0
     }
@@ -523,38 +592,6 @@ impl AudioPlayer {
 
         self.handle.emit("player-state", state).ok();
     }
-
-    // fn cover_file_uri(song: &Song) -> Option<String> {
-    //     song.cover.as_ref().map(|(bytes, mime)| {
-    //         let ext = match mime.as_str() {
-    //             "image/png" => "png",
-    //             "image/jpeg" | "image/jpg" => "jpg",
-    //             "image/webp" => "webp",
-    //             _ => "img",
-    //         };
-    //
-    //         let mut temp_path = std::env::temp_dir();
-    //         temp_path.push("blacktape");
-    //
-    //         if let Some(parent) = temp_path.parent() {
-    //             fs::create_dir_all(parent).ok();
-    //         }
-    //
-    //         temp_path.push(format!("current_song_cover.{}", ext));
-    //
-    //         // write the actual bytes
-    //         fs::write(&temp_path, bytes).ok()?;
-    //
-    //         let path_str = temp_path.to_string_lossy();
-    //
-    //         #[cfg(target_os = "windows")]
-    //         let cover_path = format!("file://{}", path_str.replace('/', "\\"));
-    //         #[cfg(not(target_os = "windows"))]
-    //         let cover_path = format!("file://{}", path_str);
-    //
-    //         Some(cover_path)
-    //     })?
-    // }
 
     fn format_cover_path(path: &str) -> String {
         #[cfg(target_os = "windows")]
@@ -612,7 +649,7 @@ impl AudioPlayer {
 
         let prev_is_paused = self.is_paused();
         let prev_volume = self.get_volume();
-        let prev_pos = self.player.get_pos();
+        let prev_pos = self.seek_offset + self.player.get_pos();
         let prev_song = self.current_song.clone();
 
         let new_sink = Self::create_sink()?;
@@ -622,27 +659,27 @@ impl AudioPlayer {
         self.player = new_player;
 
         if let Some(song) = prev_song {
-            if let Ok(file) = File::open(&song.path) {
-                if let Ok(source) = Decoder::try_from(file) {
-                    self.player.append(source);
+            if let Ok(mut source) = Self::decode_source(&song.path) {
+                if prev_pos.as_millis() > 0 {
+                    let _ = source.try_seek(prev_pos);
 
-                    if prev_pos.as_millis() > 0 {
-                        let _ = self.player.try_seek(prev_pos);
-                    }
+                    self.seek_offset = prev_pos;
+                } else {
+                    self.seek_offset = Duration::ZERO;
+                }
 
-                    self.set_volume(prev_volume);
+                self.player.append(source);
+                self.set_volume(prev_volume);
 
-                    if prev_is_paused {
-                        self.player.pause();
-                    } else {
-                        self.player.play();
-                    }
+                if prev_is_paused {
+                    self.player.pause();
+                } else {
+                    self.player.play();
                 }
             }
         }
 
         self.current_device_id = Self::get_default_device_id().ok();
-
         self.emit_state();
         Ok(())
     }

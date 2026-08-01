@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 pub mod bandcamp;
+pub mod opus_source;
 pub mod youtube;
 pub mod ytdlp;
 
