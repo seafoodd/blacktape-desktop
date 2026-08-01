@@ -6,5 +6,5 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
-rustypipe_cache.json
 rustypipe_reports/
+/rustypipe_cache.json
