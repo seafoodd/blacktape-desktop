@@ -66,6 +66,7 @@ pub struct Song {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DownloadType {
     Album,
+    Playlist,
     Track,
 }
 

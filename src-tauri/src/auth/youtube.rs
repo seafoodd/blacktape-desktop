@@ -21,14 +21,34 @@ pub async fn cookies_are_ready(
     Ok(())
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
+
 #[command]
-pub async fn launch_youtube_login(app: AppHandle) -> Result<(), String> {
+pub async fn launch_youtube_login(app: AppHandle, force_visible: bool) -> Result<(), String> {
     println!("[blacktape::auth] launch_youtube_login command invoked.");
 
-    let login_url_str = "https://accounts.google.com/ServiceLogin?service=youtube";
-    let target_url = Url::parse(login_url_str).map_err(|e| e.to_string())?;
+    if let Some(existing_win) = app.get_webview_window("youtube-login") {
+        let _ = existing_win.close();
+    }
 
+    let (tx, rx) = oneshot::channel::<()>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    // Track whether the user actually authenticated successfully
+    let is_authenticated = Arc::new(AtomicBool::new(false));
+
+    let target_url_str = if force_visible {
+        "https://accounts.google.com/ServiceLogin?service=youtube"
+    } else {
+        "https://www.youtube.com"
+    };
+
+    let target_url = Url::parse(target_url_str).map_err(|e| e.to_string())?;
     let app_handle_clone = app.clone();
+    let tx_nav = Arc::clone(&tx);
+    let auth_nav = Arc::clone(&is_authenticated);
 
     let builder = WebviewWindowBuilder::new(
         &app,
@@ -40,24 +60,27 @@ pub async fn launch_youtube_login(app: AppHandle) -> Result<(), String> {
         .inner_size(500.0, 600.0)
         .resizable(false)
         .always_on_top(true)
-        // 1. Inject a secure window listener that listens ONLY for an internal browser message
+        .visible(force_visible)
+        .focused(force_visible)
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
         .initialization_script(r#"
+        // Listen for internal state reports from frontend
         window.addEventListener("message", (event) => {
-            if (event.data && event.data.type === "BLACKTAPE_EXTRACT_COOKIES") {
-                // Send it back via a standard message structure that Tauri handles internally
-                console.log("[blacktape frontend] Extraction triggered. Sending cookies up...");
-                window.location.href = "tauri://cookies?data=" + encodeURIComponent(document.cookie);
+            if (event.data && event.data.type === "BLACKTAPE_COOKIE_EXPORT") {
+                window.location.href = "tauri://save-cookies?data=" + encodeURIComponent(event.data.cookies);
             }
         });
     "#)
         .on_navigation(move |url| {
-            println!("[blacktape::auth] Navigation detected to: {}", url);
+            println!("[blacktape::auth] Navigating to: {}", url);
+            let host = url.host_str();
 
-            // 2. Catch our custom protocol redirect containing the cookies!
-            if url.scheme() == "tauri" && url.host_str() == Some("cookies") {
+            // 1. Intercept cookie save request after successful auth check
+            if url.scheme() == "tauri" && host == Some("save-cookies") {
                 let app_handle_task = app_handle_clone.clone();
+                let tx_task = Arc::clone(&tx_nav);
+                let auth_task = Arc::clone(&auth_nav);
 
-                // Extract the query parameter from our custom URI redirection
                 let query_str = url.query().unwrap_or("");
                 let cookies_encoded = query_str.replace("data=", "");
                 let clean_cookies = percent_encoding::percent_decode_str(&cookies_encoded)
@@ -65,39 +88,91 @@ pub async fn launch_youtube_login(app: AppHandle) -> Result<(), String> {
                     .to_string();
 
                 tauri::async_runtime::spawn(async move {
-                    println!("[blacktape::auth] Custom URI intercepted! Writing cookies...");
+                    println!("[blacktape::auth] Saving authenticated session cookies...");
                     if let Err(e) = write_netscape_cookies(&app_handle_task, &clean_cookies).await {
-                        eprintln!("[blacktape::auth ERROR] Failed to write cookie file: {}", e);
+                        eprintln!("[blacktape::auth ERROR] Failed to write cookies: {}", e);
                     }
 
+                    // Mark auth as successful before closing window
+                    auth_task.store(true, Ordering::SeqCst);
+
                     if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
-                        println!("[blacktape::auth] Successfully stored cookies. Closing login window.");
                         let _ = win.close();
                     }
+
+                    if let Ok(mut guard) = tx_task.lock() {
+                        if let Some(sender) = guard.take() {
+                            let _ = sender.send(());
+                        }
+                    }
                 });
-                return false; // Stop navigation here so it doesn't actually try to route to "tauri://cookies"
+                return false;
             }
 
-            let host = url.host_str();
-            let path = url.path();
+            // 2. Unhide window if user lands on Google Accounts login
+            if host == Some("accounts.google.com") {
+                println!("[blacktape::auth] Login required. Showing window to user...");
+                if let Some(win) = app_handle_clone.get_webview_window("youtube-login") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
 
-            if host == Some("www.youtube.com") && (path == "/" || path.is_empty()) {
-                println!("[blacktape::auth] YouTube landing detected! Checking for extraction trigger...");
-
+            // 3. User arrived back on YouTube post-login: Verify session state
+            if host == Some("www.youtube.com") {
                 let app_handle_task = app_handle_clone.clone();
                 tauri::async_runtime::spawn(async move {
+                    // Delay slightly to let cookies write to DOM
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
                     if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
-                        println!("[blacktape::auth] Dispatching collection trigger via postMessage...");
-                        // Safely triggers the initialization script handler
-                        let _ = win.eval("window.postMessage({ type: 'BLACKTAPE_EXTRACT_COOKIES' }, '*');");
+                        let js = r#"
+                        (function() {
+                            const cookies = document.cookie;
+                            // Check for LOGIN_INFO or logged in state
+                            const isLoggedIn = cookies.includes("LOGIN_INFO=") ||
+                                               (window.yt && window.yt.config_ && window.yt.config_.LOGGED_IN === true);
+
+                            if (isLoggedIn) {
+                                window.postMessage({ type: 'BLACKTAPE_COOKIE_EXPORT', cookies: cookies }, '*');
+                            } else if (window.location.href.includes("youtube.com")) {
+                                console.log("[blacktape] Not logged in yet. Redirecting to Google Login...");
+                                window.location.href = "https://accounts.google.com/ServiceLogin?service=youtube";
+                            }
+                        })();
+                    "#;
+                        let _ = win.eval(js);
                     }
                 });
             }
+
             true
         });
 
-    let _login_window = builder.build().map_err(|e| e.to_string())?;
+    let login_window = builder.build().map_err(|e| e.to_string())?;
 
+    // Handle window closure: If closed before auth, cancel download
+    let tx_close = Arc::clone(&tx);
+    login_window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            if let Ok(mut guard) = tx_close.lock() {
+                if let Some(sender) = guard.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+    });
+
+    // Pause until window is closed or cookies are saved
+    let _ = rx.await;
+
+    // Check auth flag: If user manually closed window without logging in, CANCEL!
+    if !is_authenticated.load(Ordering::SeqCst) {
+        println!("[blacktape::auth] Window closed without valid authentication. Canceling batch!");
+        return Err("Authentication canceled by user.".to_string());
+    }
+
+    println!("[blacktape::auth] Authentication verified. Proceeding with download batch.");
     Ok(())
 }
 

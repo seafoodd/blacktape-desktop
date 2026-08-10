@@ -159,11 +159,21 @@ async fn download(
     download_type: DownloadType,
     url: String,
 ) -> Result<String, String> {
+    if platform == Platform::Youtube {
+        let res = launch_youtube_login(app_handle.clone(), false).await;
+        println!("launch_youtube_login res: {res:?}");
+        if res.is_err() {
+            eprintln!("[blacktape:lib.rs ERR] auth_window_closed");
+            return Err("auth_window_closed".to_string());
+        }
+    }
+
     let home_dir = app_handle.path().home_dir().map_err(|e| e.to_string())?;
     let download_dir = home_dir.join("blacktape-lib").to_str().unwrap().to_string();
 
     let payload = match download_type {
         DownloadType::Album => DownloadPayload::AlbumURL(url),
+        DownloadType::Playlist => return Err("Playlist downloads unimplemented.".into()),
         DownloadType::Track => DownloadPayload::TrackURL(url),
     };
 

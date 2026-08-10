@@ -4,12 +4,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Instant, SystemTime};
-
-use crate::utils::set_hidden;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
-use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
+use tokio::time::sleep;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -155,26 +156,183 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     }
 }
 
-pub async fn download_track(
-    app: &AppHandle,
-    yt_url: &str,
-    output_dir: &str,
-    file_name: &str,
-) -> Result<String, String> {
-    let output_template = format!("{}/{}.%(ext)s", output_dir, file_name);
+// pub async fn download_track(
+//     app: &AppHandle,
+//     yt_url: &str,
+//     output_dir: &str,
+//     file_name: &str,
+// ) -> Result<String, String> {
+//     let output_template = format!("{}/{}.%(ext)s", output_dir, file_name);
+//
+//     #[rustfmt::skip]
+//     let args = [
+//         "-f", "bestaudio",
+//         "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
+//         "--no-warnings",
+//         "--no-check-certificates",
+//         "--socket-timeout", "5",
+//         "-o", &output_template,
+//         yt_url,
+//     ];
+//
+//     execute(app, &args).await
+// }
 
-    #[rustfmt::skip]
-    let args = [
-        "-f", "bestaudio",
-        "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
-        "--no-warnings",
-        "--no-check-certificates",
-        "--socket-timeout", "5",
-        "-o", &output_template,
-        yt_url,
+const MAX_CONCURRENT_DOWNLOADS: usize = 4;
+
+#[derive(Clone)]
+struct DownloadContext {
+    binary_path: PathBuf,
+    cookie_arg: String,
+    temp_dir: PathBuf,
+    session_id: String,
+}
+
+impl DownloadContext {
+    async fn prepare(
+        app: &AppHandle,
+        output_dir: &str,
+        session_prefix: &str,
+    ) -> Result<Self, String> {
+        let binary_path = get_path(app);
+        if !binary_path.exists() {
+            eprintln!("[yt-dlp ERROR] Binary missing at path: {:?}", binary_path);
+            return Err("yt-dlp binary is missing.".to_string());
+        }
+
+        let timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis();
+        let session_id = format!("{}_{}", session_prefix, timestamp);
+
+        let temp_dir = PathBuf::from(output_dir).join(".temp").join(&session_id);
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let edge_profile_path = app_data_dir
+            .join("browser-profiles")
+            .join("EBWebView")
+            .join("Default");
+        let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
+
+        Ok(Self {
+            binary_path,
+            cookie_arg,
+            temp_dir,
+            session_id,
+        })
+    }
+}
+
+async fn download_track_internal(
+    ctx: &DownloadContext,
+    track: &TrackDownload,
+    track_num: usize,
+    total_tracks: usize,
+) -> Option<PathBuf> {
+    let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
+    let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
+
+    let mut args = vec![
+        "--extract-audio".to_string(),
+        "--audio-format".to_string(),
+        "best".to_string(),
+        "--ignore-errors".to_string(),
+        "--no-check-certificates".to_string(),
+        "--no-playlist".to_string(),
+        "--concurrent-fragments".to_string(),
+        "10".to_string(),
+        "--http-chunk-size".to_string(),
+        "10M".to_string(),
+        "-o".to_string(),
+        output_template.to_string_lossy().to_string(),
     ];
 
-    execute(app, &args).await
+    if is_youtube {
+        args.extend(vec![
+            "-f".to_string(),
+            "ba[ext=webm]/ba[ext=m4a]/ba".to_string(),
+            "--cookies-from-browser".to_string(),
+            ctx.cookie_arg.clone(),
+        ]);
+    } else {
+        args.extend(vec!["-f".to_string(), "bestaudio/best".to_string()]);
+    }
+
+    args.push(track.url.clone());
+
+    println!(
+        "[yt-dlp] [{}] [Track {}/{}] Executing:\n  {:?} {}",
+        ctx.session_id,
+        track_num,
+        total_tracks,
+        ctx.binary_path,
+        args.join(" ")
+    );
+
+    let mut cmd = Command::new(&ctx.binary_path);
+    cmd.args(&args);
+
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = match cmd.output().await {
+        Ok(out) => out,
+        Err(err) => {
+            eprintln!(
+                "[yt-dlp ERROR] [{}] [Track {}/{}] Process failed to execute: {}",
+                ctx.session_id, track_num, total_tracks, err
+            );
+            return None;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        eprintln!(
+            "[yt-dlp ERROR] [{}] [Track {}/{}] Exited with code {:?}\n--- STDERR ---\n{}\n--- STDOUT ---\n{}",
+            ctx.session_id,
+            track_num,
+            total_tracks,
+            output.status.code(),
+            stderr.trim(),
+            stdout.trim()
+        );
+        return None;
+    }
+
+    if !stderr.trim().is_empty() {
+        println!(
+            "[yt-dlp LOG] [{}] [Track {}/{}] Warnings/Info:\n{}",
+            ctx.session_id,
+            track_num,
+            total_tracks,
+            stderr.trim()
+        );
+    }
+
+    find_downloaded_file(&ctx.temp_dir, track_num).await
+}
+
+pub async fn download_single(
+    app: &AppHandle,
+    track: &TrackDownload,
+    output_dir: &str,
+    task_id: &str,
+) -> Result<(PathBuf, TrackDownload), String> {
+    let mut results = download_batch(app, std::slice::from_ref(track), output_dir, task_id).await?;
+
+    results
+        .pop()
+        .ok_or_else(|| format!("Failed to download track: {}", track.title))
 }
 
 pub async fn download_batch(
@@ -183,203 +341,290 @@ pub async fn download_batch(
     output_dir: &str,
     task_id: &str,
 ) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
-    let app_data = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-
-    if !app_data.exists() {
-        fs::create_dir_all(&app_data).map_err(|e| e.to_string())?;
-    }
-    let timestamp = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis();
-    let session_id = format!("batch_{}", timestamp);
-
-    let batch_file_path = app_data.join(format!("{}.txt", session_id));
-
-    let file_content: String = tracks
-        .iter()
-        .map(|t| t.url.as_str())
-        .collect::<Vec<&str>>()
-        .join("\n");
-
-    fs::write(&batch_file_path, file_content).map_err(|e| e.to_string())?;
-
-    let temp_dir = format!("{output_dir}/.temp");
-    let temp_batch_dir = format!("{output_dir}/.temp/{session_id}");
-    let temp_path = Path::new(&temp_dir);
-    let temp_batch_path = Path::new(&temp_batch_dir);
-
-    if !temp_path.exists() {
-        fs::create_dir_all(temp_path).map_err(|e| e.to_string())?;
-        let _ = set_hidden(temp_path, true);
-    }
-
-    if !temp_batch_path.exists() {
-        fs::create_dir_all(temp_batch_path).map_err(|e| e.to_string())?;
-    }
-
-    let output_template = format!("{temp_batch_dir}/%(autonumber)s.%(ext)s");
-    let batch_path_str = batch_file_path
-        .to_str()
-        .ok_or("Invalid temporary batch path encoding")?;
-
-    let app_data_dir = app.path().app_data_dir().unwrap();
-    let edge_profile_path = app_data_dir
-        .join("browser-profiles")
-        .join("EBWebView")
-        .join("Default");
-
-    let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
-
-    #[rustfmt::skip]
-    let base_args = vec![
-        // "-f", "ba[ext=webm]/ba",
-        "--audio-quality", "0",
-        "--extract-audio",
-        "--audio-format", "opus",
-        "--ignore-errors",
-        "--format-sort", "hasaud,acodec,abr,channels,asr,aext",
-        "--no-warnings",
-        "--no-check-certificates",
-        "--cookies-from-browser", &cookie_arg,
-        "--extractor-args", "youtube:player_client=music",
-        "-a", batch_path_str,
-        "-o", &output_template,
-    ];
+    let now = Instant::now();
+    let ctx = Arc::new(DownloadContext::prepare(app, output_dir, "batch").await?);
 
     println!(
-        "[ytdlp] [{}] Streaming batch download of size {}...",
-        session_id,
-        tracks.len()
+        "[yt-dlp] [{}] Starting batch of {} tracks. Output temp dir: {:?}",
+        ctx.session_id,
+        tracks.len(),
+        ctx.temp_dir
     );
 
-    let binary_path = get_path(app);
-    if !binary_path.exists() {
-        return Err("yt-dlp binary is missing.".to_string());
-    }
-
-    let mut cmd = Command::new(binary_path);
-    cmd.args(&base_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        const FLAGS: u32 = 0x08000000 | 0x00004000;
-        cmd.creation_flags(FLAGS);
-    }
-
-    // Spawn the process instead of waiting for it
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-
-    // Spawn a background task to read stderr so the process doesn't deadlock if it logs too much
-    let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
-    let mut stderr_lines = tokio::io::BufReader::new(stderr).lines();
-    let stderr_handle = tokio::spawn(async move {
-        let mut err_msg = String::new();
-        while let Ok(Some(line)) = stderr_lines.next_line().await {
-            err_msg.push_str(&line);
-            err_msg.push('\n');
-        }
-        err_msg
-    });
-
     let total_tracks = tracks.len();
-    let mut last_count = 0;
+    let completed_counter = Arc::new(AtomicUsize::new(0));
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
 
-    // Poll the directory while yt-dlp is running
-    loop {
-        let mut current_count = 0;
-
-        // Count completed files (files that don't have the .part extension)
-        if let Ok(mut entries) = tokio::fs::read_dir(temp_batch_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                let is_part = path.extension().and_then(|s| s.to_str()) == Some("part");
-                if !is_part {
-                    current_count += 1;
-                }
-            }
-        }
-
-        // Emit progress event if a new song finished downloading
-        if current_count > last_count {
-            last_count = current_count;
-            let _ = app.emit(
-                "download-task-progress",
-                ProgressEvent {
-                    task_id: task_id.to_string(),
-                    current: current_count,
-                    total: total_tracks,
-                    track_title: format!(
-                        "Downloaded {} of {} songs to temp",
-                        current_count, total_tracks
-                    ),
-                },
-            );
-        }
-
-        // Check if yt-dlp has finished
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let err_msg = stderr_handle.await.unwrap_or_default();
-
-                let _ = fs::remove_file(&batch_file_path);
-
-                if !status.success() {
-                    if temp_batch_path.exists() {
-                        let _ = fs::remove_dir_all(temp_batch_path);
-                    }
-                    return Err(err_msg.trim().to_string());
-                }
-                break; // Success!
-            }
-            Ok(None) => {
-                // Still running, wait 500ms before checking again
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-            Err(e) => {
-                let _ = stderr_handle.await;
-                return Err(e.to_string());
-            }
-        }
-    }
-
-    // if let Err(err) = result {
-    //     if temp_batch_path.exists() {
-    //         let _ = fs::remove_dir_all(temp_batch_path);
-    //     }
-    //     return Err(err);
-    // }
-
-    let mut downloaded = Vec::new();
+    let mut tasks = Vec::new();
 
     for (index, track) in tracks.iter().enumerate() {
-        let mut temp_file_path = None;
+        let sem = Arc::clone(&semaphore);
+        let completed = Arc::clone(&completed_counter);
+        let track = track.clone();
+        let app_handle = app.clone();
+        let ctx = Arc::clone(&ctx);
+        let task_id = task_id.to_string();
 
-        if let Ok(entries) = fs::read_dir(temp_batch_path) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(file_num) = file_stem.parse::<usize>() {
-                        if file_num == index + 1 {
-                            temp_file_path = Some(path);
-                            break;
-                        }
-                    }
+        tasks.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
+
+            let track_num = index + 1;
+            let jitter = (index % 4) * 100 + 50;
+            sleep(Duration::from_millis(jitter as u64)).await;
+
+            let downloaded_file = download_track_internal(&ctx, &track, track_num, total_tracks).await;
+
+            if let Some(ref path) = downloaded_file {
+                let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
+                println!(
+                    "[yt-dlp SUCCESS] [{}] [Track {}/{}] Output saved to: {:?}",
+                    ctx.session_id, track_num, total_tracks, path
+                );
+
+                let _ = app_handle.emit(
+                    "download-task-progress",
+                    ProgressEvent {
+                        task_id,
+                        current,
+                        total: total_tracks,
+                        track_title: format!("Downloaded {} of {} tracks", current, total_tracks),
+                    },
+                );
+
+                Some((path.clone(), track))
+            } else {
+                eprintln!(
+                    "[yt-dlp ERROR] [{}] [Track {}/{}] Process succeeded, but no output file matching '{}.*' was found in {:?}",
+                    ctx.session_id, track_num, total_tracks, track_num, ctx.temp_dir
+                );
+                None
+            }
+        }));
+    }
+
+    let results = futures::future::join_all(tasks).await;
+    let downloaded: Vec<(PathBuf, TrackDownload)> = results
+        .into_iter()
+        .filter_map(|r| {
+            r.unwrap_or_else(|join_err| {
+                eprintln!("[yt-dlp ERROR] Task panic/join error: {}", join_err);
+                None
+            })
+        })
+        .collect();
+
+    println!(
+        "[yt-dlp SUMMARY] Batch finished. Downloaded {}/{} tracks in {:?}",
+        downloaded.len(),
+        total_tracks,
+        now.elapsed()
+    );
+
+    Ok(downloaded)
+}
+
+// pub async fn download_batch_old(
+//     app: &AppHandle,
+//     tracks: &[TrackDownload],
+//     output_dir: &str,
+//     task_id: &str,
+// ) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
+//     let now = Instant::now();
+//     let binary_path = get_path(app);
+//     if !binary_path.exists() {
+//         eprintln!("[yt-dlp ERROR] Binary missing at path: {:?}", binary_path);
+//         return Err("yt-dlp binary is missing.".to_string());
+//     }
+//
+//     let timestamp = SystemTime::now()
+//         .duration_since(std::time::UNIX_EPOCH)
+//         .map_err(|e| e.to_string())?
+//         .as_millis();
+//     let session_id = format!("batch_{}", timestamp);
+//
+//     let temp_batch_dir = PathBuf::from(output_dir).join(".temp").join(&session_id);
+//     tokio::fs::create_dir_all(&temp_batch_dir)
+//         .await
+//         .map_err(|e| e.to_string())?;
+//
+//     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+//     let edge_profile_path = app_data_dir
+//         .join("browser-profiles")
+//         .join("EBWebView")
+//         .join("Default");
+//     let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
+//
+//     println!(
+//         "[yt-dlp] [{}] Starting batch of {} tracks. Output temp dir: {:?}",
+//         session_id,
+//         tracks.len(),
+//         temp_batch_dir
+//     );
+//
+//     let total_tracks = tracks.len();
+//     let completed_counter = Arc::new(AtomicUsize::new(0));
+//     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
+//
+//     let mut tasks = Vec::new();
+//
+//     for (index, track) in tracks.iter().enumerate() {
+//         let sem = Arc::clone(&semaphore);
+//         let completed = Arc::clone(&completed_counter);
+//         let track = track.clone();
+//         let app_handle = app.clone();
+//         let binary_path = binary_path.clone();
+//         let temp_batch_dir = temp_batch_dir.clone();
+//         let cookie_arg = cookie_arg.clone();
+//         let task_id = task_id.to_string();
+//         let session_id = session_id.clone();
+//
+//         tasks.push(tokio::spawn(async move {
+//             let _permit = sem.acquire().await.unwrap();
+//
+//             let track_num = index + 1;
+//             let jitter = (index % 4) * 100 + 50;
+//             sleep(Duration::from_millis(jitter as u64)).await;
+//
+//             let output_template = temp_batch_dir.join(format!("{}.%(ext)s", track_num));
+//             let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
+//
+//             let mut args = vec![
+//                 "--extract-audio".to_string(),
+//                 "--audio-format".to_string(), "best".to_string(),
+//                 "--ignore-errors".to_string(),
+//                 "--no-check-certificates".to_string(),
+//                 "--no-playlist".to_string(),
+//                 "--concurrent-fragments".to_string(), "10".to_string(),
+//                 "--http-chunk-size".to_string(), "10M".to_string(),
+//                 "-o".to_string(), output_template.to_string_lossy().to_string(),
+//             ];
+//
+//             if is_youtube {
+//                 args.extend(vec![
+//                     "-f".to_string(), "ba[ext=webm]/ba[ext=m4a]/ba".to_string(),
+//                     "--cookies-from-browser".to_string(), cookie_arg.clone(),
+//                 ]);
+//             } else {
+//                 args.extend(vec![
+//                     "-f".to_string(), "bestaudio/best".to_string(),
+//                 ]);
+//             }
+//
+//             args.push(track.url.clone());
+//
+//             println!(
+//                 "[yt-dlp] [{}] [Track {}/{}] Executing:\n  {:?} {}",
+//                 session_id, track_num, total_tracks, binary_path, args.join(" ")
+//             );
+//
+//             let mut cmd = Command::new(&binary_path);
+//             cmd.args(&args);
+//
+//             #[cfg(target_os = "windows")]
+//             {
+//                 const CREATE_NO_WINDOW: u32 = 0x08000000;
+//                 cmd.creation_flags(CREATE_NO_WINDOW);
+//             }
+//
+//             let output = match cmd.output().await {
+//                 Ok(out) => out,
+//                 Err(err) => {
+//                     eprintln!(
+//                         "[yt-dlp ERROR] [{}] [Track {}/{}] Process failed to execute: {}",
+//                         session_id, track_num, total_tracks, err
+//                     );
+//                     return None;
+//                 }
+//             };
+//
+//             let stdout = String::from_utf8_lossy(&output.stdout);
+//             let stderr = String::from_utf8_lossy(&output.stderr);
+//
+//             if !output.status.success() {
+//                 eprintln!(
+//                     "[yt-dlp ERROR] [{}] [Track {}/{}] Exited with code {:?}\n--- STDERR ---\n{}\n--- STDOUT ---\n{}",
+//                     session_id,
+//                     track_num,
+//                     total_tracks,
+//                     output.status.code(),
+//                     stderr.trim(),
+//                     stdout.trim()
+//                 );
+//                 return None;
+//             }
+//
+//             if !stderr.trim().is_empty() {
+//                 println!(
+//                     "[yt-dlp LOG] [{}] [Track {}/{}] Warnings/Info:\n{}",
+//                     session_id, track_num, total_tracks, stderr.trim()
+//                 );
+//             }
+//
+//             let downloaded_file = find_downloaded_file(&temp_batch_dir, track_num).await;
+//
+//             if let Some(ref path) = downloaded_file {
+//                 let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
+//                 println!(
+//                     "[yt-dlp SUCCESS] [{}] [Track {}/{}] Output saved to: {:?}",
+//                     session_id, track_num, total_tracks, path
+//                 );
+//
+//                 let _ = app_handle.emit(
+//                     "download-task-progress",
+//                     ProgressEvent {
+//                         task_id,
+//                         current,
+//                         total: total_tracks,
+//                         track_title: format!("Downloaded {} of {} tracks", current, total_tracks),
+//                     },
+//                 );
+//
+//                 downloaded_file.map(|p| (p, track))
+//             } else {
+//                 eprintln!(
+//                     "[yt-dlp ERROR] [{}] [Track {}/{}] Process succeeded, but no output file matching '{}.*' was found in {:?}",
+//                     session_id, track_num, total_tracks, track_num, temp_batch_dir
+//                 );
+//                 None
+//             }
+//         }));
+//     }
+//
+//     let results = futures::future::join_all(tasks).await;
+//     let downloaded: Vec<(PathBuf, TrackDownload)> = results
+//         .into_iter()
+//         .filter_map(|r| match r {
+//             Ok(opt) => opt,
+//             Err(join_err) => {
+//                 eprintln!("[yt-dlp ERROR] Task panic/join error: {}", join_err);
+//                 None
+//             }
+//         })
+//         .collect();
+//
+//     println!(
+//         "[yt-dlp SUMMARY] Batch finished. Downloaded {}/{} tracks in {:?}",
+//         downloaded.len(),
+//         total_tracks,
+//         now.elapsed()
+//     );
+//
+//     Ok(downloaded)
+// }
+
+/// Helper function to match track index to the resulting file on disk
+async fn find_downloaded_file(dir: &Path, index: usize) -> Option<PathBuf> {
+    let mut entries = tokio::fs::read_dir(dir).await.ok()?;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if stem == index.to_string() {
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                if ext != "part" && ext != "ytdl" {
+                    return Some(path);
                 }
             }
         }
-
-        if let Some(path) = temp_file_path {
-            downloaded.push((path, track.clone()));
-        } else {
-            eprintln!(
-                "[Warning] [{}] Staged file missing for: {}",
-                session_id, track.title
-            );
-        }
     }
-
-    Ok(downloaded)
+    None
 }

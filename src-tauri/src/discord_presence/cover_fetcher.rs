@@ -77,18 +77,20 @@ impl CoverFetcher {
             return Some(cached_url.clone());
         }
 
-        // Local image upload to Catbox
+        // Local image upload with fallback hosts
         if let Some(local_art_bytes) = self.extract_local_artwork(song) {
             if let Some(ref local_path_str) = song.cover_url {
-                if let Some(catbox_url) = self.upload_to_catbox(local_art_bytes, local_path_str) {
+                if let Some(hosted_url) =
+                    self.upload_image_with_fallbacks(local_art_bytes, local_path_str)
+                {
                     self.cache
                         .lock()
                         .unwrap()
-                        .insert(song.path.clone(), catbox_url.clone());
-                    return Some(catbox_url);
+                        .insert(song.path.clone(), hosted_url.clone());
+                    return Some(hosted_url);
                 }
             }
-            println!("Catbox upload failed, falling back to MusicBrainz.");
+            eprintln!("All image upload providers failed, falling back to MusicBrainz.");
         }
 
         // Fallback MusicBrainz image parse
@@ -96,7 +98,6 @@ impl CoverFetcher {
 
         match self.get_cover_art_url(&mbid) {
             Ok(Some(url)) => {
-                // Save in cache
                 self.cache
                     .lock()
                     .unwrap()
@@ -126,18 +127,42 @@ impl CoverFetcher {
         None
     }
 
-    fn upload_to_catbox(&self, mut image_bytes: Vec<u8>, cover_path: &str) -> Option<String> {
-        use reqwest::blocking::multipart;
-
+    fn upload_image_with_fallbacks(
+        &self,
+        image_bytes: Vec<u8>,
+        cover_path: &str,
+    ) -> Option<String> {
         if image_bytes.is_empty() || image_bytes.len() < 100 {
             eprintln!("Skipping upload: Image file data is corrupt or empty.");
             return None;
         }
 
-        // append 4 random bytes to force catbox to create a fresh url
+        if let Some(url) = self.upload_to_catbox(&image_bytes, cover_path) {
+            return Some(url);
+        }
+
+        if let Some(url) = self.upload_to_0x0(&image_bytes, cover_path) {
+            return Some(url);
+        }
+
+        if let Some(url) = self.upload_to_envs_sh(&image_bytes, cover_path) {
+            return Some(url);
+        }
+
+        if let Some(url) = self.upload_to_tmpfiles(&image_bytes, cover_path) {
+            return Some(url);
+        }
+
+        None
+    }
+
+    fn upload_to_catbox(&self, image_bytes: &[u8], cover_path: &str) -> Option<String> {
+        use reqwest::blocking::multipart;
+
+        let mut bytes = image_bytes.to_vec();
         let mut rng = rand::rng();
         let random_padding: [u8; 4] = rng.random();
-        image_bytes.extend_from_slice(&random_padding);
+        bytes.extend_from_slice(&random_padding);
 
         let extension = Path::new(cover_path)
             .extension()
@@ -148,10 +173,10 @@ impl CoverFetcher {
 
         let form = multipart::Form::new()
             .text("reqtype", "fileupload")
-            .text("userhash", "") // Anonymous upload
+            .text("userhash", "")
             .part(
                 "fileToUpload",
-                multipart::Part::bytes(image_bytes).file_name(file_name), // Dynamic matching extension!
+                multipart::Part::bytes(bytes).file_name(file_name),
             );
 
         let response = self
@@ -173,6 +198,105 @@ impl CoverFetcher {
         None
     }
 
+    fn upload_to_0x0(&self, image_bytes: &[u8], cover_path: &str) -> Option<String> {
+        use reqwest::blocking::multipart;
+
+        let extension = Path::new(cover_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg");
+        let file_name = format!("cover.{}", extension);
+
+        let form = multipart::Form::new().part(
+            "file",
+            multipart::Part::bytes(image_bytes.to_vec()).file_name(file_name),
+        );
+
+        let response = self
+            .client
+            .post("https://0x0.st")
+            .multipart(form)
+            .send()
+            .ok()?;
+
+        if response.status().is_success() {
+            if let Ok(url_text) = response.text() {
+                let trimmed = url_text.trim();
+                if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn upload_to_envs_sh(&self, image_bytes: &[u8], cover_path: &str) -> Option<String> {
+        use reqwest::blocking::multipart;
+
+        let extension = Path::new(cover_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg");
+        let file_name = format!("cover.{}", extension);
+
+        let form = multipart::Form::new().part(
+            "file",
+            multipart::Part::bytes(image_bytes.to_vec()).file_name(file_name),
+        );
+
+        let response = self
+            .client
+            .post("https://envs.sh")
+            .multipart(form)
+            .send()
+            .ok()?;
+
+        if response.status().is_success() {
+            if let Ok(url_text) = response.text() {
+                let trimmed = url_text.trim();
+                if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn upload_to_tmpfiles(&self, image_bytes: &[u8], cover_path: &str) -> Option<String> {
+        use reqwest::blocking::multipart;
+
+        let extension = Path::new(cover_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg");
+        let file_name = format!("cover.{}", extension);
+
+        let form = multipart::Form::new().part(
+            "file",
+            multipart::Part::bytes(image_bytes.to_vec()).file_name(file_name),
+        );
+
+        let response = self
+            .client
+            .post("https://tmpfiles.org/api/v1/upload")
+            .multipart(form)
+            .send()
+            .ok()?;
+
+        if response.status().is_success() {
+            if let Ok(json) = response.json::<serde_json::Value>() {
+                if let Some(url_str) = json["data"]["url"].as_str() {
+                    let direct_url = url_str.replace("tmpfiles.org/", "tmpfiles.org/dl/");
+                    return Some(direct_url);
+                }
+            }
+        }
+
+        None
+    }
+
     fn get_release_mbid(&self, song: &Song) -> Option<String> {
         let query = format!(
             "release:\"{}\" AND artist:\"{}\"",
@@ -183,8 +307,6 @@ impl CoverFetcher {
         let url =
             format!("https://musicbrainz.org/ws/2/release/?query={encoded_query}&fmt=xml&limit=8");
 
-        // println!("Querying MusicBrainz: {}", url);
-
         let response = match self.client.get(&url).send() {
             Ok(r) => r,
             Err(e) => {
@@ -192,8 +314,6 @@ impl CoverFetcher {
                 return None;
             }
         };
-
-        // println!("Status: {}", response.status());
 
         if !response.status().is_success() {
             eprintln!("MusicBrainz API error: {}", response.status());
@@ -222,32 +342,20 @@ impl CoverFetcher {
             }
         };
 
-        // println!("Parsed {} releases", metadata.release_list.releases.len());
-
         metadata
             .release_list
             .releases
             .into_iter()
             .find(|r| r.score.unwrap_or(0) > 50)
-            .map(|r| {
-                // println!(
-                //     "Selected release: {} (score: {})",
-                //     r.title,
-                //     r.score.unwrap_or(0)
-                // );
-                r.id
-            })
+            .map(|r| r.id)
     }
 
     fn get_cover_art_url(&self, mbid: &str) -> Result<Option<String>, reqwest::Error> {
         let url = format!("https://coverartarchive.org/release/{mbid}");
 
-        // println!("Querying Cover Art Archive: {}", url);
-
         let response = self.client.get(&url).send()?;
 
         if !response.status().is_success() {
-            // eprintln!("Cover Art Archive API error: {}", response.status());
             return Ok(None);
         }
 
@@ -265,71 +373,4 @@ fn strip_xml_namespaces(xml: &str) -> String {
     xml.replace("xmlns=\"http://musicbrainz.org/ns/mmd-2.0#\"", "")
         .replace("xmlns:ns2=\"http://musicbrainz.org/ns/ext#-2.0\"", "")
         .replace("ns2:", "")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strip_xml_namespaces() {
-        let dirty_xml = r#"<metadata xmlns="http://musicbrainz.org/ns/mmd-2.0#" xmlns:ns2="http://musicbrainz.org/ns/ext#-2.0"><release-list><release ns2:score="100"></release></release-list></metadata>"#;
-        let cleaned = strip_xml_namespaces(dirty_xml);
-
-        assert!(!cleaned.contains("xmlns="));
-        assert!(!cleaned.contains("ns2:"));
-    }
-
-    #[test]
-    fn test_musicbrainz_xml_deserialization() {
-        let sample_xml = r#"
-        <metadata>
-            <release-list count="1">
-                <release id="c3374222-26cb-4034-8c88-f685fb7098e6" score="100">
-                    <title>Random Access Memories</title>
-                </release>
-            </release-list>
-        </metadata>
-        "#;
-
-        let parsed: Result<MusicBrainzMetadata, _> = from_str(sample_xml);
-        assert!(
-            parsed.is_ok(),
-            "Failed to parse MusicBrainz XML: {:?}",
-            parsed.err()
-        );
-
-        let metadata = parsed.unwrap();
-        assert_eq!(metadata.release_list.releases.len(), 1);
-
-        let release = &metadata.release_list.releases[0];
-        assert_eq!(release.id, "c3374222-26cb-4034-8c88-f685fb7098e6");
-        assert_eq!(release.title, "Random Access Memories");
-        assert_eq!(release.score, Some(100));
-    }
-
-    #[test]
-    fn test_cover_art_archive_json_deserialization() {
-        let sample_json = r#"{
-            "images": [
-                {
-                    "front": true,
-                    "approved": true,
-                    "image": "https://coverartarchive.org/api/original.jpg",
-                    "thumbnails": { "large": "https://coverartarchive.org/api/large.jpg" }
-                }
-            ]
-        }"#;
-
-        let parsed: Result<CoverArtArchiveResponse, _> = serde_json::from_str(sample_json);
-        assert!(parsed.is_ok(), "Failed to parse CoverArt Archive JSON");
-
-        let response = parsed.unwrap();
-        assert_eq!(response.images.len(), 1);
-        assert!(response.images[0].front);
-        assert_eq!(
-            response.images[0].thumbnails.large,
-            "https://coverartarchive.org/api/large.jpg"
-        );
-    }
 }

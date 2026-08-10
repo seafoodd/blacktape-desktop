@@ -46,7 +46,7 @@ const SearchResults = () => {
     <div className={styles.container}>
       <button
         onClick={() => {
-          invoke("launch_youtube_login");
+          invoke("launch_youtube_login", { forceVisible: true });
         }}
       >
         launch_youtube_login

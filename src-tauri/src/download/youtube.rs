@@ -22,6 +22,47 @@ pub async fn extract_streaming_url(app: &AppHandle, yt_url: &str) -> Result<Stri
     ytdlp::execute(app, &args).await
 }
 
+/// Extracts the YouTube 11-character video ID from various URL formats or raw ID strings.
+pub fn extract_video_id(url: &str) -> Result<String, String> {
+    if url.contains("v=") {
+        let id_part = url.split("v=").nth(1).unwrap_or("");
+        let id = id_part.split('&').next().unwrap_or(id_part);
+        if !id.is_empty() {
+            return Ok(id.to_string());
+        }
+    }
+
+    if url.contains("youtu.be/") {
+        let id_part = url.split("youtu.be/").last().unwrap_or("");
+        let id = id_part.split('?').next().unwrap_or(id_part);
+        if !id.is_empty() {
+            return Ok(id.to_string());
+        }
+    }
+
+    // Direct video ID string
+    if !url.contains('/') && !url.contains('?') && !url.is_empty() {
+        return Ok(url.to_string());
+    }
+
+    Err("Invalid YouTube track URL or video ID format.".to_string())
+}
+
+fn maximize_cover_url(url: &str) -> String {
+    if url.contains("googleusercontent.com") || url.contains("ggpht.com") {
+        // Strip existing size/quality modifiers after '=' and request 1600x1600 JPEG at quality 90
+        let base_url = url.split('=').next().unwrap_or(url);
+        format!("{base_url}=w1600-h1600-l90-rj")
+    } else if url.contains("i.ytimg.com") {
+        url.replace("hqdefault.jpg", "maxresdefault.jpg")
+            .replace("sddefault.jpg", "maxresdefault.jpg")
+            .replace("mqdefault.jpg", "maxresdefault.jpg")
+            .replace("hq720.jpg", "maxresdefault.jpg")
+    } else {
+        url.to_string()
+    }
+}
+
 /// Parses a YouTube Music `browse_url` or album page and returns an [`AlbumDownload`].
 ///
 /// **Note:** Direct YouTube playlist URLs (e.g., `playlist?list=...`) are not supported.
@@ -53,7 +94,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
         .cover
         .iter()
         .max_by_key(|thumb| thumb.width)
-        .map(|thumb| thumb.url.clone());
+        .map(|thumb| maximize_cover_url(&thumb.url));
 
     let release_year = album.year.map(|y| y as i32);
 
@@ -92,6 +133,88 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
         release_year,
         external_cover_url,
     })
+}
+
+/// Parses a single YouTube track or video URL and returns a tuple containing
+/// `(TrackDownload, Option<external_cover_url>)`.
+pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), String> {
+    let video_id = extract_video_id(url)?;
+    let rp = RustyPipe::new();
+
+    // 1. Attempt YouTube Music details fetch (richest metadata: album, artist list, release year)
+    if let Ok(details) = rp.query().music_details(&video_id).await {
+        let track_item = details.track;
+        let title = track_item.name.clone();
+        let artists: Vec<String> = track_item.artists.iter().map(|a| a.name.clone()).collect();
+        let album_artist = artists
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "Unknown Artist".into());
+
+        let mut release_year = None;
+        if let Some(ref album_id) = track_item.album {
+            if let Ok(album_data) = rp.query().music_album(&album_id.id).await {
+                release_year = album_data.year.map(|y| y as i32);
+            }
+        }
+
+        let album_name = track_item
+            .album
+            .map(|a| a.name)
+            .unwrap_or_else(|| "Singles".into());
+
+        let external_cover_url = track_item
+            .cover
+            .iter()
+            .max_by_key(|t| t.width)
+            .map(|t| maximize_cover_url(&t.url));
+
+        let sanitized_name = sanitize_fs(&title);
+
+        let track = TrackDownload {
+            title,
+            artists,
+            album_artist,
+            album: album_name,
+            track_number: track_item.track_nr.map(|n| n as i32),
+            genres: None,
+            release_year,
+            url: format!("https://music.youtube.com/watch?v={}", video_id),
+            file_name: format!("{}.mp3", sanitized_name),
+            source_item_id: Some(video_id),
+        };
+
+        return Ok((track, external_cover_url));
+    }
+
+    // 2. Fallback to standard YouTube video details if YouTube Music fails
+    let video = rp
+        .query()
+        .video_details(&video_id)
+        .await
+        .map_err(|e| format!("Failed to fetch YouTube video details: {e}"))?;
+
+    let title = video.name;
+    let artist = video.channel.name;
+    let release_year = video.publish_date.map(|d| d.year());
+    let external_cover_url = Some(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id));
+
+    let sanitized_name = sanitize_fs(&title);
+
+    let track = TrackDownload {
+        title,
+        artists: vec![artist.clone()],
+        album_artist: artist,
+        album: "Singles".into(),
+        track_number: None,
+        genres: None,
+        release_year,
+        url: format!("https://youtube.com/watch?v={}", video_id),
+        file_name: format!("{}.mp3", sanitized_name),
+        source_item_id: Some(video_id),
+    };
+
+    Ok((track, external_cover_url))
 }
 
 fn extract_browse_id(browse_url: &str) -> Result<&str, String> {

@@ -63,9 +63,9 @@ impl MediaControls {
     }
 
     pub fn update_metadata(&mut self, metadata: MediaMetadata) {
-        self.controls
-            .set_metadata(metadata)
-            .expect("Failed to set metadata");
+        if let Err(e) = self.controls.set_metadata(metadata) {
+            eprintln!("Failed to set metadata: {e:?}");
+        }
     }
 
     pub fn play(&mut self) -> Result<(), Error> {

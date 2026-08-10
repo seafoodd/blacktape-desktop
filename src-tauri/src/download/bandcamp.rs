@@ -1,4 +1,5 @@
 use crate::download::{AlbumDownload, TrackDownload};
+use crate::utils::sanitize_fs;
 use regex::Regex;
 use reqwest::Client;
 
@@ -45,6 +46,168 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
         release_year: album_meta.release_year,
         external_cover_url: album_meta.external_cover_url,
     })
+}
+
+/// Parses a single Bandcamp track URL and returns a tuple containing
+/// `(TrackDownload, Option<external_cover_url>)`.
+pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<String>), String> {
+    let client = Client::new();
+    let html = client
+        .get(track_url)
+        .send()
+        .await
+        .map_err(|e| format!("Network request failed: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read page payload: {e}"))?;
+
+    let meta = parse_track_meta(&html);
+    let sanitized_name = sanitize_fs(&meta.title);
+
+    let track = TrackDownload {
+        title: meta.title,
+        artists: meta.artists.clone(),
+        album_artist: meta
+            .artists
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "Unknown Artist".into()),
+        album: meta.album,
+        track_number: meta.track_number,
+        genres: meta.genres,
+        release_year: meta.release_year,
+        url: track_url.to_string(),
+        file_name: format!("{}.mp3", sanitized_name),
+        source_item_id: None,
+    };
+
+    Ok((track, meta.external_cover_url))
+}
+
+struct TrackMeta {
+    title: String,
+    artists: Vec<String>,
+    album: String,
+    track_number: Option<i32>,
+    genres: Option<Vec<String>>,
+    release_year: Option<i32>,
+    external_cover_url: Option<String>,
+}
+
+fn parse_track_meta(html: &str) -> TrackMeta {
+    let mut title = None;
+    let mut artists = Vec::new();
+    let mut album = None;
+    let mut track_number = None;
+    let mut genres = None;
+    let mut release_year = None;
+    let mut external_cover_url = None;
+
+    let json_ld = extract_json_ld_block(html).unwrap_or_default();
+
+    // 1. EXTRACT TRACK TITLE & ARTIST NAME
+    if let Some(caps) = Regex::new(r#"<meta[^>]*property="og:title"[^>]*content="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        let og_content = caps.get(1).unwrap().as_str();
+        if let Some(idx) = og_content.rfind(", by ") {
+            title = Some(og_content[..idx].to_string());
+            artists.push(og_content[idx + 5..].to_string());
+        } else {
+            title = Some(og_content.to_string());
+        }
+    }
+
+    if title.is_none() {
+        if let Some(caps) = Regex::new(r#""name"\s*:\s*"([^"]+)""#)
+            .ok()
+            .and_then(|r| r.captures(&json_ld))
+        {
+            title = Some(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+
+    if artists.is_empty() {
+        if let Some(caps) = Regex::new(r#""byArtist"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)""#)
+            .ok()
+            .and_then(|r| r.captures(&json_ld))
+        {
+            artists.push(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+
+    // 2. EXTRACT ALBUM NAME & TRACK NUMBER
+    if let Some(caps) = Regex::new(r#""inAlbum"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        album = Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    if let Some(caps) = Regex::new(r#""trackNum(?:ber)?"\s*:\s*(\d+)"#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        track_number = caps.get(1).unwrap().as_str().parse::<i32>().ok();
+    }
+
+    // 3. EXTRACT COVER ART
+    if let Some(caps) = Regex::new(r#"<meta[^>]*property="og:image"[^>]*content="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        external_cover_url = Some(maximize_cover_url(caps.get(1).unwrap().as_str()));
+    } else if let Some(caps) = Regex::new(r#"<link[^>]*rel="image_src"[^>]*href="([^"]+)""#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        external_cover_url = Some(maximize_cover_url(caps.get(1).unwrap().as_str()));
+    }
+
+    // 4. EXTRACT RELEASE YEAR
+    if let Some(caps) = Regex::new(r#""datePublished"\s*:\s*"[^"]*?(\d{4})""#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        release_year = caps.get(1).unwrap().as_str().parse::<i32>().ok();
+    } else if let Some(caps) = Regex::new(r#"(?i)released\s+(?:\d{1,2}\s+[a-z]+\s+)?\b(\d{4})\b"#)
+        .ok()
+        .and_then(|r| r.captures(html))
+    {
+        release_year = caps.get(1).unwrap().as_str().parse::<i32>().ok();
+    }
+
+    // 5. EXTRACT GENRES
+    if let Some(caps) = Regex::new(r#""keywords"\s*:\s*\[([^\]]+)\]"#)
+        .ok()
+        .and_then(|r| r.captures(&json_ld))
+    {
+        let keywords_block = caps.get(1).unwrap().as_str();
+        let mut tags = Vec::new();
+        if let Some(kw_re) = Regex::new(r#""([^"]+)""#).ok() {
+            for kw_cap in kw_re.captures_iter(keywords_block) {
+                tags.push(kw_cap.get(1).unwrap().as_str().to_string());
+            }
+        }
+        if !tags.is_empty() {
+            genres = Some(tags);
+        }
+    }
+
+    TrackMeta {
+        title: title.unwrap_or_else(|| "Unknown Track".to_string()),
+        artists: if artists.is_empty() {
+            vec!["Unknown Artist".to_string()]
+        } else {
+            artists
+        },
+        album: album.unwrap_or_else(|| "Singles".to_string()),
+        track_number,
+        genres,
+        release_year,
+        external_cover_url,
+    }
 }
 
 fn extract_base_url(album_url: &str) -> Result<&str, String> {
@@ -162,12 +325,12 @@ fn parse_album_meta(html: &str) -> AlbumMeta {
         .ok()
         .and_then(|r| r.captures(html))
     {
-        external_cover_url = Some(caps.get(1).unwrap().as_str().to_string());
+        external_cover_url = Some(maximize_cover_url(caps.get(1).unwrap().as_str()));
     } else if let Some(caps) = Regex::new(r#"<link[^>]*rel="image_src"[^>]*href="([^"]+)""#)
         .ok()
         .and_then(|r| r.captures(html))
     {
-        external_cover_url = Some(caps.get(1).unwrap().as_str().to_string());
+        external_cover_url = Some(maximize_cover_url(caps.get(1).unwrap().as_str()));
     }
 
     // 3. EXTRACT RELEASE YEAR
@@ -219,6 +382,10 @@ fn extract_json_ld_block(html: &str) -> Option<String> {
         .map(|caps| caps.get(1).unwrap().as_str().to_string())
 }
 
+fn maximize_cover_url(url: &str) -> String {
+    let re = Regex::new(r"_\d+\.(jpg|jpeg|png)").unwrap();
+    re.replace(url, "_0.jpg").to_string()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
