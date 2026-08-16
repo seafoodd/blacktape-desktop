@@ -33,12 +33,8 @@ pub fn process_and_move_track(
         .map(|a| decode_html_entities(a).to_string())
         .collect();
     let album_artist = decode_html_entities(&track.album_artist).to_string();
+    println!("decoded html: {}, {}", album_artist, &track.album_artist);
     let album = decode_html_entities(&track.album).to_string();
-    let genre = track
-        .genres
-        .as_ref()
-        .and_then(|g| g.first())
-        .map(|g| decode_html_entities(g).to_string());
 
     let ext = source_file
         .extension()
@@ -84,10 +80,10 @@ pub fn process_and_move_track(
     Ok(Song {
         id: None,
         path: destination_path.to_string_lossy().to_string(),
-        title: track.title.clone(),
-        artists: track.artists.clone(),
-        album_artist: track.album_artist.clone(),
-        album: track.album.clone(),
+        title,
+        artists,
+        album_artist,
+        album,
         duration_ms,
         track_number: track.track_number,
         genre: track.genres.as_ref().and_then(|g| g.first().cloned()),

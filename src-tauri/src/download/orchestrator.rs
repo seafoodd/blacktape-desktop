@@ -123,6 +123,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     if !new_songs.is_empty() {
         let db_state = app_handle.state::<tokio::sync::Mutex<Database>>();
         let db = db_state.lock().await;
+        println!("Inserting songs to db: {new_songs:?}");
         if let Err(e) = db.insert_songs(new_songs).await {
             eprintln!("[Queue Worker] DB Insertion error: {e}");
         }

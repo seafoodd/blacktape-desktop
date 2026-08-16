@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import Lyrics from "@/components/lyrics/Lyrics.tsx";
 import styles from "./right-sidebar.module.css";
 
+const MIN_WIDTH = 150;
+const MAX_WIDTH = 600;
+
 const RightSidebar = () => {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
@@ -10,10 +13,9 @@ const RightSidebar = () => {
   const stopResizing = useCallback(() => setIsResizing(false), []);
 
   const resize = useCallback((e: MouseEvent) => {
-    const newWidth = window.innerWidth - e.clientX;
-    if (newWidth > 150 && newWidth < 600) {
-      setSidebarWidth(newWidth);
-    }
+    const rawWidth = window.innerWidth - e.clientX;
+    const clampedWidth = Math.min(Math.max(rawWidth, MIN_WIDTH), MAX_WIDTH);
+    setSidebarWidth(clampedWidth);
   }, []);
 
   useEffect(() => {
@@ -36,7 +38,9 @@ const RightSidebar = () => {
   return (
     <aside className={styles.rightSidebar} style={{ width: sidebarWidth }}>
       <div className={styles.resizer} onMouseDown={startResizing} />
-      <Lyrics />
+      <div className={styles.rightSidebarContent}>
+        <Lyrics />
+      </div>
     </aside>
   );
 };
