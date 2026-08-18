@@ -254,7 +254,9 @@ async fn download_track_internal(
     if is_youtube {
         args.extend(vec![
             "-f".to_string(),
-            "ba[ext=webm]/ba[ext=m4a]/ba".to_string(),
+            "ba[ext=webm]/ba[ext=m4a]/ba/ba*/bestaudio/b".to_string(),
+            "--extractor-args".to_string(),
+            "youtube:player_client=android,web".to_string(),
             "--cookies-from-browser".to_string(),
             ctx.cookie_arg.clone(),
         ]);
