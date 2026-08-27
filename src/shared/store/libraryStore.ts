@@ -34,7 +34,7 @@ export enum ItemType {
   Artist = "Artist",
 }
 
-export type FilterCategory = "All" | ItemType;
+export type CategoryFilter = "All" | ItemType;
 export type PlatformFilter = "All" | "Youtube" | "Bandcamp" | "Local";
 
 export type SearchSuggestion = {
@@ -83,9 +83,9 @@ interface LibraryState {
   commitSearch: (query: string) => void;
 
   // Global Filters
-  activeCategory: FilterCategory;
+  activeCategory: CategoryFilter;
   activePlatform: PlatformFilter;
-  setActiveCategory: (cat: FilterCategory) => void;
+  setActiveCategory: (cat: CategoryFilter) => void;
   setActivePlatform: (plat: PlatformFilter) => void;
 
   fetchTabs: (query?: string) => Promise<void>;
