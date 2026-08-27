@@ -22,7 +22,11 @@ const formatSuggestionType = (type: ItemType): string => {
 
 type Platform = "All" | "Youtube" | "Bandcamp" | "Local";
 
-const SearchBar = () => {
+interface SearchBarProps {
+  className?: string;
+}
+
+export const SearchBar = ({ className }: SearchBarProps) => {
   const [query, setQuery] = useState<string>("");
   const [debouncedQuery, setDebouncedQuery] = useState<string>(query);
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -92,7 +96,7 @@ const SearchBar = () => {
   }, [searchResults, activeCategory, activePlatform]);
 
   return (
-    <div className={styles.container}>
+    <div className={clsx(styles.container, className)}>
       <div className={styles.searchFieldWrapper}>
         <AiOutlineSearch size={18} className={styles.searchIcon} />
 
@@ -333,5 +337,3 @@ const SearchBar = () => {
     </div>
   );
 };
-
-export default SearchBar;

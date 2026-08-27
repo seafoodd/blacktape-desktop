@@ -58,7 +58,7 @@ ul {
 /* Modern Standard (Firefox and Chrome 121+) */
 :root {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-primary-light) var(--color-surface);
+    scrollbar-color: var(--color-primary) var(--color-surface);
 }
 
 * {

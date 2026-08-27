@@ -64,11 +64,11 @@
     transition: 100ms ease-out background-color;
 
     &:nth-child(even) {
-        background-color: rgb(0 0 0 / 0.25);
+        background-color: var(--color-surface);
     }
 
     &.playing {
-        background-color: var(--color-primary-dark);
+        background-color: var(--color-primary);
     }
     font-size: 14px;
 }
@@ -88,6 +88,7 @@
 .playingIcon {
     width: 18px;
     height: 18px;
+    margin-left: -2px;
 }
 
 .songTrackNumber {

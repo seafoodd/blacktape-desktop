@@ -5,7 +5,7 @@ import placeholderArtistImage from "@/assets/react.svg";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import clsx from "clsx";
 
-const LeftSidebar = () => {
+export const LeftSidebar = () => {
   const { fetchTabs, tabs, selectedTab, setSelectedTab } = useLibraryStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizing, setIsResizing] = useState(false);
@@ -91,5 +91,3 @@ const LeftSidebar = () => {
     </aside>
   );
 };
-
-export default LeftSidebar;

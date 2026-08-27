@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { RepeatMode, seek } from "@/shared/lib/audio.ts";
-import { useAudioStore } from "@/shared/store/audioStore.ts";
+import { useAudioStore } from "@/shared/store/playerStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
@@ -18,7 +18,7 @@ import clsx from "clsx";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderSongImage from "@/assets/react.svg";
 
-const PlayerControls = () => {
+export const PlayerControls = () => {
   const {
     currentSong,
     progress,
@@ -193,7 +193,7 @@ const PlayerControls = () => {
             className={styles.volumeSlider}
             type="range"
             style={{
-              background: `linear-gradient(to right, var(--color-primary-dark) ${volume * 100}%, #555 0)`,
+              background: `linear-gradient(to right, var(--color-primary) ${volume * 100}%, #555 0)`,
             }}
             min={0}
             max={100}
@@ -205,5 +205,3 @@ const PlayerControls = () => {
     </div>
   );
 };
-
-export default PlayerControls;

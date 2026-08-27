@@ -1,0 +1,28 @@
+.controls {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    height: 100%;
+    -webkit-app-region: no-drag; /* Prevents button clicks from triggering window drags */
+}
+
+.button {
+    width: 48px;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    transition: background-color 0.1s ease, color 0.1s ease;
+
+    &:hover {
+        background-color: var(--color-surface);
+        color: var(--color-text);
+    }
+}
+
+.close:hover {
+    background-color: var(--color-error);
+    color: #ffffff;
+}

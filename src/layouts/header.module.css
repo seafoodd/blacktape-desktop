@@ -1,0 +1,27 @@
+.header {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-left: 16px;
+    height: 48px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.dropdownSettingsButton {
+    transition: color 0.1s ease;
+
+    &:hover {
+        cursor: pointer;
+        color: var(--color-primary-light);
+    }
+}
+
+.searchBar {
+    position: absolute;
+    inset: 0; /* Shorthand for top, bottom, left, right: 0 */
+    margin: auto; /* Perfectly centers the element horizontally and vertically */
+    /*width: fit-content;*/
+    height: fit-content; /* Give it a size or let it wrap content */
+}

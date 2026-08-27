@@ -1,6 +1,6 @@
 import styles from "./artist-albums.module.css";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
-import { useAudioStore } from "@/shared/store/audioStore.ts";
+import { useAudioStore } from "@/shared/store/playerStore.ts";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderAlbumImage from "@/assets/react.svg";
 import { formatDuration } from "@/shared/lib/time.ts";
@@ -53,7 +53,9 @@ const ArtistAlbums = () => {
               )}
             </div>
             <div className={styles.albumBlockRight}>
-              <h2 className={clsx(styles.albumTitle, "truncate")}>{album.title}</h2>
+              <h2 className={clsx(styles.albumTitle, "truncate")}>
+                {album.title}
+              </h2>
               <ul className={styles.songs}>
                 {album.songs.map((song) => (
                   <button
@@ -75,7 +77,9 @@ const ArtistAlbums = () => {
                           </>
                         </div>
                       )}
-                      <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
+                      <div className={clsx(styles.songTitle, "truncate")}>
+                        {song.title}
+                      </div>
                     </div>
                     <div className={styles.songDuration}>
                       {formatDuration(song.duration_ms)}

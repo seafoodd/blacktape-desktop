@@ -1,10 +1,10 @@
-import { useAudioStore } from "@/shared/store/audioStore.ts";
+import { useAudioStore } from "@/shared/store/playerStore.ts";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "./lyrics.module.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-const Lyrics = () => {
+export const Lyrics = () => {
   const { currentSong } = useAudioStore();
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [retrieving, setRetrieving] = useState<boolean>(false);
@@ -94,4 +94,3 @@ const Lyrics = () => {
     </div>
   );
 };
-export default Lyrics;

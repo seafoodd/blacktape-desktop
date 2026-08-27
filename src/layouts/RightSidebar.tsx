@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import Lyrics from "@/components/lyrics/Lyrics.tsx";
+import { Lyrics } from "@/features/player";
 import styles from "./right-sidebar.module.css";
 
 const MIN_WIDTH = 150;
 const MAX_WIDTH = 600;
 
-const RightSidebar = () => {
+export const RightSidebar = () => {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -44,5 +44,3 @@ const RightSidebar = () => {
     </aside>
   );
 };
-
-export default RightSidebar;

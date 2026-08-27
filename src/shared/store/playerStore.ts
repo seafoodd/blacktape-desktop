@@ -5,12 +5,13 @@ import {
   pause as tauriPause,
   previous as tauriPrevious,
   RepeatMode,
-  seek as tauriSeek, setRepeatMode,
+  seek as tauriSeek,
+  setRepeatMode,
   setVolume,
   Song,
   startPlayback as tauriStartPlayback,
   toggle as tauriToggle,
-  toggleShuffle
+  toggleShuffle,
 } from "../lib/audio";
 import { listen } from "@tauri-apps/api/event";
 
@@ -121,7 +122,7 @@ if (typeof window !== "undefined") {
       progress: state.progress,
       volume: state.volume,
       shuffleMode: state.shuffle_mode,
-      repeatMode: state.repeat_mode
+      repeatMode: state.repeat_mode,
     });
   });
 }

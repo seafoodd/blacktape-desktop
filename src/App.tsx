@@ -1,60 +1,28 @@
-import { useTheme } from "./shared/providers/theme-provider";
-import PlayerControls from "./components/player-controls/PlayerControls";
-import { pickFolder } from "./shared/lib/dialog";
-import { fetchState, scanMusic } from "./shared/lib/audio";
+import { PlayerControls } from "@/features/player";
+import { fetchState } from "./shared/lib/audio";
 import { useEffect } from "react";
-import styles from "./app.module.css";
-import LeftSidebar from "./components/left-sidebar/LeftSidebar.tsx";
-
+import { Header, LeftSidebar, MainLayout, RightSidebar } from "@/layouts";
 import ArtistAlbums from "@/pages/artist-albums/ArtistAlbums.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
-import RightSidebar from "@/components/right-sidebar/RightSidebar.tsx";
-import SearchBar from "@/components/search-bar/SearchBar.tsx";
 import SearchResults from "@/pages/search-results/SearchResults.tsx";
 
 function App() {
-  const { theme, toggleTheme } = useTheme();
-  const { fetchTabs, activeView } = useLibraryStore();
-
-  async function handlePickFolder() {
-    const dir = await pickFolder();
-    if (!dir) return;
-    const loadedSongs = await scanMusic(dir);
-    console.log("loadedSongs: ", loadedSongs[0]);
-    await fetchTabs();
-  }
+  const { activeView } = useLibraryStore();
 
   useEffect(() => {
     fetchState();
   }, []);
 
   return (
-    <main className={styles.app}>
-      <header className={styles.header}>
-        <button onClick={handlePickFolder}>Select Music Folder</button>
-        <SearchBar />
-        <button onClick={toggleTheme}>
-          {theme === "light" ? "Switch to Dark" : "Switch to Light"}
-        </button>
-      </header>
-
-      <div className={styles.layout}>
-        <LeftSidebar />
-
-        {/* Main Content */}
-        <main className={styles.main}>
-          {activeView === "ARTIST_ALBUMS" && <ArtistAlbums />}
-          {activeView === "SEARCH_RESULTS" && <SearchResults />}
-        </main>
-
-        <RightSidebar />
-      </div>
-
-      {/* Footer */}
-      <footer className={styles.footer}>
-        <PlayerControls />
-      </footer>
-    </main>
+    <MainLayout
+      header={<Header />}
+      leftSidebar={<LeftSidebar />}
+      rightSidebar={<RightSidebar />}
+      footer={<PlayerControls />}
+    >
+      {activeView === "ARTIST_ALBUMS" && <ArtistAlbums />}
+      {activeView === "SEARCH_RESULTS" && <SearchResults />}
+    </MainLayout>
   );
 }
 
