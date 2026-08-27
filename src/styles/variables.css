@@ -17,7 +17,7 @@
     --spacing-xl: 32px;
 
     /* Font sizes */
-    --font-base: 13px;
+    --font-base: 14px;
     font-size: var(--font-base);
 
     --font-xs: 0.77rem; /* ~10px at 13px base / ~12px at 16px base */
