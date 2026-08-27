@@ -237,9 +237,6 @@ async fn download_track_internal(
     let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
 
     let mut args = vec![
-        "--extract-audio".to_string(),
-        "--audio-format".to_string(),
-        "best".to_string(),
         "--ignore-errors".to_string(),
         "--no-check-certificates".to_string(),
         "--no-playlist".to_string(),
@@ -254,9 +251,14 @@ async fn download_track_internal(
     if is_youtube {
         args.extend(vec![
             "-f".to_string(),
-            "ba[ext=webm]/ba[ext=m4a]/ba/ba*/bestaudio/b".to_string(),
+            "251/140/ba/bestaudio".to_string(), // Force format 251 (Opus ~160k) or 140 (AAC 128k)
+            "--extract-audio".to_string(),
+            "--audio-format".to_string(),
+            "best".to_string(),
+            "--audio-quality".to_string(),
+            "0".to_string(), // Ensures maximum VBR quality if ffmpeg runs
             "--extractor-args".to_string(),
-            "youtube:player_client=android,web".to_string(),
+            "youtube:player-client=web_embedded,web,tv".to_string(), // Fixed client to eliminate 403 / low-bitrate lockouts
             "--cookies-from-browser".to_string(),
             ctx.cookie_arg.clone(),
         ]);
