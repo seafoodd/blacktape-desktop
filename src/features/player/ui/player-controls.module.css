@@ -64,7 +64,7 @@
 .progress {
     white-space: nowrap;
     margin-left: 20px;
-    font-size: 16px;
+    font-size: var(--font-lg);
     /*width: 10px;*/
     width: 100%;
     max-width: 120px;
@@ -118,13 +118,13 @@
 }
 
 .currentSongTitle {
-    font-size: 16px;
+    font-size: var(--font-lg);
     font-weight: 600;
 }
 
 .currentSongArtist {
     color: var(--color-muted);
-    font-size: 16px;
+    font-size: var(--font-lg);
     font-weight: 600;
 }
 

@@ -47,7 +47,7 @@
     border: none;
     background: transparent;
     color: var(--color-text);
-    font-size: var(--font-sm);
+    font-size: var(--font-md);
     text-align: left;
     /*border-radius: var(--radius-sm);*/
     cursor: pointer;
@@ -93,12 +93,12 @@
 
 .arrow {
     color: var(--color-muted);
-    font-size: 10px;
+    font-size: var(--font-sm);
     margin-right: -12px;
 }
 
 .checkmark {
-    font-size: 10px;
+    font-size: var(--font-sm);
     margin-right: -8px;
     margin-bottom: -1px;
 }

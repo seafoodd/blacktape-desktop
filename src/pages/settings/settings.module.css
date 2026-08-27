@@ -1,0 +1,155 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: inherit;
+    overflow: hidden;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 40px;
+    padding-left: 16px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--color-surface);
+    flex-shrink: 0;
+}
+
+.title {
+    font-size: var(--font-md);
+    font-weight: 600;
+    color: var(--color-muted);
+    margin: 0;
+}
+
+.body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 200px;
+    background-color: var(--color-surface);
+    border-right: 1px solid var(--border-color);
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.navItem {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.1s ease, color 0.1s ease;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.04);
+        color: var(--color-text);
+    }
+}
+
+.active {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--color-text);
+    font-weight: 500;
+}
+
+.content {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.section h2 {
+    font-size: var(--font-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-muted);
+    margin-bottom: 12px;
+}
+
+.settingRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    margin-top: 12px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: var(--font-md);
+}
+
+.settingRowStart {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 12px 16px;
+    margin-top: 12px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: var(--font-md);
+    gap: 16px;
+}
+
+.select {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-md);
+    outline: none;
+    cursor: pointer;
+}
+
+.actionButton {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-md);
+    outline: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.mutedText {
+    color: var(--color-muted);
+}
+
+.libraryInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.libraryPath {
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    word-break: break-all;
+    text-decoration: underline;
+
+    &:hover {
+        cursor: pointer;
+        color: var(--color-info)
+    }
+}

@@ -17,11 +17,15 @@
     --spacing-xl: 32px;
 
     /* Font sizes */
-    --font-xs: 0.75rem;
-    --font-sm: 0.875rem;
-    --font-md: 1rem;
-    --font-lg: 1.25rem;
-    --font-xl: 1.5rem;
+    --font-base: 13px;
+    font-size: var(--font-base);
+
+    --font-xs: 0.77rem; /* ~10px at 13px base / ~12px at 16px base */
+    --font-sm: 0.88rem; /* ~11.5px at 13px base / ~14px at 16px base */
+    --font-md: 1rem; /* Matches --font-base exactly */
+    --font-lg: 1.15rem; /* Exactly ~15px at 13px base / ~18.4px at 16px base */
+    --font-xl: 1.35rem; /* ~17.5px at 13px base / ~21.6px at 16px base */
+    --font-2xl: 1.6rem; /* ~21px at 13px base / ~25.6px at 16px base */
 
     /* Border radius */
     --radius-sm: 4px;

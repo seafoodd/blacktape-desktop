@@ -6,8 +6,6 @@ import {
   useState,
 } from "react";
 import { builtinThemes, ThemePalette } from "./themes";
-// tauri fs module for custom CSS
-// import { readTextFile, BaseDirectory } from '@tauri-apps/api/fs';
 
 interface ThemeContextValue {
   activeThemeId: string;
@@ -15,51 +13,84 @@ interface ThemeContextValue {
   palette: ThemePalette;
   enableDynamicArt: boolean;
   setEnableDynamicArt: (val: boolean) => void;
+  fontSize: string;
+  setFontSize: (size: string) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
+const themeChannel = new BroadcastChannel("blacktape_theme_sync");
+
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [activeThemeId, setThemeId] = useState<string>(() => {
+  const [activeThemeId, setActiveThemeId] = useState<string>(() => {
     return localStorage.getItem("theme_id") || "defaultDark";
   });
 
-  const [enableDynamicArt, setEnableDynamicArt] = useState<boolean>(() => {
+  const [enableDynamicArt, setEnableDynamicArtState] = useState<boolean>(() => {
     return localStorage.getItem("theme_dynamic_art") === "true";
+  });
+
+  const [fontSize, setFontSizeState] = useState<string>(() => {
+    return localStorage.getItem("font_size") || "13px";
   });
 
   const palette = builtinThemes[activeThemeId] || builtinThemes.defaultDark;
 
+  const setThemeId = (id: string) => {
+    setActiveThemeId(id);
+    localStorage.setItem("theme_id", id);
+    themeChannel.postMessage({ type: "THEME_CHANGED", activeThemeId: id });
+  };
+
+  const setEnableDynamicArt = (val: boolean) => {
+    setEnableDynamicArtState(val);
+    localStorage.setItem("theme_dynamic_art", String(val));
+    themeChannel.postMessage({
+      type: "DYNAMIC_ART_CHANGED",
+      enableDynamicArt: val,
+    });
+  };
+
+  const setFontSize = (size: string) => {
+    setFontSizeState(size);
+    localStorage.setItem("font_size", size);
+    themeChannel.postMessage({ type: "FONT_SIZE_CHANGED", fontSize: size });
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === "THEME_CHANGED") {
+        setActiveThemeId(event.data.activeThemeId);
+        localStorage.setItem("theme_id", event.data.activeThemeId);
+      }
+      if (event.data.type === "DYNAMIC_ART_CHANGED") {
+        setEnableDynamicArtState(event.data.enableDynamicArt);
+        localStorage.setItem(
+          "theme_dynamic_art",
+          String(event.data.enableDynamicArt),
+        );
+      }
+      if (event.data.type === "FONT_SIZE_CHANGED") {
+        setFontSizeState(event.data.fontSize);
+        localStorage.setItem("font_size", event.data.fontSize);
+      }
+    };
+
+    themeChannel.addEventListener("message", handleMessage);
+    return () => themeChannel.removeEventListener("message", handleMessage);
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
-
-    // Inject all palette colors as CSS variables
     Object.entries(palette.colors).forEach(([key, value]) => {
       root.style.setProperty(`--color-${key}`, value);
     });
-
-    // Tag the root with the theme type so global CSS can adjust shadows/inversions if needed
     root.setAttribute("data-theme-type", palette.type);
-    localStorage.setItem("theme_id", activeThemeId);
-  }, [activeThemeId, palette]);
+  }, [palette]);
 
-  // Example: Load Custom CSS from Tauri Filesystem
-  /*
   useEffect(() => {
-    async function loadCustomCss() {
-      try {
-        const css = await readTextFile('custom.css', { dir: BaseDirectory.AppData });
-        const styleEl = document.createElement('style');
-        styleEl.id = 'blacktape-custom-css';
-        styleEl.innerHTML = css;
-        document.head.appendChild(styleEl);
-      } catch (e) {
-        // No custom css found
-      }
-    }
-    loadCustomCss();
-  }, []);
-  */
+    document.documentElement.style.setProperty("--font-base", fontSize);
+  }, [fontSize]);
 
   return (
     <ThemeContext.Provider
@@ -69,6 +100,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         palette,
         enableDynamicArt,
         setEnableDynamicArt,
+        fontSize,
+        setFontSize,
       }}
     >
       {children}

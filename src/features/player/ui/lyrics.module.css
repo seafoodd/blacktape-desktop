@@ -1,5 +1,5 @@
 .container {
-    font-size: 15px;
+    font-size: var(--font-lg);
 }
 
 .lyricLine {

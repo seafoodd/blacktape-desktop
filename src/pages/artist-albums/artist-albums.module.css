@@ -2,7 +2,7 @@
 }
 
 .artistName {
-    font-size: 22px;
+    font-size: var(--font-xl);
     line-height: 1.5;
     border-bottom: 1px solid rgb(169 169 169 / 0.2);
     margin-bottom: 12px;
@@ -45,7 +45,7 @@
 }
 
 .albumTitle {
-    font-size: 20px;
+    font-size: var(--font-xl);
 }
 
 .songs {
@@ -70,7 +70,8 @@
     &.playing {
         background-color: var(--color-primary);
     }
-    font-size: 14px;
+
+    font-size: var(--font-md);
 }
 
 .songLeft {
