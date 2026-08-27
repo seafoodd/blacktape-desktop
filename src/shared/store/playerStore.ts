@@ -107,7 +107,6 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     const { currentSong, isPlaying } = get();
     if (!currentSong || !isPlaying) return;
     const pos = await getPosition();
-    console.log("updated progress", pos);
     set({ progress: pos });
   },
 }));
