@@ -1,8 +1,8 @@
 .rightSidebar {
     position: relative;
-    min-width: 150px;
+    min-width: 180px;
     max-width: 600px;
-    border-inline: 1px solid rgb(169 169 169 / 0.5);
+    border-left: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
 }
@@ -11,7 +11,7 @@
     flex: 1;
     overflow-y: auto;
     scrollbar-width: thin;
-    padding: 8px;
+    /*padding: 8px 0 8px 8px;*/
 }
 
 .resizer {
@@ -22,4 +22,8 @@
     width: 8px;
     cursor: col-resize;
     z-index: 10;
+}
+
+.hidden {
+    display: none !important;
 }

@@ -286,6 +286,30 @@ impl AudioPlayer {
             self.play_order = Some(vec![new_idx]);
             self.cursor = Some(0);
         }
+
+        self.emit_state();
+    }
+
+    pub fn add_next_to_queue(&mut self, song: Song) {
+        self.queue.push(song);
+        let new_idx = self.queue.len() - 1;
+
+        match (&mut self.play_order, self.cursor) {
+            (Some(order), Some(cursor_pos)) => {
+                let insert_pos = (cursor_pos + 1).min(order.len());
+                order.insert(insert_pos, new_idx);
+            }
+            (Some(order), None) => {
+                order.push(new_idx);
+                self.cursor = Some(0);
+            }
+            (None, _) => {
+                self.play_order = Some(vec![new_idx]);
+                self.cursor = Some(0);
+            }
+        }
+
+        self.emit_state();
     }
 
     pub fn clear_queue(&mut self) {
@@ -294,6 +318,16 @@ impl AudioPlayer {
 
     pub fn get_queue(&self) -> Vec<Song> {
         self.queue.clone()
+    }
+
+    pub fn get_ordered_queue(&self) -> Vec<Song> {
+        match &self.play_order {
+            Some(order) => order
+                .iter()
+                .filter_map(|&idx| self.queue.get(idx).cloned())
+                .collect(),
+            None => self.queue.clone(),
+        }
     }
 
     /// Advances the player to the next song in the queue.
@@ -343,6 +377,24 @@ impl AudioPlayer {
                     self.play(song);
                 }
             }
+        }
+    }
+
+    pub fn play_song_in_queue(&mut self, index: i64) {
+        let Ok(target_cursor) = usize::try_from(index) else {
+            return;
+        };
+
+        let song_to_play = match &self.play_order {
+            Some(order) => order
+                .get(target_cursor)
+                .and_then(|&song_idx| self.queue.get(song_idx).cloned()),
+            None => self.queue.get(target_cursor).cloned(),
+        };
+
+        if let Some(song) = song_to_play {
+            self.cursor = Some(target_cursor);
+            self.play(song);
         }
     }
 
@@ -574,6 +626,8 @@ impl AudioPlayer {
     }
 
     pub fn emit_state(&self) {
+        let ordered_queue = self.get_ordered_queue();
+
         let state = PlayerState {
             current_song: self.current_song.clone(),
             is_playing: !self.is_paused(),
@@ -581,6 +635,7 @@ impl AudioPlayer {
             volume: self.player.volume(),
             shuffle_mode: self.shuffle_mode,
             repeat_mode: self.repeat_mode,
+            queue: ordered_queue,
         };
 
         if let Some(ref song) = state.current_song {

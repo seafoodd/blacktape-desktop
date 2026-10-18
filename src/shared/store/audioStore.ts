@@ -4,19 +4,21 @@ import {
   next as tauriNext,
   pause as tauriPause,
   previous as tauriPrevious,
-  RepeatMode,
   seek as tauriSeek,
   setRepeatMode,
   setVolume,
-  Song,
   startPlayback as tauriStartPlayback,
   toggle as tauriToggle,
   toggleShuffle,
 } from "../lib/audio";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { RepeatMode, Song } from "@/shared/types.ts";
+
+export type PlaybackContext = "playlist" | "library";
 
 interface AudioState {
-  songs: Song[];
+  queue: Song[];
   currentSong: Song | null;
   progress: number;
   volume: number;
@@ -24,8 +26,14 @@ interface AudioState {
   shuffleMode: boolean;
   repeatMode: RepeatMode;
 
-  setSongs: (songs: Song[]) => void;
-  startPlayback: (queue: number[], current_index: number) => Promise<void>;
+  setQueue: (songs: Song[]) => void;
+  fetchQueue: () => Promise<void>;
+  startPlayback: (
+    queue: number[],
+    currentIndex: number,
+    playbackContext: PlaybackContext,
+    contextId?: number,
+  ) => Promise<void>;
   togglePlay: () => Promise<void>;
   toggleShuffle: () => Promise<void>;
   cycleRepeatMode: () => Promise<void>;
@@ -36,22 +44,37 @@ interface AudioState {
   previous: () => Promise<void>;
   updateProgress: () => Promise<void>;
   pause: () => Promise<void>;
+
+  playbackContext: PlaybackContext | null;
+  playbackContextId: number | null;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
-  songs: [],
+  queue: [],
   currentSong: null,
   progress: 0,
   volume: 0,
   isPlaying: false,
   shuffleMode: false,
   repeatMode: RepeatMode.Off,
+  playbackContext: null,
+  playbackContextId: null,
 
-  setSongs: (songs) => set({ songs }),
+  setQueue: (queue) => set({ queue }),
+  fetchQueue: async () => {
+    const queue = await invoke<Song[]>("get_queue");
+    set({ queue: queue });
+  },
 
-  startPlayback: async (queue: number[], current_index: number) => {
+  startPlayback: async (
+    queue: number[],
+    currentIndex: number,
+    playbackContext: PlaybackContext,
+    contextId?: number,
+  ) => {
     // set({ currentSong: song, isPlaying: true });
-    await tauriStartPlayback(queue, current_index);
+    await tauriStartPlayback(queue, currentIndex);
+    set({ playbackContext, playbackContextId: contextId });
   },
 
   togglePlay: async () => {
@@ -114,7 +137,6 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 if (typeof window !== "undefined") {
   listen("player-state", (event) => {
     const state: any = event.payload;
-    console.log("PLAYER STATEEE", state);
     useAudioStore.setState({
       isPlaying: state.is_playing,
       currentSong: state.current_song,
@@ -122,6 +144,7 @@ if (typeof window !== "undefined") {
       volume: state.volume,
       shuffleMode: state.shuffle_mode,
       repeatMode: state.repeat_mode,
+      queue: state.queue,
     });
-  });
+  }).catch((e) => console.log(e));
 }

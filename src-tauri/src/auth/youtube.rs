@@ -1,3 +1,5 @@
+use crate::AuthLock;
+use tauri::State;
 use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tokio::fs::{read_to_string, File};
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -26,11 +28,21 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
 #[command]
-pub async fn launch_youtube_login(app: AppHandle, force_visible: bool) -> Result<(), String> {
+pub async fn launch_youtube_login(
+    app: AppHandle,
+    force_visible: bool,
+    auth_lock: State<'_, AuthLock>,
+) -> Result<(), String> {
+    let _guard = auth_lock.0.lock().await;
+
     println!("[blacktape::auth] launch_youtube_login command invoked.");
 
     if let Some(existing_win) = app.get_webview_window("youtube-login") {
-        let _ = existing_win.close();
+        if force_visible {
+            let _ = existing_win.show();
+            let _ = existing_win.set_focus();
+        }
+        return Ok(());
     }
 
     let (tx, rx) = oneshot::channel::<()>();

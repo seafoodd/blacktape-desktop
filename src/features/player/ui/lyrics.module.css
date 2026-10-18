@@ -1,5 +1,9 @@
 .container {
     font-size: var(--font-lg);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scroll-behavior: smooth;
+    padding: 8px;
 }
 
 .lyricLine {

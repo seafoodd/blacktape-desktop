@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import styles from "./left-sidebar.module.css";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import placeholderArtistImage from "@/assets/react.svg";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { Tabs } from "@/shared/ui/tabs";
 import clsx from "clsx";
+import { Library, Playlists } from "@/features/library";
+
+const TABS = [
+  { id: "library", label: "Library" },
+  { id: "playlists", label: "Playlists" },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
 
 export const LeftSidebar = () => {
-  const { fetchTabs, tabs, selectedTab, setSelectedTab } = useLibraryStore();
+  const { fetchTabs } = useLibraryStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizing, setIsResizing] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("library");
 
   const startResizing = useCallback(() => {
     setIsResizing(true);
@@ -52,41 +59,19 @@ export const LeftSidebar = () => {
   }, []);
 
   return (
-    <aside className={styles.leftSidebar} style={{ width: sidebarWidth }}>
-      <h3 className={styles.leftSidebarTitle}>Artists</h3>
-      <ul className={styles.artistList}>
-        {tabs.map((artist) => (
-          <button
-            key={artist.name}
-            className={clsx(styles.artistItem, {
-              [styles.active]: selectedTab == artist.name,
-            })}
-            onClick={() => setSelectedTab(artist.name)}
-          >
-            {artist.cover_url ? (
-              <img
-                src={convertFileSrc(artist.cover_url)}
-                className={styles.artistImage}
-                alt={artist.name}
-              />
-            ) : (
-              <img
-                src={placeholderArtistImage}
-                className={styles.artistImage}
-                alt={artist.name}
-              />
-            )}
-            <div className={styles.artistInfo}>
-              <span className={clsx(styles.artistName, "truncate")}>
-                {artist.name}
-              </span>
-              <span className={styles.albumCount}>
-                {artist.album_count} Albums
-              </span>
-            </div>
-          </button>
-        ))}
-      </ul>
+    <aside
+      className={styles.leftSidebar}
+      style={{ width: sidebarWidth }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setActiveTab("playlists");
+      }}
+    >
+      <Tabs tabs={TABS} activeTab={activeTab} onChange={setActiveTab} />
+      <Library className={clsx({ [styles.hidden]: activeTab !== "library" })} />
+      <Playlists
+        className={clsx({ [styles.hidden]: activeTab !== "playlists" })}
+      />
       <div className={styles.resizer} onMouseDown={startResizing} />
     </aside>
   );

@@ -53,7 +53,7 @@ export const builtinThemes: Record<string, ThemePalette> = {
       muted: "#6272A4",
       primary: "#BD93F9",
       secondary: "#A29BFB",
-      border: "#6272A4",
+      border: "#434f77",
     },
   },
   // Add Catppuccin, Nord, Light themes, etc.

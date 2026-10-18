@@ -16,6 +16,15 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+html, body {
+    background-color: rgb(from var(--color-background) r g b / var(--bg-opacity));
+}
+
+*:focus-visible {
+    outline: 2px solid var(--color-primary-light);
+    z-index: 0;
+}
+
 h1,
 h2,
 h3,

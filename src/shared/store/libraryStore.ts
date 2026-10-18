@@ -1,14 +1,9 @@
 import { create } from "zustand";
-import {
-  Album,
-  ArtistSummary,
-  getArtistAlbums,
-  getArtists,
-  Platform,
-} from "@/shared/lib/audio.ts";
+import { getArtistAlbums, getArtists } from "@/shared/lib/audio.ts";
 import { searchPlatforms } from "@/shared/lib/search.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
 
 export type DownloadStatus =
   | "idle"
@@ -26,7 +21,7 @@ export interface DownloadProgress {
   message: string;
 }
 
-export type ActiveView = "ARTIST_ALBUMS" | "SEARCH_RESULTS";
+export type ActiveView = "ARTIST_ALBUMS" | "SEARCH_RESULTS" | "PLAYLIST";
 
 export enum ItemType {
   Track = "Track",
@@ -35,7 +30,7 @@ export enum ItemType {
 }
 
 export type CategoryFilter = "All" | ItemType;
-export type PlatformFilter = "All" | "Youtube" | "Bandcamp" | "Local";
+export type PlatformFilter = "All" | "Youtube" | "Bandcamp";
 
 export type SearchSuggestion = {
   item_type: ItemType;
@@ -238,7 +233,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     await listen<{ task_id: string; message: string }>(
       "download-task-completed",
-      (event) => {
+      async (event) => {
         set((state) => {
           const existing = state.activeDownloads[event.payload.task_id];
           if (!existing) return {};
@@ -262,6 +257,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           .catch((e) =>
             console.error("Auto-fetch failed", event.payload.task_id, e),
           );
+
+        const { selectedTab } = get();
+        if (selectedTab) {
+          try {
+            const albums = await getArtistAlbums(selectedTab);
+            set({ albums });
+          } catch (e) {
+            console.error("Auto-fetch albums failed", event.payload.task_id, e);
+          }
+        }
       },
     );
 

@@ -1,0 +1,97 @@
+.song {
+    display: flex;
+    width: 100%;
+    max-width: 600px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 12px;
+    height: 32px;
+    transition: 100ms ease-out background-color;
+    cursor: pointer;
+
+    &:nth-child(even) {
+        background-color: var(--color-surface);
+    }
+
+    &.playing {
+        background-color: var(--color-primary);
+    }
+
+    font-size: var(--font-md);
+}
+
+.songLeft {
+    display: flex;
+    padding-left: 8px;
+    gap: 16px;
+    align-items: center;
+    justify-content: start;
+
+    flex: 1;
+    min-width: 0;
+    text-align: start;
+}
+
+.playingIcon {
+    width: 18px;
+    height: 18px;
+    margin-left: -2px;
+    margin-right: 2px;
+}
+
+.pauseIcon {
+    width: 20px;
+    height: 20px;
+    margin-left: -3px;
+    margin-right: 1px;
+}
+
+.songTrackNumber {
+    width: 18px;
+}
+
+.songTitle {
+    flex: 1;
+    min-width: 0;
+}
+
+.songRight {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.songDuration {
+    display: block;
+    margin-left: 40px;
+}
+
+.song:hover .songDuration {
+    display: none;
+}
+
+.song:hover .threeDotButton {
+    display: flex;
+}
+
+.threeDotButton {
+    display: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover .threeDotIcon {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+
+    /*&:hover .threeDotIcon {*/
+    /*    background-color: rgba(255, 255, 255, 0.1);*/
+    /*    color: white;*/
+    /*}*/
+}
+
+.threeDotIcon {
+    border-radius: 100%;
+    padding: 3px;
+}

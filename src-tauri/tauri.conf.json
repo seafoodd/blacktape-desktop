@@ -18,13 +18,14 @@
     "windows": [
       {
         "label": "main",
-        "transparent": true,
         "title": "Blacktape",
         "width": 1280,
         "height": 720,
         "minWidth": 800,
         "minHeight": 320,
-        "decorations": false
+        "transparent": true,
+        "decorations": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

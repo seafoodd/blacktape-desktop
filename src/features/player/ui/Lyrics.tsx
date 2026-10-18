@@ -1,10 +1,15 @@
-import { useAudioStore } from "@/shared/store/playerStore.ts";
+import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "./lyrics.module.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import clsx from "clsx";
 
-export const Lyrics = () => {
+interface LyricsProps {
+  className?: string;
+}
+
+export const Lyrics = ({ className }: LyricsProps) => {
   const { currentSong } = useAudioStore();
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [retrieving, setRetrieving] = useState<boolean>(false);
@@ -37,7 +42,7 @@ export const Lyrics = () => {
           setSource(lyricsSource.source);
         }
       } catch (err) {
-        console.error("Failed to fetch lyrics:", err);
+        console.log("Failed to fetch lyrics:", err);
         if (isCurrentRequest) {
           setLyrics(null);
           setSource(null);
@@ -55,7 +60,7 @@ export const Lyrics = () => {
   }, [currentSong?.id]);
 
   return (
-    <div className={styles.container}>
+    <div className={clsx(styles.container, className)}>
       {retrieving && (
         <div className={styles.statusText}>Retrieving lyrics...</div>
       )}
@@ -88,9 +93,7 @@ export const Lyrics = () => {
         </>
       )}
 
-      {!retrieving && !lyrics && (
-        <div className={styles.noLyrics}>No lyrics found.</div>
-      )}
+      {!retrieving && !lyrics && <div>No lyrics found.</div>}
     </div>
   );
 };

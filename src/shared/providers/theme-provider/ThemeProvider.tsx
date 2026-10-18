@@ -15,6 +15,8 @@ interface ThemeContextValue {
   setEnableDynamicArt: (val: boolean) => void;
   fontSize: string;
   setFontSize: (size: string) => void;
+  bgOpacity: number;
+  setBgOpacity: (opacity: number) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -32,6 +34,11 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
   const [fontSize, setFontSizeState] = useState<string>(() => {
     return localStorage.getItem("font_size") || "13px";
+  });
+
+  const [bgOpacity, setBgOpacityState] = useState<number>(() => {
+    const saved = localStorage.getItem("bg_opacity");
+    return saved !== null ? parseFloat(saved) : 0.5;
   });
 
   const palette = builtinThemes[activeThemeId] || builtinThemes.defaultDark;
@@ -57,6 +64,15 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     themeChannel.postMessage({ type: "FONT_SIZE_CHANGED", fontSize: size });
   };
 
+  const setBgOpacity = (opacity: number) => {
+    setBgOpacityState(opacity);
+    localStorage.setItem("bg_opacity", String(opacity));
+    themeChannel.postMessage({
+      type: "BG_OPACITY_CHANGED",
+      bgOpacity: opacity,
+    });
+  };
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data.type === "THEME_CHANGED") {
@@ -73,6 +89,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       if (event.data.type === "FONT_SIZE_CHANGED") {
         setFontSizeState(event.data.fontSize);
         localStorage.setItem("font_size", event.data.fontSize);
+      }
+      if (event.data.type === "BG_OPACITY_CHANGED") {
+        setBgOpacityState(event.data.bgOpacity);
+        localStorage.setItem("bg_opacity", String(event.data.bgOpacity));
       }
     };
 
@@ -92,6 +112,13 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     document.documentElement.style.setProperty("--font-base", fontSize);
   }, [fontSize]);
 
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--bg-opacity",
+      String(bgOpacity),
+    );
+  }, [bgOpacity]);
+
   return (
     <ThemeContext.Provider
       value={{
@@ -102,6 +129,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         setEnableDynamicArt,
         fontSize,
         setFontSize,
+        bgOpacity,
+        setBgOpacity,
       }}
     >
       {children}

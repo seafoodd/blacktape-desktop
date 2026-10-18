@@ -137,7 +137,7 @@
 
 .suggestions {
     position: absolute;
-    top: 40px;
+    top: 36px;
     left: 0;
     width: 100%;
     background-color: var(--color-background);
@@ -244,6 +244,8 @@
     transition: 100ms linear;
 
     &:hover {
+
+        cursor: not-allowed;
         background-color: var(--color-surface);
         color: var(--color-primary);
     }

@@ -11,7 +11,14 @@ import { openPath } from "@tauri-apps/plugin-opener";
 type SettingsTab = "appearance" | "playback" | "library";
 
 export const Settings = () => {
-  const { activeThemeId, setThemeId, fontSize, setFontSize } = useTheme();
+  const {
+    activeThemeId,
+    setThemeId,
+    fontSize,
+    setFontSize,
+    bgOpacity,
+    setBgOpacity,
+  } = useTheme();
   const { fetchTabs } = useLibraryStore();
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
 
@@ -52,12 +59,12 @@ export const Settings = () => {
           >
             Appearance
           </button>
-          <button
-            className={`${styles.navItem} ${activeTab === "playback" ? styles.active : ""}`}
-            onClick={() => setActiveTab("playback")}
-          >
-            Playback
-          </button>
+          {/*<button*/}
+          {/*  className={`${styles.navItem} ${activeTab === "playback" ? styles.active : ""}`}*/}
+          {/*  onClick={() => setActiveTab("playback")}*/}
+          {/*>*/}
+          {/*  Playback*/}
+          {/*</button>*/}
           <button
             className={`${styles.navItem} ${activeTab === "library" ? styles.active : ""}`}
             onClick={() => setActiveTab("library")}
@@ -98,6 +105,21 @@ export const Settings = () => {
                   <option value="14px">Medium (14px) (default)</option>
                   <option value="16px">Large (16px)</option>
                 </select>
+              </div>
+
+              <div className={styles.settingRow}>
+                <label htmlFor="bg-opacity-slider">
+                  Background Opacity ({Math.round(bgOpacity * 100)}%)
+                </label>
+                <input
+                  id="bg-opacity-slider"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={bgOpacity}
+                  onChange={(e) => setBgOpacity(parseFloat(e.target.value))}
+                />
               </div>
             </section>
           )}

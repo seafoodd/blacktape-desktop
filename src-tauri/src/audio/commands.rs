@@ -1,5 +1,6 @@
 use crate::audio::player::{AudioPlayer, RepeatMode};
 use crate::db::db::Database;
+use crate::Song;
 use std::sync::Mutex;
 use tauri::{command, State};
 
@@ -11,30 +12,80 @@ pub async fn start_playback(
     player_state: State<'_, Mutex<AudioPlayer>>,
 ) -> Result<(), String> {
     let db = db_state.lock().await;
-    let mut master_songs = Vec::new();
 
-    for id in queue {
-        match db.get_song_by_id(id).await {
-            Ok(Some(s)) => master_songs.push(s),
-            Ok(None) => eprintln!("[Playback Error] Song ID {} not found in database", id),
-            Err(err) => {
-                eprintln!(
-                    "[Playback Error] SQLx failed to decode song ID {}: {:?}",
-                    id, err
-                );
-            }
-        }
-    }
+    let fetched_songs = db
+        .get_songs_by_ids(&queue)
+        .await
+        .map_err(|err| format!("SQLx failed to fetch songs: {:?}", err))?;
+
+    use std::collections::HashMap;
+    let song_map: HashMap<i64, Song> = fetched_songs
+        .into_iter()
+        .filter_map(|s| s.id.map(|id| (id, s)))
+        .collect();
+
+    let master_songs: Vec<Song> = queue
+        .iter()
+        .filter_map(|id| song_map.get(id).cloned())
+        .collect();
 
     if master_songs.is_empty() {
-        return Err(
-            "Queue is empty or songs could not be loaded. Check console logs for details."
-                .to_string(),
-        );
+        return Err("Queue is empty or songs could not be loaded.".to_string());
     }
 
     let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
     player.start_playback(master_songs, current_index);
+
+    Ok(())
+}
+
+#[command]
+pub fn play_song_in_queue(
+    index: i64,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    player.play_song_in_queue(index);
+    Ok(())
+}
+
+#[command]
+pub fn get_queue(state: State<Mutex<AudioPlayer>>) -> Vec<Song> {
+    let mut player = state.lock().unwrap();
+    player.get_ordered_queue()
+}
+
+#[command]
+pub async fn add_to_queue(
+    song_id: i64,
+    db_state: State<'_, tokio::sync::Mutex<Database>>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let db = db_state.lock().await;
+    let song = db.require_song_by_id(song_id).await?;
+
+    let mut player = player_state
+        .lock()
+        .map_err(|_| "Player lock poisoned".to_string())?;
+    player.add_to_queue(song);
+
+    Ok(())
+}
+
+#[command]
+pub async fn add_next_to_queue(
+    song_id: i64,
+    db_state: State<'_, tokio::sync::Mutex<Database>>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let db = db_state.lock().await;
+    let song = db.require_song_by_id(song_id).await?;
+
+    let mut player = player_state
+        .lock()
+        .map_err(|_| "Player lock poisoned".to_string())?;
+    player.add_next_to_queue(song);
+
     Ok(())
 }
 
@@ -117,7 +168,7 @@ pub fn toggle_shuffle(state: State<Mutex<AudioPlayer>>) {
 }
 
 #[command]
-pub fn set_repeat_mode(state: State<Mutex<AudioPlayer>>, repeat_mode: RepeatMode) {
+pub fn set_repeat_mode(repeat_mode: RepeatMode, state: State<Mutex<AudioPlayer>>) {
     let mut player = state.lock().unwrap();
     println!("Setting repeat mode to: {:?}", repeat_mode);
     player.set_repeat_mode(repeat_mode);

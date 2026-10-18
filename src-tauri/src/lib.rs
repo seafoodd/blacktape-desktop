@@ -4,14 +4,16 @@ pub mod db;
 mod discord_presence;
 pub mod download;
 mod lyrics;
+mod playlists;
 pub mod scan;
 mod search;
 pub mod types;
 pub mod utils;
 
 use crate::audio::commands::{
-    fetch_state, get_is_paused, get_position, get_volume, next, pause, previous, resume, seek,
-    set_repeat_mode, set_volume, start_playback, stop, toggle, toggle_shuffle,
+    add_next_to_queue, add_to_queue, fetch_state, get_is_paused, get_position, get_volume, next,
+    pause, play_song_in_queue, previous, resume, seek, set_repeat_mode, set_volume, start_playback,
+    stop, toggle, toggle_shuffle,
 };
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_login};
@@ -19,6 +21,10 @@ use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask};
 use crate::lyrics::{fetch_lyrics, LyricsSource};
+use crate::playlists::commands::{
+    add_songs_to_playlist, create_playlist, delete_playlist, get_all_playlists, get_playlist_by_id,
+    get_playlist_songs, remove_songs_from_playlist, reorder_playlist_song, update_playlist_details,
+};
 use crate::search::{process_raw_results, SearchSuggestion};
 use crate::types::{Album, ArtistSummary, DownloadType, Platform};
 use audio::player::AudioPlayer;
@@ -27,6 +33,8 @@ use std::sync::Mutex;
 use tauri::{command, generate_handler, AppHandle, Listener, Manager, State, WebviewWindow};
 use tokio::task::JoinSet;
 pub use types::Song;
+
+pub struct AuthLock(pub tokio::sync::Mutex<()>);
 
 #[command]
 async fn scan_music(
@@ -154,13 +162,14 @@ async fn get_lyrics(
 async fn download(
     app_handle: AppHandle,
     queue_state: State<'_, DownloadQueue>,
+    auth_lock: State<'_, AuthLock>,
     id: String,
     platform: Platform,
     download_type: DownloadType,
     url: String,
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
-        let res = launch_youtube_login(app_handle.clone(), false).await;
+        let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
         println!("launch_youtube_login res: {res:?}");
         if res.is_err() {
             eprintln!("[blacktape:lib.rs ERR] auth_window_closed");
@@ -230,6 +239,8 @@ pub fn run() {
             let tx = download::init_queue_worker(app.handle().clone());
             app.manage(DownloadQueue { tx });
 
+            app.manage(AuthLock(tokio::sync::Mutex::new(())));
+
             let register = |event: &str, action: fn(&mut AudioPlayer)| {
                 let handle = app_handle.clone();
                 app.listen(event, move |_| {
@@ -267,6 +278,9 @@ pub fn run() {
             fetch_state,
             toggle_shuffle,
             set_repeat_mode,
+            add_to_queue,
+            add_next_to_queue,
+            play_song_in_queue,
             // Scan
             scan_music,
             // DB Queries
@@ -280,7 +294,17 @@ pub fn run() {
             // Auth
             launch_youtube_login,
             cookies_are_ready,
-            check_auth_status
+            check_auth_status,
+            // Playlists
+            create_playlist,
+            get_all_playlists,
+            get_playlist_by_id,
+            update_playlist_details,
+            delete_playlist,
+            get_playlist_songs,
+            add_songs_to_playlist,
+            remove_songs_from_playlist,
+            reorder_playlist_song,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

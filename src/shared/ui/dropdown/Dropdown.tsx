@@ -9,6 +9,7 @@ import {
 import styles from "./dropdown.module.css";
 import { MdArrowRight } from "react-icons/md";
 import { FiCheck } from "react-icons/fi";
+import clsx from "clsx";
 
 // --- Context ---
 interface DropdownContextValue {
@@ -22,9 +23,11 @@ const DropdownContext = createContext<DropdownContextValue | undefined>(
 export const DropdownRoot = ({
   trigger,
   children,
+  className,
 }: {
   trigger: ReactNode;
   children: ReactNode;
+  className?: string;
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,7 +52,7 @@ export const DropdownRoot = ({
     <DropdownContext.Provider value={{ closeAll }}>
       <div className={styles.container} ref={containerRef}>
         <div
-          className={styles.trigger}
+          className={clsx(styles.trigger, className)}
           onClick={() => setIsOpen((prev) => !prev)}
         >
           {trigger}
@@ -66,6 +69,7 @@ interface ItemProps {
   onClick?: () => void;
   active?: boolean;
   closeOnSelect?: boolean;
+  className?: string;
 }
 
 export const DropdownItem = ({
@@ -73,6 +77,7 @@ export const DropdownItem = ({
   onClick,
   active,
   closeOnSelect = true,
+  className,
 }: ItemProps) => {
   const ctx = useContext(DropdownContext);
 
@@ -85,7 +90,7 @@ export const DropdownItem = ({
 
   return (
     <button
-      className={`${styles.item} ${active ? styles.activeItem : ""}`}
+      className={clsx(styles.item, active && styles.activeItem, className)}
       onClick={handleClick}
     >
       {children}

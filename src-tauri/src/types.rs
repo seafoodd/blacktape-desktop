@@ -78,6 +78,7 @@ pub struct PlayerState {
     pub volume: f32,
     pub shuffle_mode: bool,
     pub repeat_mode: RepeatMode,
+    pub queue: Vec<Song>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -93,4 +94,17 @@ pub struct Album {
     pub album_artist: String,
     pub cover_url: Option<String>,
     pub songs: Vec<Song>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, sqlx::FromRow, Debug, Clone)]
+pub struct Playlist {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub date_added: String,
+    pub date_modified: String,
+    pub track_count: i64,
+    pub total_duration_ms: i64,
+    pub preview_covers: Option<String>,
 }

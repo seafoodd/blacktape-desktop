@@ -1,0 +1,151 @@
+.container {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.searchWrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 28px;
+    background-color: var(--color-background);
+    transition: background-color 100ms ease;
+    color: white;
+    font-size: var(--font-md);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.searchInput {
+    background: none;
+    border: none;
+    width: 100%;
+    height: 100%;
+    padding-left: 6px;
+    padding-right: 44px;
+    color: white;
+    font-size: var(--font-md);
+
+    &:focus {
+        outline: none;
+        background-color: rgb(0 0 0 / 0.75);
+    }
+}
+
+.searchIcon {
+    position: absolute;
+    right: 8px;
+    margin-bottom: -2px;
+    color: rgba(255, 255, 255, 0.4);
+    pointer-events: none;
+}
+
+.playlistContainer {
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+}
+
+.newPlaylistButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--color-surface);
+    max-width: 160px;
+    width: 100%;
+    margin-inline: auto;
+    border-radius: var(--radius-full);
+    padding: 4px;
+    gap: 4px;
+
+    transition: 100ms background-color;
+
+    &:hover {
+        background-color: var(--color-primary);
+    }
+}
+
+.plusIcon {
+    margin-bottom: -2px;
+}
+
+.playlists {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.playlist {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: start;
+    padding: 6px;
+
+    transition: background-color 150ms ease, transform 150ms ease;
+
+    &:hover {
+        background-color: rgb(0 0 0 / 0.25);
+    }
+
+    &.active {
+        background-color: rgb(0 0 0 / 0.75);
+    }
+
+    &:focus-visible {
+        color: white;
+        background-color: var(--color-primary-light);
+        outline: none;
+
+        .playlistName {
+            color: white;
+        }
+
+        .trackCount {
+            color: white;
+        }
+    }
+
+    &.dragOver {
+        background-color: var(--color-primary-light, rgba(255, 255, 255, 0.15));
+        border-color: var(--color-primary);
+        transform: scale(1.02);
+
+        .playlistName {
+            color: white;
+        }
+
+        .trackCount {
+            color: white;
+        }
+    }
+}
+
+.playlistImage {
+    max-width: 64px;
+    max-height: 64px;
+    min-width: 64px;
+    width: 100%;
+    height: 100%;
+    flex: 0;
+}
+
+.playlistInfo {
+    display: flex;
+    line-height: 1.4;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.playlistName {
+    font-size: var(--font-lg);
+}
+
+.trackCount {
+    font-size: var(--font-md);
+    color: var(--color-muted)
+}

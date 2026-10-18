@@ -1,50 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-
-export type QualityTier = "low" | "standard" | "high" | "lossless";
-
-export type Platform = "youtube" | "bandcamp" | "local";
-
-export type Song = {
-  id: number;
-  path: string;
-  title: string;
-  artists: string[];
-  album_artist: string;
-  album: string;
-  duration_ms: number;
-  track_number?: number | null;
-  genre?: string | null;
-  release_year?: number | null;
-  cover_url?: string | null;
-  external_cover_url?: string | null;
-  lyrics?: string | null;
-  lyrics_source?: string | null;
-  source: Platform;
-  source_url?: string | null;
-  source_item_id?: string | null;
-  canonical_track_slug: string;
-  canonical_album_slug: string;
-  quality_tier: QualityTier;
-};
-
-export type ArtistSummary = {
-  name: string;
-  album_count: number;
-  cover_url?: string | null;
-};
-
-export type Album = {
-  title: string;
-  album_artist: string;
-  cover_url: string | null;
-  songs: Song[];
-};
-
-export enum RepeatMode {
-  Off = "Off",
-  Queue = "Queue",
-  Track = "Track",
-}
+import { Album, ArtistSummary, RepeatMode, Song } from "@/shared/types";
 
 export const scanMusic = (dir: string): Promise<Song[]> =>
   invoke<Song[]>("scan_music", { dir });
@@ -62,6 +17,9 @@ export const startPlayback = (
   currentIndex: number,
 ): Promise<void> => invoke("start_playback", { queue, currentIndex });
 
+export const playSongInQueue = (index: number): Promise<void> =>
+  invoke("play_song_in_queue", { index });
+
 export const pause = (): Promise<void> => invoke("pause");
 
 export const resume = (): Promise<void> => invoke("resume");
@@ -76,6 +34,12 @@ export const seek = (fraction: number): Promise<void> => {
 export const next = (): Promise<void> => invoke("next");
 
 export const previous = (): Promise<void> => invoke("previous");
+
+export const AddToQueue = (id: number): Promise<void> =>
+  invoke("add_to_queue", { songId: id });
+
+export const AddNextToQueue = (id: number): Promise<void> =>
+  invoke("add_next_to_queue", { songId: id });
 
 export const getPosition = (): Promise<number> => {
   return invoke<number>("get_position");

@@ -5,7 +5,7 @@ import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { pickFolder } from "@/shared/lib/dialog.ts";
 import { scanMusic } from "@/shared/lib/audio.ts";
 import { WindowControls } from "@/layouts/WindowControls.tsx";
-import { Dropdown } from "@/shared/ui/dropdown/Dropdown.tsx";
+import { Dropdown } from "@/shared/ui/dropdown";
 import { CgMenuLeft } from "react-icons/cg";
 import styles from "./header.module.css";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import { Platform } from "@/shared/lib/audio.ts";
+import { Platform } from "@/shared/types.ts";
 
 export const searchPlatforms = (
   query: string,

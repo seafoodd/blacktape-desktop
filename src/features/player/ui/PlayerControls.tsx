@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { RepeatMode, seek } from "@/shared/lib/audio.ts";
-import { useAudioStore } from "@/shared/store/playerStore.ts";
+import { seek } from "@/shared/lib/audio.ts";
+import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
@@ -17,6 +17,7 @@ import {
 import clsx from "clsx";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderSongImage from "@/assets/react.svg";
+import { RepeatMode } from "@/shared/types.ts";
 
 export const PlayerControls = () => {
   const {

@@ -1,0 +1,65 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scroll-behavior: smooth;
+    max-height: 100%;
+    font-size: var(--font-lg);
+    padding: 8px;
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 8px;
+    border-radius: var(--radius-md);
+    transition: background-color 0.15s ease;
+    cursor: pointer;
+    user-select: none;
+    scroll-margin-top: 128px;
+}
+
+.item:hover {
+    background-color: var(--color-surface);
+}
+
+.item.active {
+    background-color: var(--color-primary);
+}
+
+.songCover {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background-color: var(--color-muted);
+}
+
+.info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0; /* Crucial for text truncation in flexbox */
+    flex: 1;
+}
+
+.title {
+    font-size: var(--font-md);
+    font-weight: 500;
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.artist {
+    font-size: var(--font-md);
+    color: var(--color-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

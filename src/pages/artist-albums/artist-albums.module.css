@@ -1,10 +1,11 @@
 .container {
+    padding: 16px;
 }
 
 .artistName {
     font-size: var(--font-xl);
     line-height: 1.5;
-    border-bottom: 1px solid rgb(169 169 169 / 0.2);
+    border-bottom: 1px solid var(--color-border);
     margin-bottom: 12px;
 }
 
@@ -61,7 +62,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 3px 12px;
+    height: 32px;
     transition: 100ms ease-out background-color;
+    cursor: pointer;
 
     &:nth-child(even) {
         background-color: var(--color-surface);
@@ -86,10 +89,58 @@
     text-align: start;
 }
 
+.songRight {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.threeDotButton {
+    display: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover .threeDotIcon {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+
+    /*&:hover .threeDotIcon {*/
+    /*    background-color: rgba(255, 255, 255, 0.1);*/
+    /*    color: white;*/
+    /*}*/
+}
+
+.threeDotIcon {
+    border-radius: 100%;
+    padding: 3px;
+}
+
+.songDuration {
+    display: block;
+}
+
+.song:hover .songDuration {
+    display: none;
+}
+
+.song:hover .threeDotButton {
+    display: flex;
+}
+
 .playingIcon {
     width: 18px;
     height: 18px;
     margin-left: -2px;
+    margin-right: 2px;
+}
+
+.pauseIcon {
+    width: 20px;
+    height: 20px;
+    margin-left: -3px;
+    margin-right: 1px;
 }
 
 .songTrackNumber {
@@ -104,3 +155,4 @@
 .songDuration {
     margin-left: 40px;
 }
+

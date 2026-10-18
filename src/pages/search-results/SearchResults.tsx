@@ -44,22 +44,6 @@ const SearchResults = () => {
 
   return (
     <div className={styles.container}>
-      <button
-        onClick={() => {
-          invoke("launch_youtube_login", { forceVisible: true });
-        }}
-      >
-        launch_youtube_login
-      </button>
-      <button
-        onClick={() => {
-          invoke("check_auth_status").then((r) => {
-            console.log(r);
-          });
-        }}
-      >
-        get_connected_account
-      </button>
       <header className={styles.header}>
         <h2>
           Results for <span>"{submittedQuery}"</span>

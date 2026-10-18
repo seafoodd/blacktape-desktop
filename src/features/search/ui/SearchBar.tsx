@@ -1,10 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
 import { BiDownload, BiFilterAlt, BiInfoCircle } from "react-icons/bi";
 import clsx from "clsx";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
-import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import {
+  ItemType,
+  PlatformFilter,
+  useLibraryStore,
+} from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
 
 const formatSuggestionType = (type: ItemType): string => {
@@ -19,8 +23,6 @@ const formatSuggestionType = (type: ItemType): string => {
       return "UNKNOWN";
   }
 };
-
-type Platform = "All" | "Youtube" | "Bandcamp" | "Local";
 
 interface SearchBarProps {
   className?: string;
@@ -51,11 +53,11 @@ export const SearchBar = ({ className }: SearchBarProps) => {
     initDownloadListeners().catch(console.error);
   }, [initDownloadListeners]);
 
-  const handleBrowseAll = (e: React.MouseEvent) => {
-    e.preventDefault();
-    commitSearch(query);
-    setShowDropdown(false);
-  };
+  // const handleBrowseAll = (e: React.MouseEvent) => {
+  //   e.preventDefault();
+  //   commitSearch(query);
+  //   setShowDropdown(false);
+  // };
 
   useEffect(() => {
     if (query.trim() !== "") {
@@ -113,6 +115,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
               e.currentTarget.blur();
             }
           }}
+          onFocus={(e) => e.currentTarget.select()}
         />
 
         <button
@@ -136,7 +139,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
             <div className={styles.filterSection}>
               <span className={styles.sectionLabel}>Platforms</span>
               <div className={styles.pillGrid}>
-                {(["All", "Youtube", "Bandcamp", "Local"] as Platform[]).map(
+                {(["All", "Youtube", "Bandcamp"] as PlatformFilter[]).map(
                   (plat) => (
                     <button
                       key={plat}
@@ -325,12 +328,19 @@ export const SearchBar = ({ className }: SearchBarProps) => {
           {!isSearching && filteredResults.length > 0 && (
             <a
               className={styles.browseButton}
-              href="#"
-              onClick={handleBrowseAll}
               onMouseDown={(e) => e.preventDefault()}
             >
-              Browse all results <AiOutlineArrowRight size={20} />
+              Browse all results (in development){" "}
+              <AiOutlineArrowRight size={20} />
             </a>
+            // <a
+            //   className={styles.browseButton}
+            //   href="#"
+            //   onClick={handleBrowseAll}
+            //   onMouseDown={(e) => e.preventDefault()}
+            // >
+            //   Browse all results <AiOutlineArrowRight size={20} />
+            // </a>
           )}
         </div>
       )}
