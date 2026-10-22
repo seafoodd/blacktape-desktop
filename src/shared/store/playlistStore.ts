@@ -123,7 +123,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       await playlistApi.removeSongs(playlistId, positions);
     } catch (error) {
       console.error("Failed to remove songs:", error);
-      set({ activePlaylistSongs: currentSongs }); // Revert on failure
+      set({ activePlaylistSongs: currentSongs });
     }
   },
 
@@ -134,17 +134,42 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   ) => {
     const currentSongs = get().activePlaylistSongs;
 
-    // Optimistic update
+    if (
+      !Number.isInteger(fromPosition) ||
+      !Number.isInteger(toPosition) ||
+      fromPosition < 0 ||
+      toPosition < 0 ||
+      fromPosition >= currentSongs.length ||
+      toPosition >= currentSongs.length
+    ) {
+      throw new Error("Invalid playlist reorder positions");
+    }
+
+    if (fromPosition === toPosition) return;
+
     const newSongs = [...currentSongs];
     const [moved] = newSongs.splice(fromPosition, 1);
+
+    if (moved === undefined) {
+      throw new Error("Song not found at source position");
+    }
+
     newSongs.splice(toPosition, 0, moved);
+
     set({ activePlaylistSongs: newSongs });
 
     try {
-      await playlistApi.reorderSongs(playlistId, fromPosition, toPosition);
+      await playlistApi.reorderSongs(
+        playlistId,
+        fromPosition + 1,
+        toPosition + 1,
+      );
     } catch (error) {
-      console.error("Failed to reorder songs:", error);
-      set({ activePlaylistSongs: currentSongs }); // Revert on failure
+      if (get().activePlaylistSongs === newSongs) {
+        set({ activePlaylistSongs: currentSongs });
+      }
+
+      throw error;
     }
   },
 }));

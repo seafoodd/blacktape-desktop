@@ -1,6 +1,7 @@
 use crate::lyrics::LyricsSource;
 use crate::types::{Album, ArtistSummary, Playlist, Song};
 use sqlx::sqlite::SqlitePool;
+use sqlx::Error;
 
 pub struct Database {
     pub pool: SqlitePool,
@@ -478,63 +479,138 @@ impl Database {
         playlist_id: i64,
         from_position: i64,
         to_position: i64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), Error> {
+        if from_position < 1 || to_position < 1 {
+            return Err(Error::RowNotFound);
+        }
+
         if from_position == to_position {
             return Ok(());
         }
 
         let mut tx = self.pool.begin().await?;
 
-        // 1. Get the rowid of the song being moved
         let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT rowid FROM playlist_songs WHERE playlist_id = ? AND position = ?",
+            "SELECT id FROM playlist_songs
+         WHERE playlist_id = ? AND position = ?",
         )
         .bind(playlist_id)
         .bind(from_position)
         .fetch_optional(&mut *tx)
         .await?;
 
-        let Some((row_id,)) = row else {
-            return Ok(()); // Item not found, nothing to do
+        let Some((song_id,)) = row else {
+            return Err(Error::RowNotFound);
         };
 
-        // 2. Shift other songs out of the way
-        if from_position < to_position {
-            // Moving down: shift items between from+1 and to up by 1 (position - 1)
-            sqlx::query(
-                "UPDATE playlist_songs SET position = position - 1 WHERE playlist_id = ? AND position > ? AND position <= ?",
-            )
-                .bind(playlist_id)
-                .bind(from_position)
-                .bind(to_position)
-                .execute(&mut *tx)
-                .await?;
-        } else {
-            // Moving up: shift items between to and from-1 down by 1 (position + 1)
-            sqlx::query(
-                "UPDATE playlist_songs SET position = position + 1 WHERE playlist_id = ? AND position >= ? AND position < ?",
-            )
-                .bind(playlist_id)
-                .bind(to_position)
-                .bind(from_position)
-                .execute(&mut *tx)
-                .await?;
+        let max_position: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(position), 0)
+         FROM playlist_songs
+         WHERE playlist_id = ?",
+        )
+        .bind(playlist_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if to_position > max_position {
+            return Err(Error::RowNotFound);
         }
 
-        // 3. Set the moved item to the target position using its unique rowid
-        sqlx::query("UPDATE playlist_songs SET position = ? WHERE rowid = ?")
-            .bind(to_position)
-            .bind(row_id)
+        let offset = max_position.checked_add(2).ok_or(Error::RowNotFound)?;
+
+        let parked_position = max_position.checked_add(1).ok_or(Error::RowNotFound)?;
+
+        // Park the song being moved.
+        sqlx::query("UPDATE playlist_songs SET position = ? WHERE id = ?")
+            .bind(parked_position)
+            .bind(song_id)
             .execute(&mut *tx)
             .await?;
 
-        // 4. Update playlist modified date
-        sqlx::query("UPDATE playlists SET date_modified = CURRENT_TIMESTAMP WHERE id = ?")
+        if from_position < to_position {
+            // Move intervening songs into a temporary range.
+            sqlx::query(
+                "UPDATE playlist_songs
+             SET position = position + ?
+             WHERE playlist_id = ?
+               AND position > ?
+               AND position <= ?",
+            )
+            .bind(offset)
             .bind(playlist_id)
+            .bind(from_position)
+            .bind(to_position)
             .execute(&mut *tx)
             .await?;
+
+            // Restore them at their final positions.
+            sqlx::query(
+                "UPDATE playlist_songs
+             SET position = position - ? - 1
+             WHERE playlist_id = ?
+               AND position > ?
+               AND position <= ?",
+            )
+            .bind(offset)
+            .bind(playlist_id)
+            .bind(offset)
+            .bind(offset.checked_add(to_position).ok_or(Error::RowNotFound)?)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            // Move intervening songs into a temporary range.
+            sqlx::query(
+                "UPDATE playlist_songs
+             SET position = position + ?
+             WHERE playlist_id = ?
+               AND position >= ?
+               AND position < ?",
+            )
+            .bind(offset)
+            .bind(playlist_id)
+            .bind(to_position)
+            .bind(from_position)
+            .execute(&mut *tx)
+            .await?;
+
+            // Restore them at their final positions.
+            sqlx::query(
+                "UPDATE playlist_songs
+             SET position = position - ? + 1
+             WHERE playlist_id = ?
+               AND position >= ?
+               AND position < ?",
+            )
+            .bind(offset)
+            .bind(playlist_id)
+            .bind(offset.checked_add(to_position).ok_or(Error::RowNotFound)?)
+            .bind(
+                offset
+                    .checked_add(from_position)
+                    .ok_or(Error::RowNotFound)?,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Place the moved song at its destination.
+        sqlx::query("UPDATE playlist_songs SET position = ? WHERE id = ?")
+            .bind(to_position)
+            .bind(song_id)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            "UPDATE playlists
+         SET date_modified = CURRENT_TIMESTAMP
+         WHERE id = ?",
+        )
+        .bind(playlist_id)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
+
         Ok(())
     }
 

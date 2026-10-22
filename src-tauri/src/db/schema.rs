@@ -65,10 +65,11 @@ pub fn get_migrations() -> Vec<Migration> {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     playlist_id INTEGER NOT NULL,
                     song_id INTEGER NOT NULL,
-                    position INTEGER NOT NULL,
+                    position INTEGER NOT NULL CHECK (position > 0),
                     date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
-                    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+                    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+                    UNIQUE(playlist_id, position)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_playlist_songs_position ON playlist_songs(playlist_id, position);

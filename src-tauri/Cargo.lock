@@ -487,6 +487,7 @@ dependencies = [
  "tauri-plugin-sql",
  "tempfile",
  "tokio",
+ "tracing",
  "url",
  "urlencoding",
  "winapi",

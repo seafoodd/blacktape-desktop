@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePlaylistStore } from "@/shared/store/playlistStore";
 import styles from "./playlist.module.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -131,18 +131,27 @@ const Playlist = () => {
     [activePlaylistId, removeSongs, fetchPlaylists],
   );
 
-  const handleReorderSongs = useCallback(
-    (fromIndex: number, toIndex: number) => {
-      if (activePlaylistId === null) return;
+  const [isReordering, setIsReordering] = useState(false);
 
-      reorderSongs(activePlaylistId, fromIndex, toIndex)
-        .catch((e) => console.log("reorder songs error: ", e))
-        .finally(() => {
-          fetchPlaylists();
-          selectPlaylist(activePlaylistId);
-        });
+  const handleReorderSongs = useCallback(
+    async (fromPosition: number, toPosition: number) => {
+      const playlistId = activePlaylistId;
+
+      if (playlistId === null || isReordering) return;
+      if (fromPosition === toPosition) return;
+
+      setIsReordering(true);
+
+      try {
+        await reorderSongs(playlistId, fromPosition, toPosition);
+        await fetchPlaylists();
+      } catch (error) {
+        console.error("[UI] Failed to reorder playlist songs:", error);
+      } finally {
+        setIsReordering(false);
+      }
     },
-    [activePlaylistId, reorderSongs],
+    [activePlaylistId, isReordering, reorderSongs, fetchPlaylists],
   );
 
   if (!activePlaylist || !activePlaylistId) return;
