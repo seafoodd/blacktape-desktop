@@ -20,7 +20,7 @@ use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask};
-use crate::lyrics::{fetch_lyrics, LyricsSource};
+use crate::lyrics::{fetch_lyrics, fetch_lyrics_from_provider, LyricsSource};
 use crate::playlists::commands::{
     add_songs_to_playlist, create_playlist, delete_playlist, get_all_playlists, get_playlist_by_id,
     get_playlist_songs, remove_songs_from_playlist, reorder_playlist_song, update_playlist_details,
@@ -174,6 +174,86 @@ async fn get_lyrics(
 }
 
 #[command]
+async fn refetch_lyrics(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    id: i64,
+    provider: Option<String>,
+) -> Result<LyricsSource, String> {
+    let (artist, title, album, duration_ms) = {
+        let db = state.lock().await;
+        let song = db
+            .get_song_by_id(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Song not found")?;
+
+        let artist_name =
+            if !song.album_artist.trim().is_empty() && song.album_artist != "Unknown Artist" {
+                song.album_artist.clone()
+            } else if let Some(first_artist) = song.artists.first() {
+                first_artist.clone()
+            } else {
+                song.album_artist.clone()
+            };
+
+        (
+            artist_name,
+            song.title.clone(),
+            song.album.clone(),
+            song.duration_ms,
+        )
+    };
+
+    let lyrics_source = if let Some(ref p) = provider {
+        if !p.trim().is_empty() && p != "auto" {
+            fetch_lyrics_from_provider(p, &artist, &title, Some(&album), Some(duration_ms)).await?
+        } else {
+            fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?
+        }
+    } else {
+        fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?
+    };
+
+    let db = state.lock().await;
+    db.update_song_lyrics(id, lyrics_source.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(lyrics_source)
+}
+
+#[command]
+async fn save_lyrics(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    id: i64,
+    lyrics: String,
+    source: Option<String>,
+) -> Result<LyricsSource, String> {
+    let lyrics_source = LyricsSource {
+        lyrics,
+        source: source.unwrap_or_else(|| "Custom".to_string()),
+    };
+
+    let db = state.lock().await;
+    db.update_song_lyrics(id, lyrics_source.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(lyrics_source)
+}
+
+#[command]
+async fn delete_lyrics(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    id: i64,
+) -> Result<(), String> {
+    let db = state.lock().await;
+    db.delete_song_lyrics(id).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[command]
 async fn download(
     app_handle: AppHandle,
     queue_state: State<'_, DownloadQueue>,
@@ -302,6 +382,9 @@ pub fn run() {
             get_artists,
             get_artist_albums,
             get_lyrics,
+            refetch_lyrics,
+            save_lyrics,
+            delete_lyrics,
             // Search
             get_search_suggestions,
             // Download

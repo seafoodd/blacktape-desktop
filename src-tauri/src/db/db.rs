@@ -94,6 +94,14 @@ impl Database {
         Ok(())
     }
 
+    pub async fn delete_song_lyrics(&self, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE songs SET lyrics = NULL, lyrics_source = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO songs (

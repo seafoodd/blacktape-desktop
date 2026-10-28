@@ -5,6 +5,13 @@ import styles from "./lyrics.module.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import { LyricLine, parseLyrics } from "../lib/lyricsParser";
+import {
+  ContextMenu,
+  ContextMenuPosition,
+  MenuItemOption,
+} from "@/shared/ui/context-menu";
+import { useModalStore } from "@/shared/store/modalStore";
+import { EditLyricsModal } from "./EditLyricsModal";
 
 interface LyricsProps {
   className?: string;
@@ -13,9 +20,16 @@ interface LyricsProps {
 export const Lyrics = ({ className }: LyricsProps) => {
   const { currentSong, progress, isPlaying, seek, updateProgress } =
     useAudioStore();
+  const { openModal } = useModalStore();
+
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [retrieving, setRetrieving] = useState<boolean>(false);
   const [source, setSource] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<string | null>(null);
+
+  const [activeMenu, setActiveMenu] = useState<{
+    position: ContextMenuPosition;
+  } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLDivElement | null>(null);
@@ -26,6 +40,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     if (!currentSong?.id) {
       setLyrics(null);
       setSource(null);
+      setErrorStatus(null);
       return;
     }
 
@@ -33,6 +48,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     setRetrieving(true);
     setLyrics(null);
     setSource(null);
+    setErrorStatus(null);
 
     const fetchLyrics = async () => {
       try {
@@ -47,12 +63,14 @@ export const Lyrics = ({ className }: LyricsProps) => {
           const lyr = lyricsSource?.lyrics;
           setLyrics(lyr && lyr.trim().length > 0 ? lyr : null);
           setSource(lyricsSource?.source ?? null);
+          setErrorStatus(null);
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.log("Failed to fetch lyrics:", err);
         if (isCurrentRequest) {
           setLyrics(null);
           setSource(null);
+          setErrorStatus(typeof err === "string" ? err : "No lyrics found.");
         }
       } finally {
         if (isCurrentRequest) setRetrieving(false);
@@ -65,6 +83,119 @@ export const Lyrics = ({ className }: LyricsProps) => {
       isCurrentRequest = false;
     };
   }, [currentSong?.id]);
+
+  const handleRefetch = async (provider?: string) => {
+    if (!currentSong?.id) return;
+    setRetrieving(true);
+    setErrorStatus(null);
+    try {
+      const lyricsSource = await invoke<{
+        lyrics: string;
+        source: string;
+      }>("refetch_lyrics", {
+        id: currentSong.id,
+        provider: provider ?? null,
+      });
+
+      const lyr = lyricsSource?.lyrics;
+      setLyrics(lyr && lyr.trim().length > 0 ? lyr : null);
+      setSource(lyricsSource?.source ?? null);
+      setErrorStatus(null);
+    } catch (err: unknown) {
+      console.error(
+        `Failed to refetch lyrics${provider ? ` from ${provider}` : ""}:`,
+        err,
+      );
+      setErrorStatus(
+        typeof err === "string"
+          ? err
+          : `Failed to fetch lyrics${provider ? ` from ${provider}` : ""}.`,
+      );
+    } finally {
+      setRetrieving(false);
+    }
+  };
+
+  const handleDeleteLyrics = async () => {
+    if (!currentSong?.id) return;
+    try {
+      await invoke("delete_lyrics", { id: currentSong.id });
+      setLyrics(null);
+      setSource(null);
+      setErrorStatus("Lyrics deleted.");
+    } catch (err) {
+      console.error("Failed to delete lyrics:", err);
+    }
+  };
+
+  const handleEditLyrics = () => {
+    if (!currentSong?.id) return;
+    openModal(
+      <EditLyricsModal
+        song={currentSong}
+        initialLyrics={lyrics ?? ""}
+        initialSource={source}
+        onSuccess={(newLyrics, newSource) => {
+          setLyrics(newLyrics.trim().length > 0 ? newLyrics : null);
+          setSource(newSource);
+          setErrorStatus(null);
+        }}
+      />,
+    );
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!currentSong?.id) return;
+    setActiveMenu({
+      position: { x: e.clientX, y: e.clientY },
+    });
+  };
+
+  const contextMenuItems: MenuItemOption[] = useMemo(() => {
+    if (!currentSong?.id) return [];
+
+    return [
+      {
+        label: "Refetch Lyrics",
+        action: () => handleRefetch(),
+      },
+      {
+        separator: true,
+        label: "",
+      },
+      {
+        label: "Fetch from LRCLIB",
+        action: () => handleRefetch("lrclib"),
+      },
+      {
+        label: "Fetch from Musixmatch",
+        action: () => handleRefetch("musixmatch"),
+      },
+      {
+        label: "Fetch from lyrics.ovh",
+        action: () => handleRefetch("lyrics.ovh"),
+      },
+      {
+        label: "Fetch from Genius",
+        action: () => handleRefetch("genius"),
+      },
+      {
+        separator: true,
+        label: "",
+      },
+      {
+        label: "Edit Lyrics...",
+        action: handleEditLyrics,
+      },
+      {
+        label: "Delete Lyrics",
+        danger: true,
+        action: handleDeleteLyrics,
+      },
+    ];
+  }, [currentSong?.id, lyrics, source]);
 
   const parsedLyrics = useMemo(() => {
     return lyrics ? parseLyrics(lyrics) : null;
@@ -147,6 +278,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     <div
       ref={containerRef}
       onScroll={handleScroll}
+      onContextMenu={handleContextMenu}
       className={clsx(styles.container, className)}
     >
       {retrieving && (
@@ -163,6 +295,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
                 isTimed && activeIndex >= 0 && index < activeIndex;
               const isFuture =
                 isTimed && (activeIndex < 0 || index > activeIndex);
+              const isEmpty = !line.text.trim();
 
               return (
                 <div
@@ -175,9 +308,14 @@ export const Lyrics = ({ className }: LyricsProps) => {
                     [styles.passedLine]: isPassed,
                     [styles.futureLine]: isFuture,
                     [styles.plainLine]: !isTimed,
+                    [styles.emptyTimedLine]: isTimed && isEmpty,
                   })}
                 >
-                  {line.text.trim() || "\u00A0"}
+                  {isTimed
+                    ? isEmpty
+                      ? "♫"
+                      : line.text.trim()
+                    : line.text.trim() || "\u00A0"}
                 </div>
               );
             })}
@@ -203,7 +341,17 @@ export const Lyrics = ({ className }: LyricsProps) => {
       )}
 
       {!retrieving && (!parsedLyrics || parsedLyrics.lines.length === 0) && (
-        <div className={styles.emptyState}>No lyrics found.</div>
+        <div className={styles.emptyState}>
+          {errorStatus || "No lyrics found."}
+        </div>
+      )}
+
+      {activeMenu && (
+        <ContextMenu
+          position={activeMenu.position}
+          onClose={() => setActiveMenu(null)}
+          items={contextMenuItems}
+        />
       )}
     </div>
   );

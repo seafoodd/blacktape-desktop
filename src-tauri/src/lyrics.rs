@@ -714,6 +714,75 @@ pub async fn fetch_lyrics(
     Err("Lyrics not found across any provider".to_string())
 }
 
+/// Fetches lyrics from a specific provider ("lrclib", "musixmatch", "lyrics.ovh", "genius", or "auto")
+pub async fn fetch_lyrics_from_provider(
+    provider: &str,
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    duration_ms: Option<u64>,
+) -> Result<LyricsSource, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let duration_secs = duration_ms.map(|d| d / 1000);
+    let cleaned_title = clean_track_title(title);
+
+    match provider.trim().to_lowercase().as_str() {
+        "lrclib" => {
+            if let Ok(res) = fetch_lrclib(&client, artist, title, album, duration_secs).await {
+                return Ok(res);
+            }
+            if !cleaned_title.is_empty() && cleaned_title != title {
+                if let Ok(res) =
+                    fetch_lrclib(&client, artist, &cleaned_title, album, duration_secs).await
+                {
+                    return Ok(res);
+                }
+            }
+            Err("No lyrics found on LRCLIB".to_string())
+        }
+        "musixmatch" => {
+            if let Ok(res) = fetch_musixmatch(&client, artist, title, duration_secs).await {
+                return Ok(res);
+            }
+            if !cleaned_title.is_empty() && cleaned_title != title {
+                if let Ok(res) =
+                    fetch_musixmatch(&client, artist, &cleaned_title, duration_secs).await
+                {
+                    return Ok(res);
+                }
+            }
+            Err("No lyrics found on Musixmatch".to_string())
+        }
+        "lyrics.ovh" | "lyrics_ovh" | "lyricsovh" => {
+            if let Ok(res) = fetch_lyrics_ovh(&client, artist, title).await {
+                return Ok(res);
+            }
+            if !cleaned_title.is_empty() && cleaned_title != title {
+                if let Ok(res) = fetch_lyrics_ovh(&client, artist, &cleaned_title).await {
+                    return Ok(res);
+                }
+            }
+            Err("No lyrics found on lyrics.ovh".to_string())
+        }
+        "genius" => {
+            if let Ok(res) = fetch_genius(&client, artist, title).await {
+                return Ok(res);
+            }
+            if !cleaned_title.is_empty() && cleaned_title != title {
+                if let Ok(res) = fetch_genius(&client, artist, &cleaned_title).await {
+                    return Ok(res);
+                }
+            }
+            Err("No lyrics found on Genius".to_string())
+        }
+        _ => fetch_lyrics(artist, title, album, duration_ms).await,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
