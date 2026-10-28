@@ -163,7 +163,17 @@ async fn get_lyrics(
         )
     };
 
-    let lyrics_source = fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?;
+    let fetch_handle = tokio::spawn(async move {
+        fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await
+    });
+
+    let lyrics_source = match fetch_handle.await {
+        Ok(result) => result?,
+        Err(e) => {
+            eprintln!("Lyrics fetch task panicked or cancelled: {e}");
+            return Err("Failed to fetch lyrics due to an internal error".to_string());
+        }
+    };
 
     let db = state.lock().await;
     db.update_song_lyrics(id, lyrics_source.clone())
@@ -204,14 +214,25 @@ async fn refetch_lyrics(
         )
     };
 
-    let lyrics_source = if let Some(ref p) = provider {
-        if !p.trim().is_empty() && p != "auto" {
-            fetch_lyrics_from_provider(p, &artist, &title, Some(&album), Some(duration_ms)).await?
+    let fetch_handle = tokio::spawn(async move {
+        if let Some(ref p) = provider {
+            if !p.trim().is_empty() && p != "auto" {
+                fetch_lyrics_from_provider(p, &artist, &title, Some(&album), Some(duration_ms))
+                    .await
+            } else {
+                fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await
+            }
         } else {
-            fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?
+            fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await
         }
-    } else {
-        fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?
+    });
+
+    let lyrics_source = match fetch_handle.await {
+        Ok(result) => result?,
+        Err(e) => {
+            eprintln!("Lyrics refetch task panicked or cancelled: {e}");
+            return Err("Failed to refetch lyrics due to an internal error".to_string());
+        }
     };
 
     let db = state.lock().await;

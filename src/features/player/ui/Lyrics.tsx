@@ -13,6 +13,25 @@ import {
 import { useModalStore } from "@/shared/store/modalStore";
 import { EditLyricsModal } from "./EditLyricsModal";
 
+const invokeWithTimeout = async <T,>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  timeoutMs = 15000,
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("Request timed out. Please try again."));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([invoke<T>(cmd, args), timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
+};
+
 interface LyricsProps {
   className?: string;
 }
@@ -52,7 +71,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
 
     const fetchLyrics = async () => {
       try {
-        const lyricsSource = await invoke<{
+        const lyricsSource = await invokeWithTimeout<{
           lyrics: string;
           source: string;
         }>("get_lyrics", {
@@ -70,7 +89,13 @@ export const Lyrics = ({ className }: LyricsProps) => {
         if (isCurrentRequest) {
           setLyrics(null);
           setSource(null);
-          setErrorStatus(typeof err === "string" ? err : "No lyrics found.");
+          setErrorStatus(
+            typeof err === "string"
+              ? err
+              : err instanceof Error
+                ? err.message
+                : "No lyrics found.",
+          );
         }
       } finally {
         if (isCurrentRequest) setRetrieving(false);
@@ -89,7 +114,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     setRetrieving(true);
     setErrorStatus(null);
     try {
-      const lyricsSource = await invoke<{
+      const lyricsSource = await invokeWithTimeout<{
         lyrics: string;
         source: string;
       }>("refetch_lyrics", {
@@ -109,7 +134,9 @@ export const Lyrics = ({ className }: LyricsProps) => {
       setErrorStatus(
         typeof err === "string"
           ? err
-          : `Failed to fetch lyrics${provider ? ` from ${provider}` : ""}.`,
+          : err instanceof Error
+            ? err.message
+            : `Failed to fetch lyrics${provider ? ` from ${provider}` : ""}.`,
       );
     } finally {
       setRetrieving(false);

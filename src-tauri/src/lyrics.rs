@@ -176,10 +176,13 @@ async fn get_musixmatch_token(client: &reqwest::Client) -> Result<String, String
 
 pub fn clean_musixmatch_lyrics(text: &str) -> String {
     let mut cleaned = text;
-    if let Some(pos) = cleaned.find("******* This Lyrics is NOT for Commercial use") {
-        cleaned = &cleaned[..pos];
-    } else if let Some(pos) = cleaned.find("*******") {
-        cleaned = &cleaned[..pos];
+    if let Some(part) = cleaned
+        .split("******* This Lyrics is NOT for Commercial use")
+        .next()
+    {
+        cleaned = part;
+    } else if let Some(part) = cleaned.split("*******").next() {
+        cleaned = part;
     }
     cleaned.trim().to_string()
 }
@@ -495,31 +498,59 @@ async fn fetch_lyrics_ovh(
 // Provider 4: Genius (Priority 4)
 // ---------------------------------------------------------------------------
 
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn rfind_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
+}
+
 pub fn extract_genius_lyrics(html: &str) -> Option<String> {
     let mut lyrics_blocks = Vec::new();
-    let container_attr = "data-lyrics-container=\"true\"";
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+
+    let container_needle = b"data-lyrics-container=\"true\"";
+    let div_open_needle = b"<div";
+    let div_close_needle = b"</div>";
 
     let mut search_idx = 0;
-    while let Some(attr_pos) = html[search_idx..].find(container_attr) {
+    while search_idx < len {
+        let remaining = &bytes[search_idx..];
+        let attr_pos = match find_subslice(remaining, container_needle) {
+            Some(pos) => pos,
+            None => break,
+        };
+
         let abs_attr_pos = search_idx + attr_pos;
-        if let Some(_tag_open) = html[..abs_attr_pos].rfind("<div") {
-            if let Some(rel_tag_close) = html[abs_attr_pos..].find('>') {
+        if let Some(_tag_open_pos) = rfind_subslice(&bytes[..abs_attr_pos], div_open_needle) {
+            let rel_tag_close = bytes[abs_attr_pos..].iter().position(|&b| b == b'>');
+            if let Some(rel_tag_close) = rel_tag_close {
                 let content_start = abs_attr_pos + rel_tag_close + 1;
                 let mut depth = 1;
                 let mut cur = content_start;
-                let bytes = html.as_bytes();
-                let len = bytes.len();
                 let mut content_end = None;
 
                 while cur < len {
-                    if cur + 4 <= len && &html[cur..cur + 4] == "<div" {
-                        let next_char = if cur + 4 < len { bytes[cur + 4] } else { b'>' };
-                        if next_char.is_ascii_whitespace() || next_char == b'>' {
+                    if cur + 4 <= len && &bytes[cur..cur + 4] == div_open_needle {
+                        let next_byte = if cur + 4 < len { bytes[cur + 4] } else { b'>' };
+                        if next_byte.is_ascii_whitespace() || next_byte == b'>' {
                             depth += 1;
                             cur += 4;
                             continue;
                         }
-                    } else if cur + 6 <= len && &html[cur..cur + 6] == "</div>" {
+                    } else if cur + 6 <= len && &bytes[cur..cur + 6] == div_close_needle {
                         depth -= 1;
                         if depth == 0 {
                             content_end = Some(cur);
@@ -532,7 +563,8 @@ pub fn extract_genius_lyrics(html: &str) -> Option<String> {
                 }
 
                 if let Some(end) = content_end {
-                    let block_html = &html[content_start..end];
+                    let raw_slice = &bytes[content_start..end];
+                    let block_html = String::from_utf8_lossy(raw_slice);
                     let with_newlines = block_html
                         .replace("<br/>", "\n")
                         .replace("<br />", "\n")
@@ -550,7 +582,7 @@ pub fn extract_genius_lyrics(html: &str) -> Option<String> {
                 }
             }
         }
-        search_idx = abs_attr_pos + container_attr.len();
+        search_idx = abs_attr_pos + container_needle.len();
     }
 
     if lyrics_blocks.is_empty() {
@@ -832,5 +864,28 @@ mod tests {
         assert!(extracted.contains("First line\nSecond line with & entity\nThird line"));
         assert!(extracted.contains("annotated text"));
         assert!(extracted.contains("Chorus line 1\nChorus line 2"));
+    }
+
+    #[test]
+    fn test_extract_genius_lyrics_with_multibyte_utf8() {
+        let html = r#"
+            <!doctype html>
+            <html lang="en">
+            <head><meta itemprop="cf-country" content="RS"></head>
+            <body>
+                <div>Some prólogue with multi-byte chars: ó, é, ñ, 🎵, 🎶</div>
+                <div data-lyrics-container="true" class="Lyrics__Container-1">
+                    Canción line 1 with ó and ’ apostrophe<br/>
+                    Canción line 2 with Cyrillic: Привет<br>
+                    Final line with emoji: 🎸
+                </div>
+            </body>
+            </html>
+        "#;
+
+        let extracted = extract_genius_lyrics(html).expect("lyrics should be extracted");
+        assert!(extracted.contains("Canción line 1 with ó and ’ apostrophe"));
+        assert!(extracted.contains("Canción line 2 with Cyrillic: Привет"));
+        assert!(extracted.contains("Final line with emoji: 🎸"));
     }
 }
