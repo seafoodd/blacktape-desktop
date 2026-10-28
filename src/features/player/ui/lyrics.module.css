@@ -1,18 +1,82 @@
 .container {
-    font-size: var(--font-lg);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    box-sizing: border-box;
+    font-size: var(--font-lg, 1.125rem);
     overflow-y: auto;
     scrollbar-width: thin;
     scroll-behavior: smooth;
-    padding: 8px;
+}
+
+.statusText {
+    color: var(--color-muted);
+    font-size: var(--font-md, 1rem);
+    padding: 8px 0;
+}
+
+.emptyState {
+    color: var(--color-muted);
+    font-size: var(--font-md, 1rem);
+    padding: 8px 0;
+}
+
+.lyricsWrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .lyricLine {
-    min-height: 1.4em;
+    min-height: 1.5em;
+    line-height: 1.5;
+    border-radius: 8px;
+    padding: 6px 10px;
+    transition: color 200ms ease, opacity 200ms ease, transform 200ms ease, background-color 200ms ease;
+    user-select: text;
+}
+
+.plainLine {
+    color: var(--color-text);
+}
+
+.timedLine {
+    cursor: pointer;
+    color: var(--color-muted);
+    opacity: 0.5;
+
+    &:hover {
+        opacity: 0.85;
+        background-color: rgba(255, 255, 255, 0.05);
+    }
+}
+
+.activeLine {
+    color: var(--color-text);
+    font-weight: 700;
+    opacity: 1;
+    transform: scale(1.02);
+    transform-origin: left center;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.passedLine {
+    color: var(--color-muted);
+    opacity: 0.4;
+}
+
+.futureLine {
+    color: var(--color-muted);
+    opacity: 0.6;
 }
 
 .source {
-    margin-top: 1.4em;
+    margin-top: 1.6em;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
     color: var(--color-muted);
+    font-size: var(--font-sm, 0.875rem);
     text-align: start;
 
     a {

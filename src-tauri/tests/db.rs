@@ -9,7 +9,8 @@ async fn setup_test_db() -> Database {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT UNIQUE NOT NULL,
             title TEXT NOT NULL,
-            artist TEXT NOT NULL,
+            artists TEXT NOT NULL DEFAULT '[]',
+            album_artist TEXT NOT NULL DEFAULT 'Unknown Artist',
             album TEXT NOT NULL,
             track_number INTEGER,
             duration_ms INTEGER NOT NULL,
@@ -18,7 +19,13 @@ async fn setup_test_db() -> Database {
             genre TEXT,
             release_year INTEGER,
             lyrics TEXT,
-            lyrics_source TEXT
+            lyrics_source TEXT,
+            source TEXT NOT NULL DEFAULT 'local',
+            source_url TEXT,
+            source_item_id TEXT,
+            canonical_track_slug TEXT NOT NULL DEFAULT '',
+            canonical_album_slug TEXT NOT NULL DEFAULT '',
+            quality_tier TEXT NOT NULL DEFAULT 'standard'
         );",
     )
     .execute(&db.pool)

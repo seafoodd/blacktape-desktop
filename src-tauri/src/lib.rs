@@ -130,7 +130,7 @@ async fn get_lyrics(
     state: State<'_, tokio::sync::Mutex<Database>>,
     id: i64,
 ) -> Result<LyricsSource, String> {
-    let (artist, title) = {
+    let (artist, title, album, duration_ms) = {
         let db = state.lock().await;
         let song = db
             .get_song_by_id(id)
@@ -145,10 +145,25 @@ async fn get_lyrics(
                 return Ok(lyrics_source);
             }
         }
-        (song.album_artist.clone(), song.title.clone())
+
+        let artist_name =
+            if !song.album_artist.trim().is_empty() && song.album_artist != "Unknown Artist" {
+                song.album_artist.clone()
+            } else if let Some(first_artist) = song.artists.first() {
+                first_artist.clone()
+            } else {
+                song.album_artist.clone()
+            };
+
+        (
+            artist_name,
+            song.title.clone(),
+            song.album.clone(),
+            song.duration_ms,
+        )
     };
 
-    let lyrics_source = fetch_lyrics(&artist, &title).await?;
+    let lyrics_source = fetch_lyrics(&artist, &title, Some(&album), Some(duration_ms)).await?;
 
     let db = state.lock().await;
     db.update_song_lyrics(id, lyrics_source.clone())
