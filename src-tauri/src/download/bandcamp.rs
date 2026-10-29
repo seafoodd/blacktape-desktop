@@ -2,6 +2,7 @@ use crate::download::{AlbumDownload, TrackDownload};
 use crate::utils::sanitize_fs;
 use regex::Regex;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
@@ -62,6 +63,7 @@ pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<Strin
 
     let meta = parse_track_meta(&html);
     let sanitized_name = sanitize_fs(&meta.title);
+    let source_item_id = extract_track_id_from_html(&html, Some(track_url));
 
     let track = TrackDownload {
         title: meta.title,
@@ -77,7 +79,7 @@ pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<Strin
         release_year: meta.release_year,
         url: track_url.to_string(),
         file_name: format!("{}.mp3", sanitized_name),
-        source_item_id: None,
+        source_item_id,
     };
 
     Ok((track, meta.external_cover_url))
@@ -267,7 +269,7 @@ fn extract_genres(json_ld: &str) -> Option<Vec<String>> {
     static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
     static ITEM_RE: OnceLock<Regex> = OnceLock::new();
 
-    let block_re = BLOCK_RE.get_or_init(|| Regex::new(r#""keywords"\s*:\s*\[([^]]+)\]"#).unwrap());
+    let block_re = BLOCK_RE.get_or_init(|| Regex::new(r#""keywords"\s*:\s*\[([^]]+)]"#).unwrap());
     let item_re = ITEM_RE.get_or_init(|| Regex::new(r#""([^"]+)""#).unwrap());
 
     let caps = block_re.captures(json_ld)?;
@@ -302,12 +304,25 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
         .unwrap()
     });
 
+    let track_id_map = extract_album_track_ids(html);
+
     let mut tracks = Vec::new();
     let mut track_count = 1;
 
     for caps in track_regex.captures_iter(html) {
         let relative_path = caps.get(1).map_or("", |m| m.as_str());
         let track_name = caps.get(2).map_or("Unknown Track", |m| m.as_str()).trim();
+
+        let source_item_id = track_id_map.get(relative_path).cloned().or_else(|| {
+            let slug = relative_path
+                .trim_start_matches("/track/")
+                .trim_matches('/');
+            if !slug.is_empty() {
+                Some(slug.to_string())
+            } else {
+                None
+            }
+        });
 
         tracks.push(TrackDownload {
             url: format!("{}{}", base_url, relative_path),
@@ -319,7 +334,7 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
             track_number: None,
             genres: None,
             release_year: None,
-            source_item_id: None,
+            source_item_id,
         });
 
         track_count += 1;
@@ -345,6 +360,77 @@ fn maximize_cover_url(url: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"_\d+\.(jpg|jpeg|png)").unwrap());
     re.replace(url, "_0.jpg").to_string()
+}
+
+fn extract_track_id_from_html(html: &str, track_url: Option<&str>) -> Option<String> {
+    static COMMENT_RE: OnceLock<Regex> = OnceLock::new();
+    let comment_re =
+        COMMENT_RE.get_or_init(|| Regex::new(r#"(?i)<!--\s*track id\s+(\d+)\s*-->"#).unwrap());
+    if let Some(caps) = comment_re.captures(html) {
+        return Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    static ITEM_ID_RE: OnceLock<Regex> = OnceLock::new();
+    let item_id_re =
+        ITEM_ID_RE.get_or_init(|| Regex::new(r#"(?i)data-item-id="track-(\d+)""#).unwrap());
+    if let Some(caps) = item_id_re.captures(html) {
+        return Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    static JSON_ID_RE: OnceLock<Regex> = OnceLock::new();
+    let json_id_re = JSON_ID_RE
+        .get_or_init(|| Regex::new(r#"(?i)["'](?:track_id|item_id)["']\s*:\s*(\d+)"#).unwrap());
+    if let Some(caps) = json_id_re.captures(html) {
+        return Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    static EMBED_RE: OnceLock<Regex> = OnceLock::new();
+    let embed_re =
+        EMBED_RE.get_or_init(|| Regex::new(r#"(?i)(?:/track=|\btrack_id=)(\d+)"#).unwrap());
+    if let Some(caps) = embed_re.captures(html) {
+        return Some(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    if let Some(url) = track_url {
+        if let Some(idx) = url.find("/track/") {
+            let slug = &url[idx + 7..];
+            let clean_slug = slug
+                .split(['?', '#'])
+                .next()
+                .unwrap_or(slug)
+                .trim_matches('/');
+            if !clean_slug.is_empty() {
+                return Some(clean_slug.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_album_track_ids(html: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    static TRACKINFO_PAIR_RE1: OnceLock<Regex> = OnceLock::new();
+    let re1 = TRACKINFO_PAIR_RE1.get_or_init(|| {
+        Regex::new(r#"(?s)"id"\s*:\s*(\d+)[^}]*?"title_link"\s*:\s*"(/track/[^"\s]+)""#).unwrap()
+    });
+    for caps in re1.captures_iter(html) {
+        let id = caps.get(1).unwrap().as_str().to_string();
+        let link = caps.get(2).unwrap().as_str().to_string();
+        map.insert(link, id);
+    }
+
+    static TRACKINFO_PAIR_RE2: OnceLock<Regex> = OnceLock::new();
+    let re2 = TRACKINFO_PAIR_RE2.get_or_init(|| {
+        Regex::new(r#"(?s)"title_link"\s*:\s*"(/track/[^"\s]+)"[^}]*?"id"\s*:\s*(\d+)"#).unwrap()
+    });
+    for caps in re2.captures_iter(html) {
+        let link = caps.get(1).unwrap().as_str().to_string();
+        let id = caps.get(2).unwrap().as_str().to_string();
+        map.entry(link).or_insert(id);
+    }
+
+    map
 }
 
 #[cfg(test)]
@@ -414,5 +500,55 @@ mod tests {
             "https://test.bandcamp.com/track/spiral-out-keep-going-2"
         );
         assert_eq!(tracks[1].file_name, "02. Spiral Out (Keep Going)");
+        assert_eq!(tracks[0].source_item_id, Some("in-absentia-2".to_string()));
+        assert_eq!(
+            tracks[1].source_item_id,
+            Some("spiral-out-keep-going-2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_track_id_from_html_comment() {
+        let html = "<div><!-- track id 3770803404 --></div>";
+        assert_eq!(
+            extract_track_id_from_html(html, None),
+            Some("3770803404".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_track_id_from_html_embed() {
+        let html = r#"<meta property="og:video" content="https://bandcamp.com/EmbeddedPlayer/v=2/track=12345678/size=large/">"#;
+        assert_eq!(
+            extract_track_id_from_html(html, None),
+            Some("12345678".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_track_id_from_html_fallback_url() {
+        let html = "<html></html>";
+        assert_eq!(
+            extract_track_id_from_html(
+                html,
+                Some("https://artist.bandcamp.com/track/my-track?action=download")
+            ),
+            Some("my-track".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_album_track_ids() {
+        let html = r#"
+            var TralbumData = {
+                trackinfo: [
+                    { "id": 111, "title_link": "/track/first-song" },
+                    { "id": 222, "title_link": "/track/second-song" }
+                ]
+            };
+        "#;
+        let map = extract_album_track_ids(html);
+        assert_eq!(map.get("/track/first-song"), Some(&"111".to_string()));
+        assert_eq!(map.get("/track/second-song"), Some(&"222".to_string()));
     }
 }

@@ -18,10 +18,16 @@
     }
 }
 
-.searchBar {
+.middleSection {
     position: absolute;
-    inset: 0; /* Shorthand for top, bottom, left, right: 0 */
-    margin: auto; /* Perfectly centers the element horizontally and vertically */
-    /*width: fit-content;*/
-    height: fit-content; /* Give it a size or let it wrap content */
+    inset: 0;
+    width: fit-content;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: auto;
+}
+
+.searchBar {
+    height: fit-content;
 }

@@ -91,7 +91,10 @@ export const Header = () => {
         </Dropdown.Item>
       </Dropdown.Root>
 
-      <SearchBar className={styles.searchBar} />
+      <div className={styles.middleSection}>
+        <SearchBar className={styles.searchBar} />
+        <button>downloads</button>
+      </div>
       <WindowControls />
     </header>
   );

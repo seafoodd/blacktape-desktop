@@ -111,7 +111,22 @@ impl Database {
                 canonical_track_slug, canonical_album_slug, quality_tier
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(path) DO UPDATE SET title = excluded.title",
+             ON CONFLICT(path) DO UPDATE SET
+                title = excluded.title,
+                artists = excluded.artists,
+                album_artist = excluded.album_artist,
+                album = excluded.album,
+                track_number = excluded.track_number,
+                duration_ms = excluded.duration_ms,
+                cover_url = excluded.cover_url,
+                genre = excluded.genre,
+                release_year = excluded.release_year,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                source_item_id = excluded.source_item_id,
+                canonical_track_slug = excluded.canonical_track_slug,
+                canonical_album_slug = excluded.canonical_album_slug,
+                quality_tier = excluded.quality_tier",
         )
         .bind(&song.path)
         .bind(&song.title)
@@ -162,6 +177,9 @@ impl Database {
                     release_year = excluded.release_year,
                     source = excluded.source,
                     source_url = excluded.source_url,
+                    source_item_id = excluded.source_item_id,
+                    canonical_track_slug = excluded.canonical_track_slug,
+                    canonical_album_slug = excluded.canonical_album_slug,
                     quality_tier = excluded.quality_tier
                 ",
             )
