@@ -235,6 +235,7 @@ async fn download_track_internal(
 ) -> Option<PathBuf> {
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
     let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
+    let is_bandcamp = track.url.contains("bandcamp.com");
 
     let mut args = vec![
         "--ignore-errors".to_string(),
@@ -259,6 +260,20 @@ async fn download_track_internal(
             "0".to_string(), // Ensures maximum VBR quality if ffmpeg runs
             "--extractor-args".to_string(),
             "youtube:player-client=web_embedded,web,tv".to_string(), // Fixed client to eliminate 403 / low-bitrate lockouts
+            "--cookies-from-browser".to_string(),
+            ctx.cookie_arg.clone(),
+        ]);
+    } else if is_bandcamp {
+        args.extend(vec![
+            "-f".to_string(),
+            "flac/alac/wav/aiff-lossless/mp3-320/mp3-v0/aac-hi/vorbis/bestaudio/best".to_string(),
+            "--format-sort".to_string(),
+            "hasaud,ext:flac:wav:alac:mp3,abr".to_string(),
+            "--extract-audio".to_string(),
+            "--audio-format".to_string(),
+            "best".to_string(),
+            "--audio-quality".to_string(),
+            "0".to_string(),
             "--cookies-from-browser".to_string(),
             ctx.cookie_arg.clone(),
         ]);
