@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
@@ -182,6 +183,8 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 4;
 
 #[derive(Clone)]
 struct DownloadContext {
+    app: AppHandle,
+    task_id: String,
     binary_path: PathBuf,
     cookie_arg: String,
     temp_dir: PathBuf,
@@ -193,6 +196,7 @@ impl DownloadContext {
         app: &AppHandle,
         output_dir: &str,
         session_prefix: &str,
+        task_id: &str,
     ) -> Result<Self, String> {
         let binary_path = get_path(app);
         if !binary_path.exists() {
@@ -206,10 +210,22 @@ impl DownloadContext {
             .as_millis();
         let session_id = format!("{}_{}", session_prefix, timestamp);
 
-        let temp_dir = PathBuf::from(output_dir).join(".temp").join(&session_id);
+        let temp_root = PathBuf::from(output_dir).join(".temp");
+        let _ = tokio::fs::create_dir_all(&temp_root).await;
+        let _ = crate::utils::set_hidden(&temp_root, true);
+
+        let temp_dir = temp_root.join(&session_id);
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .map_err(|e| e.to_string())?;
+
+        if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
+            if registry.is_cancelled(task_id).await {
+                let _ = crate::utils::force_remove_dir_all(&temp_dir);
+                return Err("Task cancelled".into());
+            }
+            registry.set_temp_dir(task_id, temp_dir.clone()).await;
+        }
 
         let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let edge_profile_path = app_data_dir
@@ -219,12 +235,26 @@ impl DownloadContext {
         let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
 
         Ok(Self {
+            app: app.clone(),
+            task_id: task_id.to_string(),
             binary_path,
             cookie_arg,
             temp_dir,
             session_id,
         })
     }
+}
+
+fn parse_download_percent(line: &str) -> Option<i32> {
+    let parts: Vec<&str> = line.split('%').collect();
+    if parts.len() >= 2 {
+        let before_pct = parts[0];
+        let word = before_pct.split_whitespace().last()?;
+        if let Ok(val) = word.parse::<f32>() {
+            return Some(val.round() as i32);
+        }
+    }
+    None
 }
 
 async fn download_track_internal(
@@ -281,6 +311,7 @@ async fn download_track_internal(
         args.extend(vec!["-f".to_string(), "bestaudio/best".to_string()]);
     }
 
+    args.push("--newline".to_string());
     args.push(track.url.clone());
 
     println!(
@@ -292,8 +323,17 @@ async fn download_track_internal(
         args.join(" ")
     );
 
+    if let Some(registry) = ctx.app.try_state::<crate::download::TaskRegistry>() {
+        if registry.is_cancelled(&ctx.task_id).await {
+            return None;
+        }
+    }
+
     let mut cmd = Command::new(&ctx.binary_path);
     cmd.args(&args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     #[cfg(target_os = "windows")]
     {
@@ -301,8 +341,8 @@ async fn download_track_internal(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = match cmd.output().await {
-        Ok(out) => out,
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
         Err(err) => {
             eprintln!(
                 "[yt-dlp ERROR] [{}] [Track {}/{}] Process failed to execute: {}",
@@ -312,29 +352,120 @@ async fn download_track_internal(
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let pid = child.id();
+    if let (Some(registry), Some(p)) = (ctx.app.try_state::<crate::download::TaskRegistry>(), pid) {
+        registry.register_pid(&ctx.task_id, p).await;
+        if registry.is_cancelled(&ctx.task_id).await {
+            let _ = child.kill().await;
+            return None;
+        }
+    }
 
-    if !output.status.success() {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let app_handle = ctx.app.clone();
+    let task_id = ctx.task_id.clone();
+    let track_title = track.title.clone();
+    let track_index = track_num - 1;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut lines_acc = Vec::new();
+        if let Some(stdout) = stdout {
+            let mut reader = tokio::io::BufReader::new(stdout).lines();
+            let mut last_pct: i32 = -1;
+            while let Ok(Some(line)) = reader.next_line().await {
+                if line.contains("[download]") && line.contains('%') {
+                    if let Some(pct) = parse_download_percent(&line) {
+                        let pct_int = pct.clamp(0, 100);
+                        if pct_int != last_pct {
+                            last_pct = pct_int;
+                            if let Some(registry) =
+                                app_handle.try_state::<crate::download::TaskRegistry>()
+                            {
+                                registry
+                                    .update_track_progress(
+                                        &task_id,
+                                        track_index,
+                                        &track_title,
+                                        pct_int,
+                                    )
+                                    .await;
+                            }
+                            let _ = app_handle.emit(
+                                "download-track-progress",
+                                serde_json::json!({
+                                    "task_id": task_id,
+                                    "track_index": track_index,
+                                    "track_title": track_title,
+                                    "percent": pct_int,
+                                }),
+                            );
+                        }
+                    }
+                }
+                lines_acc.push(line);
+            }
+        }
+        lines_acc.join("\n")
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut lines_acc = Vec::new();
+        if let Some(stderr) = stderr {
+            let mut reader = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                lines_acc.push(line);
+            }
+        }
+        lines_acc.join("\n")
+    });
+
+    let status = match child.wait().await {
+        Ok(s) => {
+            if let (Some(registry), Some(p)) =
+                (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
+            {
+                registry.unregister_pid(&ctx.task_id, p).await;
+            }
+            s
+        }
+        Err(err) => {
+            if let (Some(registry), Some(p)) =
+                (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
+            {
+                registry.unregister_pid(&ctx.task_id, p).await;
+            }
+            eprintln!(
+                "[yt-dlp ERROR] [{}] [Track {}/{}] Wait error: {}",
+                ctx.session_id, track_num, total_tracks, err
+            );
+            return None;
+        }
+    };
+
+    let stdout_str = stdout_task.await.unwrap_or_default();
+    let stderr_str = stderr_task.await.unwrap_or_default();
+
+    if !status.success() {
         eprintln!(
             "[yt-dlp ERROR] [{}] [Track {}/{}] Exited with code {:?}\n--- STDERR ---\n{}\n--- STDOUT ---\n{}",
             ctx.session_id,
             track_num,
             total_tracks,
-            output.status.code(),
-            stderr.trim(),
-            stdout.trim()
+            status.code(),
+            stderr_str.trim(),
+            stdout_str.trim()
         );
         return None;
     }
 
-    if !stderr.trim().is_empty() {
+    if !stderr_str.trim().is_empty() {
         println!(
             "[yt-dlp LOG] [{}] [Track {}/{}] Warnings/Info:\n{}",
             ctx.session_id,
             track_num,
             total_tracks,
-            stderr.trim()
+            stderr_str.trim()
         );
     }
 
@@ -361,7 +492,7 @@ pub async fn download_batch(
     task_id: &str,
 ) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
     let now = Instant::now();
-    let ctx = Arc::new(DownloadContext::prepare(app, output_dir, "batch").await?);
+    let ctx = Arc::new(DownloadContext::prepare(app, output_dir, "batch", task_id).await?);
 
     println!(
         "[yt-dlp] [{}] Starting batch of {} tracks. Output temp dir: {:?}",
@@ -370,11 +501,48 @@ pub async fn download_batch(
         ctx.temp_dir
     );
 
+    if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
+        if registry.is_cancelled(task_id).await {
+            return Err("Task cancelled".into());
+        }
+    }
+
     let total_tracks = tracks.len();
     let completed_counter = Arc::new(AtomicUsize::new(0));
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
 
-    let mut tasks = Vec::new();
+    struct AbortOnDropSet<T: 'static> {
+        inner: tokio::task::JoinSet<T>,
+    }
+
+    impl<T: 'static> AbortOnDropSet<T> {
+        fn new() -> Self {
+            Self {
+                inner: tokio::task::JoinSet::new(),
+            }
+        }
+    }
+
+    impl<T: 'static> std::ops::Deref for AbortOnDropSet<T> {
+        type Target = tokio::task::JoinSet<T>;
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+
+    impl<T: 'static> std::ops::DerefMut for AbortOnDropSet<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.inner
+        }
+    }
+
+    impl<T: 'static> Drop for AbortOnDropSet<T> {
+        fn drop(&mut self) {
+            self.inner.abort_all();
+        }
+    }
+
+    let mut join_set = AbortOnDropSet::new();
 
     for (index, track) in tracks.iter().enumerate() {
         let sem = Arc::clone(&semaphore);
@@ -384,8 +552,21 @@ pub async fn download_batch(
         let ctx = Arc::clone(&ctx);
         let task_id = task_id.to_string();
 
-        tasks.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+        join_set.spawn(async move {
+            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                if registry.is_cancelled(&task_id).await {
+                    return None;
+                }
+            }
+            let _permit = match sem.acquire().await {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
+            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                if registry.is_cancelled(&task_id).await {
+                    return None;
+                }
+            }
 
             let track_num = index + 1;
             let jitter = (index % 4) * 100 + 50;
@@ -403,12 +584,41 @@ pub async fn download_batch(
                 let _ = app_handle.emit(
                     "download-task-progress",
                     ProgressEvent {
-                        task_id,
+                        task_id: task_id.clone(),
                         current,
                         total: total_tracks,
                         track_title: format!("Downloaded {} of {} tracks", current, total_tracks),
                     },
                 );
+
+                let _ = app_handle.emit(
+                    "download-track-progress",
+                    serde_json::json!({
+                        "task_id": task_id,
+                        "track_index": index,
+                        "track_title": track.title.clone(),
+                        "percent": 100,
+                    }),
+                );
+
+                if let Some(registry) =
+                    app_handle.try_state::<crate::download::TaskRegistry>()
+                {
+                    registry
+                        .update_track_progress(&task_id, index, &track.title, 100)
+                        .await;
+                    registry
+                        .update_task_progress(
+                            &task_id,
+                            current,
+                            total_tracks,
+                            &format!(
+                                "Downloaded {} of {} tracks",
+                                current, total_tracks
+                            ),
+                        )
+                        .await;
+                }
 
                 Some((path.clone(), track))
             } else {
@@ -418,19 +628,21 @@ pub async fn download_batch(
                 );
                 None
             }
-        }));
+        });
     }
 
-    let results = futures::future::join_all(tasks).await;
-    let downloaded: Vec<(PathBuf, TrackDownload)> = results
-        .into_iter()
-        .filter_map(|r| {
-            r.unwrap_or_else(|join_err| {
-                eprintln!("[yt-dlp ERROR] Task panic/join error: {}", join_err);
-                None
-            })
-        })
-        .collect();
+    let mut downloaded: Vec<(PathBuf, TrackDownload)> = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok(Some(item)) => downloaded.push(item),
+            Ok(None) => {}
+            Err(join_err) => {
+                if !join_err.is_cancelled() {
+                    eprintln!("[yt-dlp ERROR] Task panic/join error: {}", join_err);
+                }
+            }
+        }
+    }
 
     println!(
         "[yt-dlp SUMMARY] Batch finished. Downloaded {}/{} tracks in {:?}",

@@ -9,5 +9,7 @@ pub mod types;
 pub mod youtube;
 pub mod ytdlp;
 
-pub use queue::{init_queue_worker, DownloadQueue};
+pub use queue::{
+    init_queue_worker, ActiveDownloadState, DownloadQueue, TaskRegistry, TrackProgressState,
+};
 pub use types::*;

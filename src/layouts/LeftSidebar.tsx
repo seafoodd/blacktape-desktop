@@ -12,7 +12,8 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 export const LeftSidebar = () => {
-  const { fetchTabs } = useLibraryStore();
+  const { fetchTabs, initDownloadListeners, setSelectedTab } =
+    useLibraryStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizing, setIsResizing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("library");
@@ -53,10 +54,15 @@ export const LeftSidebar = () => {
   }, [resize, stopResizing]);
 
   useEffect(() => {
+    initDownloadListeners().catch(console.error);
     fetchTabs().catch((e) => {
       console.log("fetch tabs error: ", e);
     });
-  }, []);
+    const currentSelected = useLibraryStore.getState().selectedTab;
+    if (currentSelected) {
+      setSelectedTab(currentSelected);
+    }
+  }, [initDownloadListeners, fetchTabs, setSelectedTab]);
 
   return (
     <aside

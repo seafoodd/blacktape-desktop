@@ -10,11 +10,12 @@ import { Settings } from "@/pages/settings/Settings";
 import Playlist from "@/pages/playlist/Playlist.tsx";
 
 function PlayerView() {
-  const { activeView } = useLibraryStore();
+  const { activeView, initDownloadListeners } = useLibraryStore();
 
   useEffect(() => {
     fetchState();
-  }, []);
+    initDownloadListeners().catch(console.error);
+  }, [initDownloadListeners]);
 
   return (
     <MainLayout

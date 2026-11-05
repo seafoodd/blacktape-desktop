@@ -425,7 +425,7 @@ impl Database {
                 .fetch_optional(&mut *tx)
                 .await?;
 
-        let mut next_position = current_max.unwrap_or(-1) + 1;
+        let mut next_position = current_max.unwrap_or(0) + 1;
 
         for song_id in song_ids {
             sqlx::query(
@@ -461,10 +461,17 @@ impl Database {
 
         let mut tx = self.pool.begin().await?;
 
-        // Sort descending to delete from highest index to lowest.
-        // This prevents the positions of remaining target items from shifting before they are deleted.
-        let mut sorted_positions = positions.to_vec();
+        // If the caller passed 0-based indices (e.g. containing 0), convert to 1-based positions
+        let is_zero_based = positions.iter().any(|&p| p <= 0);
+        let mut sorted_positions: Vec<i64> = if is_zero_based {
+            positions.iter().map(|&p| p + 1).collect()
+        } else {
+            positions.to_vec()
+        };
+
+        // Sort descending to delete from highest position to lowest.
         sorted_positions.sort_unstable_by(|a, b| b.cmp(a));
+        sorted_positions.dedup();
 
         for pos in sorted_positions {
             sqlx::query("DELETE FROM playlist_songs WHERE playlist_id = ? AND position = ?")
@@ -474,21 +481,24 @@ impl Database {
                 .await?;
         }
 
-        // Re-index remaining items to keep positions continuous (0, 1, 2...)
+        // Re-index remaining items to keep positions continuous (1, 2, 3...)
         // Using rowid ensures we uniquely identify the row even if there are duplicate songs.
         let remaining_songs: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT rowid, song_id FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
+            "SELECT rowid, position FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
         )
         .bind(playlist_id)
         .fetch_all(&mut *tx)
         .await?;
 
-        for (new_pos, (row_id, _song_id)) in remaining_songs.iter().enumerate() {
-            sqlx::query("UPDATE playlist_songs SET position = ? WHERE rowid = ?")
-                .bind(new_pos as i64)
-                .bind(row_id)
-                .execute(&mut *tx)
-                .await?;
+        for (idx, (row_id, old_pos)) in remaining_songs.iter().enumerate() {
+            let new_pos = (idx + 1) as i64;
+            if *old_pos != new_pos {
+                sqlx::query("UPDATE playlist_songs SET position = ? WHERE rowid = ?")
+                    .bind(new_pos)
+                    .bind(row_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
         }
 
         sqlx::query("UPDATE playlists SET date_modified = CURRENT_TIMESTAMP WHERE id = ?")
@@ -712,5 +722,113 @@ impl Database {
 
         tx.commit().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_test_db() -> Database {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS playlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                cover_url TEXT,
+                date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
+                date_modified DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS songs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                album_artist TEXT NOT NULL DEFAULT 'Unknown Artist',
+                album TEXT,
+                track_number INTEGER,
+                duration_ms INTEGER NOT NULL,
+                cover_url TEXT,
+                external_cover_url TEXT,
+                source_url TEXT,
+                genre TEXT,
+                release_year INTEGER,
+                date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
+                lyrics TEXT,
+                lyrics_source TEXT,
+                artists TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL DEFAULT 'local',
+                source_item_id TEXT,
+                canonical_track_slug TEXT NOT NULL DEFAULT '',
+                canonical_album_slug TEXT NOT NULL DEFAULT '',
+                quality_tier TEXT NOT NULL DEFAULT 'standard'
+            );
+            CREATE TABLE IF NOT EXISTS playlist_songs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id INTEGER NOT NULL,
+                song_id INTEGER NOT NULL,
+                position INTEGER NOT NULL CHECK (position > 0),
+                date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+                FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+                UNIQUE(playlist_id, position)
+            );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        Database { pool }
+    }
+
+    #[tokio::test]
+    async fn test_add_and_remove_songs_from_playlist() {
+        let db = setup_test_db().await;
+        let playlist_id = db
+            .create_playlist("Test Playlist", None, None)
+            .await
+            .unwrap();
+
+        // Insert mock songs
+        sqlx::query("INSERT INTO songs (path, title, duration_ms) VALUES ('/a.mp3', 'A', 1000), ('/b.mp3', 'B', 2000), ('/c.mp3', 'C', 3000)")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        // Add songs to empty playlist: should have positions 1, 2, 3
+        db.add_songs_to_playlist(playlist_id, &[1, 2, 3])
+            .await
+            .unwrap();
+
+        let songs = db.get_playlist_songs(playlist_id).await.unwrap();
+        assert_eq!(songs.len(), 3);
+
+        // Remove 1st song (passed as 0-based index [0])
+        db.remove_songs_from_playlist(playlist_id, &[0])
+            .await
+            .unwrap();
+
+        let remaining = db.get_playlist_songs(playlist_id).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].title, "B");
+        assert_eq!(remaining[1].title, "C");
+
+        // Verify positions in DB are 1 and 2
+        let positions: Vec<i64> = sqlx::query_scalar(
+            "SELECT position FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
+        )
+        .bind(playlist_id)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(positions, vec![1, 2]);
+
+        // Remove 2nd song (passed as 1-based position [2])
+        db.remove_songs_from_playlist(playlist_id, &[2])
+            .await
+            .unwrap();
+        let remaining_after = db.get_playlist_songs(playlist_id).await.unwrap();
+        assert_eq!(remaining_after.len(), 1);
+        assert_eq!(remaining_after[0].title, "B");
     }
 }

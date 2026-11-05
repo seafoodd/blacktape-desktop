@@ -10,6 +10,7 @@ import {
   useLibraryStore,
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
+import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -283,13 +284,20 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                             <button
                               className={styles.downloadButton}
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => {
-                                startDownload(
-                                  suggestion.platform,
-                                  suggestion.item_type,
-                                  suggestion.item_url_path,
-                                ).catch((e) => {
-                                  console.log("Download error: ", e);
+                              onClick={(e) => {
+                                const rect =
+                                  e.currentTarget.getBoundingClientRect();
+                                flyToLibrary(rect, suggestion.img);
+                                startDownload({
+                                  platform: suggestion.platform,
+                                  downloadType: suggestion.item_type,
+                                  url: suggestion.item_url_path,
+                                  artistName:
+                                    suggestion.band_name || suggestion.name,
+                                  title: suggestion.name,
+                                  coverUrl: suggestion.img,
+                                }).catch((err) => {
+                                  console.log("Download error: ", err);
                                 });
                               }}
                             >
@@ -304,13 +312,15 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                                 activeDownload.status === "downloading" ||
                                 activeDownload.status === "processing") && (
                                 <span>
-                                  {activeDownload.current > 0
-                                    ? Math.round(
-                                        (activeDownload.current /
-                                          activeDownload.total) *
-                                          100,
-                                      )
-                                    : 0}
+                                  {activeDownload.overallPercent !== undefined
+                                    ? activeDownload.overallPercent
+                                    : activeDownload.current > 0
+                                      ? Math.round(
+                                          (activeDownload.current /
+                                            activeDownload.total) *
+                                            100,
+                                        )
+                                      : 0}
                                   %
                                 </span>
                               )}

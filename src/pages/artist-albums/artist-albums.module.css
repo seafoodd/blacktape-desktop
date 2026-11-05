@@ -27,13 +27,92 @@
     min-width: 120px;
 }
 
-.albumCover {
+.albumCover,
+.playlistImage {
     /*max-height: 300px;*/
     /*max-width: 300px;*/
     height: 100%;
     width: 100%;
+    aspect-ratio: 1;
     object-fit: cover;
-    /*display: block;*/
+    display: block;
+    border-radius: var(--radius-sm, 4px);
+}
+
+.downloadingAlbumBlock {
+    position: relative;
+    opacity: 0.65;
+    filter: grayscale(40%);
+    transition: opacity 200ms ease;
+}
+
+.downloadingCoverWrapper {
+    position: relative;
+    width: 100%;
+    max-width: 200px;
+    min-width: 120px;
+    aspect-ratio: 1;
+    border-radius: var(--radius-sm, 4px);
+    overflow: hidden;
+}
+
+.downloadingCoverBadge {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.75);
+    color: var(--color-primary, #1db954);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    backdrop-filter: blur(2px);
+}
+
+.downloadingHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.downloadingOverallBadge {
+    font-size: var(--font-sm, 12px);
+    color: var(--color-primary, #1db954);
+    background: rgba(29, 185, 84, 0.12);
+    border: 1px solid rgba(29, 185, 84, 0.3);
+    padding: 2px 8px;
+    border-radius: var(--radius-full, 9999px);
+    font-weight: 500;
+}
+
+.downloadingSong {
+    cursor: default !important;
+    user-select: none;
+    pointer-events: none;
+
+    &:hover {
+        background-color: transparent !important;
+    }
+}
+
+.trackPercentage {
+    font-size: var(--font-md, 14px);
+    font-weight: 600;
+    min-width: 48px;
+    text-align: right;
+}
+
+.percentCompleted {
+    color: var(--color-primary, #1db954);
+}
+
+.percentActive {
+    color: var(--color-text, #ffffff);
+}
+
+.percentPending {
+    color: var(--color-muted, #888888);
 }
 
 .albumBlockRight {

@@ -2,7 +2,7 @@ import styles from "./search-results.module.css";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
 import { BiDownload, BiPlayCircle } from "react-icons/bi";
-import { invoke } from "@tauri-apps/api/core";
+import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import clsx from "clsx";
 
 const SearchResults = () => {
@@ -13,6 +13,7 @@ const SearchResults = () => {
     activePlatform,
     setActiveCategory,
     setActivePlatform,
+    startDownload,
   } = useLibraryStore();
 
   const filteredResults = committedResults.filter((item) => {
@@ -172,10 +173,15 @@ const SearchResults = () => {
                         className={styles.downloadBtn}
                         onClick={(e) => {
                           e.stopPropagation();
-                          invoke("download", {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          flyToLibrary(rect, album.img);
+                          startDownload({
                             platform: album.platform,
                             downloadType: album.item_type,
                             url: album.item_url_path,
+                            artistName: album.band_name || album.name,
+                            title: album.name,
+                            coverUrl: album.img,
                           }).catch(console.error);
                         }}
                       >
@@ -227,13 +233,18 @@ const SearchResults = () => {
                   <span className={styles.miniBadge}>{track.platform}</span>
                   <button
                     className={styles.trackDownloadBtn}
-                    onClick={() =>
-                      invoke("download", {
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      flyToLibrary(rect, track.img);
+                      startDownload({
                         platform: track.platform,
                         downloadType: track.item_type,
                         url: track.item_url_path,
-                      }).catch(console.error)
-                    }
+                        artistName: track.band_name || "Unknown Artist",
+                        title: track.name,
+                        coverUrl: track.img,
+                      }).catch(console.error);
+                    }}
                   >
                     <BiDownload size={20} />
                   </button>

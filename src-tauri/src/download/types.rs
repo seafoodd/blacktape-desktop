@@ -16,6 +16,29 @@ pub struct ProgressEvent {
     pub track_title: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackMetaItem {
+    pub title: String,
+    pub track_number: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlbumMetaEvent {
+    pub task_id: String,
+    pub title: String,
+    pub artist: String,
+    pub cover_url: Option<String>,
+    pub tracks: Vec<TrackMetaItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackProgressEvent {
+    pub task_id: String,
+    pub track_index: usize,
+    pub track_title: String,
+    pub percent: i32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TrackDownload {
     pub url: String,

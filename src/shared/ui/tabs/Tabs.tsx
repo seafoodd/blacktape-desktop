@@ -36,6 +36,7 @@ export const Tabs = <T extends string>({
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          data-tab-id={tab.id}
           role="tab"
           type="button"
           aria-selected={activeTab === tab.id}

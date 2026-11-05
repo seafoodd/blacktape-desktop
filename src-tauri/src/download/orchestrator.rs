@@ -152,7 +152,7 @@ fn cleanup_staging_dir(downloaded_files: &[(PathBuf, crate::download::types::Tra
     if let Some((first_file, _)) = downloaded_files.first() {
         if let Some(stage_dir) = first_file.parent() {
             if stage_dir.exists() {
-                let _ = fs::remove_dir_all(stage_dir);
+                let _ = crate::utils::force_remove_dir_all(stage_dir);
             }
         }
     }
