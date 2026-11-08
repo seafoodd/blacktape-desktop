@@ -1,5 +1,11 @@
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "./lyrics.module.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -31,6 +37,9 @@ const invokeWithTimeout = async <T,>(
     clearTimeout(timer!);
   }
 };
+
+/** How often the store position is refreshed while timed lyrics are shown. */
+const PROGRESS_POLL_MS = 250;
 
 interface LyricsProps {
   className?: string;
@@ -236,7 +245,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     if (!isPlaying || !parsedLyrics?.isTimed) return;
     const interval = setInterval(() => {
       updateProgress();
-    }, 250);
+    }, PROGRESS_POLL_MS);
 
     return () => clearInterval(interval);
   }, [isPlaying, parsedLyrics?.isTimed, updateProgress]);
@@ -255,6 +264,64 @@ export const Lyrics = ({ className }: LyricsProps) => {
     }
     return found;
   }, [parsedLyrics, currentTimeMs]);
+
+  // End of the active line = start of the next one (or end of the song)
+  const activeLineEndMs = useMemo(() => {
+    if (!parsedLyrics?.isTimed || activeIndex < 0) return 0;
+    const lines = parsedLyrics.lines;
+    return (
+      lines[activeIndex + 1]?.timeMs ??
+      currentSong?.duration_ms ??
+      lines[activeIndex].timeMs ??
+      0
+    );
+  }, [parsedLyrics, activeIndex, currentSong?.duration_ms]);
+
+  // Playback position anchor: the store position is only refreshed every
+  // POLL_MS, so between polls we extrapolate with performance.now().
+  const anchorRef = useRef({ pos: 0, at: 0 });
+  useEffect(() => {
+    anchorRef.current = { pos: currentTimeMs, at: performance.now() };
+  }, [currentTimeMs]);
+
+  // Drive the "karaoke" fill of the active line (or its words) every frame.
+  // Words can be shorter than the poll interval, so a CSS transition between
+  // polls can't keep up; computing the fill from real time can.
+  useLayoutEffect(() => {
+    const root = activeLineRef.current;
+    if (!root) return;
+    const items = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-fill-start]"),
+    ).map((el) => ({
+      el,
+      start: Number(el.dataset.fillStart),
+      end: Number(el.dataset.fillEnd),
+    }));
+    if (items.length === 0) return;
+
+    let raf = 0;
+    let last = 0;
+    const apply = () => {
+      const { pos, at } = anchorRef.current;
+      let now = isPlaying ? pos + (performance.now() - at) : pos;
+      // Keep monotonic across polls that land slightly behind the extrapolation
+      // (but let real seeks backwards through).
+      if (now < last && last - now < 300) now = last;
+      last = now;
+      for (const { el, start, end } of items) {
+        const pct =
+          end <= start
+            ? now >= start
+              ? 100
+              : 0
+            : Math.min(Math.max((now - start) / (end - start), 0), 1) * 100;
+        el.style.setProperty("--p", `${pct}%`);
+      }
+      if (isPlaying) raf = requestAnimationFrame(apply);
+    };
+    apply();
+    return () => cancelAnimationFrame(raf);
+  }, [activeIndex, parsedLyrics, isPlaying, activeLineEndMs]);
 
   // Handle user manual scrolling: pause auto-scroll temporarily
   const handleScroll = () => {
@@ -338,11 +405,43 @@ export const Lyrics = ({ className }: LyricsProps) => {
                     [styles.emptyTimedLine]: isTimed && isEmpty,
                   })}
                 >
-                  {isTimed
-                    ? isEmpty
-                      ? "♫"
-                      : line.text.trim()
-                    : line.text.trim() || "\u00A0"}
+                  {isActive && line.words && line.words.length > 0 ? (
+                    // Word-level timing (Enhanced LRC / richsync): each word fills on its own beat
+                    <span className={clsx(styles.lineText, styles.wordMode)}>
+                      {line.words.map((word, wi, words) => {
+                        const end =
+                          word.endMs ?? words[wi + 1]?.startMs ?? activeLineEndMs;
+                        return (
+                          <span key={wi}>
+                            {wi > 0 && " "}
+                            <span
+                              className={styles.lineWord}
+                              data-fill-start={word.startMs}
+                              data-fill-end={end}
+                            >
+                              {word.text}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </span>
+                  ) : (
+                    <span
+                      className={styles.lineText}
+                      {...(isActive
+                        ? {
+                            "data-fill-start": line.timeMs ?? 0,
+                            "data-fill-end": activeLineEndMs,
+                          }
+                        : {})}
+                    >
+                      {isTimed
+                        ? isEmpty
+                          ? "♫"
+                          : line.text.trim()
+                        : line.text.trim() || " "}
+                    </span>
+                  )}
                 </div>
               );
             })}

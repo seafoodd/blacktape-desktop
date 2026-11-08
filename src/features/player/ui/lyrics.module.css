@@ -45,6 +45,8 @@
     color: var(--color-muted);
     opacity: 0.5;
     padding: 6px 10px;
+    max-width: fit-content;
+
 
     &:hover {
         opacity: 0.85;
@@ -60,9 +62,30 @@
     color: var(--color-text);
     font-weight: 700;
     opacity: 1;
-    transform: scale(1.02);
-    transform-origin: left center;
+    /*transform: scale(1.02);*/
+    /*transform-origin: left center;*/
     background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Karaoke-style: the active line's text is recolored left to right.
+   --p is the fill progress, updated every frame from Lyrics.tsx. */
+@property --p {
+    syntax: '<percentage>';
+    inherits: false;
+    initial-value: 0%;
+}
+
+.activeLine .lineText:not(.wordMode),
+.activeLine .lineWord {
+    background: linear-gradient(
+        90deg,
+        var(--color-text) var(--p),
+        color-mix(in srgb, var(--color-muted) 70%, transparent) var(--p)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
 }
 
 .passedLine {
