@@ -45,3 +45,43 @@
     background-color: var(--color-border);
     margin: 4px 0;
 }
+.submenuWrap {
+    position: relative;
+}
+
+/* same arrow as the header Dropdown submenu */
+.arrow {
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    margin-right: -12px;
+}
+
+/* flyout: reuses .menu styling. The parent menu has 4px padding + 1px border, so
+   5px puts the flyout flush against the menu's outer edge; 4px more is a visual gap.
+   The first flyout item lines up with the parent item. */
+.submenu {
+    position: absolute;
+    top: -5px;
+    left: calc(100% + 9px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* invisible bridge over the gap so the pointer can travel into the flyout */
+.submenu::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -10px;
+    width: 10px;
+}
+
+.submenuFlip {
+    left: auto;
+    right: calc(100% + 9px);
+}
+
+.submenuFlip::before {
+    left: auto;
+    right: -10px;
+}

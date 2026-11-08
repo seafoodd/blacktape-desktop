@@ -1,0 +1,89 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 460px;
+    max-width: 90vw;
+    box-sizing: border-box;
+}
+
+.title {
+    font-size: var(--font-xl);
+    color: var(--color-text);
+    margin: 0;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: var(--font-sm);
+    color: var(--color-muted);
+
+    input {
+        padding: 8px 10px;
+        background-color: var(--color-background);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm, 6px);
+        color: var(--color-text);
+        font-size: var(--font-md);
+        outline: none;
+        transition: border-color 0.15s ease;
+
+        &:focus {
+            border-color: var(--color-primary);
+        }
+    }
+}
+
+.tip {
+    margin: 0;
+    font-size: var(--font-xs, 0.75rem);
+    color: var(--color-muted);
+}
+
+.error {
+    font-size: var(--font-md);
+    color: var(--color-error);
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.cancelButton {
+    background: none;
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    padding: 8px 16px;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+    font-size: var(--font-sm);
+
+    &:hover:not(:disabled) {
+        background-color: var(--color-border);
+    }
+}
+
+.saveButton {
+    background-color: var(--color-primary);
+    border: none;
+    color: #ffffff;
+    padding: 8px 20px;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+    font-size: var(--font-sm);
+    font-weight: 500;
+
+    &:hover:not(:disabled) {
+        opacity: 0.9;
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+}
