@@ -48,9 +48,8 @@
 
 .downloadingCoverWrapper {
     position: relative;
-    width: 100%;
-    max-width: 200px;
-    min-width: 120px;
+    width: 200px;
+    flex-shrink: 0;
     aspect-ratio: 1;
     border-radius: var(--radius-sm, 4px);
     overflow: hidden;
@@ -63,7 +62,7 @@
     right: 0;
     padding: 4px 8px;
     background: rgba(0, 0, 0, 0.75);
-    color: var(--color-primary, #1db954);
+    color: var(--color-primary);
     font-size: 11px;
     font-weight: 600;
     text-align: center;
@@ -78,9 +77,9 @@
 
 .downloadingOverallBadge {
     font-size: var(--font-sm, 12px);
-    color: var(--color-primary, #1db954);
-    background: rgba(29, 185, 84, 0.12);
-    border: 1px solid rgba(29, 185, 84, 0.3);
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
     padding: 2px 8px;
     border-radius: var(--radius-full, 9999px);
     font-weight: 500;
@@ -104,7 +103,7 @@
 }
 
 .percentCompleted {
-    color: var(--color-primary, #1db954);
+    color: var(--color-primary);
 }
 
 .percentActive {

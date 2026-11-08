@@ -6,6 +6,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import clsx from "clsx";
 import { Song } from "@/shared/types.ts";
+import { decodeHtmlEntities } from "@/shared/lib/html.ts";
 import SongListItem from "@/features/library/ui/song-list-item/SongListItem.tsx";
 
 const ArtistAlbums = () => {
@@ -80,7 +81,7 @@ const ArtistAlbums = () => {
             <div className={styles.albumBlockRight}>
               <div className={styles.downloadingHeader}>
                 <h2 className={clsx(styles.albumTitle, "truncate")}>
-                  {download.albumTitle}
+                  {decodeHtmlEntities(download.albumTitle)}
                 </h2>
                 <span className={styles.downloadingOverallBadge}>
                   {download.overallPercent}%
@@ -101,7 +102,7 @@ const ArtistAlbums = () => {
                           )}
                         </div>
                         <div className={clsx(styles.songTitle, "truncate")}>
-                          {track.title}
+                          {decodeHtmlEntities(track.title)}
                         </div>
                       </div>
                       <div className={styles.songRight}>
