@@ -10,6 +10,7 @@ pub mod song_edit;
 mod search;
 pub mod tags;
 mod thumbs;
+pub mod trash;
 pub mod types;
 pub mod utils;
 
@@ -74,8 +75,12 @@ async fn scan_music(
             .map_err(|e| e.to_string())?;
     }
 
-    let songs = scan::scan_music_dir(dir, &covers_path);
+    let songs = scan::scan_music_dir(dir.clone(), &covers_path);
     db.insert_songs(songs.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    // The trash folder lives inside the library dir, so the backend needs to know it (D11).
+    db.set_app_setting(trash::LIBRARY_DIR_KEY, &dir)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -642,6 +647,7 @@ pub fn run() {
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
             let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
             app.manage(tokio::sync::Mutex::new(db));
+            trash::spawn_auto_clean(app_handle.clone());
 
             let updater_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -744,6 +750,14 @@ pub fn run() {
             add_songs_to_playlist,
             remove_songs_from_playlist,
             reorder_playlist_song,
+            // Trash
+            trash::trash_songs,
+            trash::list_trash,
+            trash::restore_trash,
+            trash::delete_trash,
+            trash::empty_trash,
+            trash::get_trash_settings,
+            trash::set_trash_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,7 @@
+use crate::db::schema::TRASH_SCHEMA_SQL;
 use crate::lyrics::LyricsSource;
 use crate::types::{Album, ArtistSummary, Playlist, Song};
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Error;
 
 pub struct Database {
@@ -12,7 +13,12 @@ impl Database {
         let pool = SqlitePool::connect(&format!("sqlite:{db_path}"))
             .await
             .expect("Failed to connect to database");
-        Self { pool }
+        let db = Self { pool };
+        // The trash tables must exist before the first scan writes `library_dir`.
+        db.ensure_trash_schema()
+            .await
+            .expect("Failed to create trash tables");
+        db
     }
 
     pub async fn get_all_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
@@ -758,11 +764,264 @@ impl Database {
     }
 }
 
+/// A row of `trash_items`; see `trash.rs` for what each field means.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TrashRow {
+    pub id: i64,
+    pub song_json: String,
+    pub original_path: String,
+    pub trash_path: String,
+    pub size_bytes: i64,
+    pub trashed_at: i64,
+}
+
+/// Inserts a full song row with an explicit id (`None` lets SQLite pick one).
+async fn insert_song_tx(
+    conn: &mut SqliteConnection,
+    song: &Song,
+    id: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO songs (
+            id, path, title, artists, album_artist, album, track_number,
+            duration_ms, cover_url, external_cover_url, genre, release_year,
+            lyrics, lyrics_source, source, source_url, source_item_id,
+            canonical_track_slug, canonical_album_slug, quality_tier
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(path) DO UPDATE SET
+            title = excluded.title,
+            artists = excluded.artists,
+            album_artist = excluded.album_artist,
+            album = excluded.album,
+            track_number = excluded.track_number,
+            duration_ms = excluded.duration_ms,
+            cover_url = excluded.cover_url,
+            genre = excluded.genre,
+            release_year = excluded.release_year,
+            source = excluded.source,
+            source_url = excluded.source_url,
+            source_item_id = excluded.source_item_id,
+            canonical_track_slug = excluded.canonical_track_slug,
+            canonical_album_slug = excluded.canonical_album_slug,
+            quality_tier = excluded.quality_tier",
+    )
+    .bind(id)
+    .bind(&song.path)
+    .bind(&song.title)
+    .bind(sqlx::types::Json(&song.artists))
+    .bind(&song.album_artist)
+    .bind(&song.album)
+    .bind(song.track_number)
+    .bind(song.duration_ms as i64)
+    .bind(&song.cover_url)
+    .bind(&song.external_cover_url)
+    .bind(&song.genre)
+    .bind(song.release_year)
+    .bind(&song.lyrics)
+    .bind(&song.lyrics_source)
+    .bind(song.source)
+    .bind(&song.source_url)
+    .bind(&song.source_item_id)
+    .bind(&song.canonical_track_slug)
+    .bind(&song.canonical_album_slug)
+    .bind(song.quality_tier)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Renumbers a playlist's positions to 1, 2, 3... (keeps the same order). Ascending
+/// processing is safe because every new position is <= the old one.
+async fn reindex_playlist_tx(
+    conn: &mut SqliteConnection,
+    playlist_id: i64,
+) -> Result<(), sqlx::Error> {
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT rowid, position FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
+    )
+    .bind(playlist_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    for (idx, (row_id, old_pos)) in rows.iter().enumerate() {
+        let new_pos = (idx + 1) as i64;
+        if *old_pos != new_pos {
+            sqlx::query("UPDATE playlist_songs SET position = ? WHERE rowid = ?")
+                .bind(new_pos)
+                .bind(row_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+
+    sqlx::query("UPDATE playlists SET date_modified = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(playlist_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Removes a song row and its playlist links, then closes the gaps in those playlists (D6).
+async fn detach_song_tx(conn: &mut SqliteConnection, song_id: i64) -> Result<(), sqlx::Error> {
+    let playlist_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT DISTINCT playlist_id FROM playlist_songs WHERE song_id = ?")
+            .bind(song_id)
+            .fetch_all(&mut *conn)
+            .await?;
+
+    sqlx::query("DELETE FROM playlist_songs WHERE song_id = ?")
+        .bind(song_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM songs WHERE id = ?")
+        .bind(song_id)
+        .execute(&mut *conn)
+        .await?;
+
+    for playlist_id in playlist_ids {
+        reindex_playlist_tx(&mut *conn, playlist_id).await?;
+    }
+    Ok(())
+}
+
+impl Database {
+    /// Creates the trash tables if they are missing (D10). Safe to run repeatedly.
+    pub async fn ensure_trash_schema(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(TRASH_SCHEMA_SQL).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_app_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    pub async fn set_app_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Oldest first (trashed_at ASC, id ASC).
+    pub async fn list_trash_rows(&self) -> Result<Vec<TrashRow>, sqlx::Error> {
+        sqlx::query_as::<_, TrashRow>(
+            "SELECT id, song_json, original_path, trash_path, size_bytes, trashed_at
+             FROM trash_items
+             ORDER BY trashed_at ASC, id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_trash_row(&self, id: i64) -> Result<Option<TrashRow>, sqlx::Error> {
+        sqlx::query_as::<_, TrashRow>(
+            "SELECT id, song_json, original_path, trash_path, size_bytes, trashed_at
+             FROM trash_items
+             WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn delete_trash_item(&self, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM trash_items WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Removes the song's row and playlist links and records its trash item, in one
+    /// transaction. Returns the new trash item id. The file itself is moved by the caller.
+    pub async fn move_song_to_trash(
+        &self,
+        song_id: i64,
+        song_json: &str,
+        original_path: &str,
+        trash_path: &str,
+        size_bytes: i64,
+        trashed_at: i64,
+    ) -> Result<i64, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        detach_song_tx(&mut *tx, song_id).await?;
+        let result = sqlx::query(
+            "INSERT INTO trash_items (song_json, original_path, trash_path, size_bytes, trashed_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(song_json)
+        .bind(original_path)
+        .bind(trash_path)
+        .bind(size_bytes)
+        .bind(trashed_at)
+        .execute(&mut *tx)
+        .await?;
+        let trash_id = result.last_insert_rowid();
+        tx.commit().await?;
+        Ok(trash_id)
+    }
+
+    /// Removes a song whose file is already gone: its row and playlist links only.
+    pub async fn remove_song_rows(&self, song_id: i64) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        detach_song_tx(&mut *tx, song_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Re-inserts a restored song and deletes its trash item in one transaction. The
+    /// song keeps its old id when that id is free, otherwise SQLite assigns a new one
+    /// (D16). Returns the id the song has in the library now.
+    pub async fn restore_trashed_song(
+        &self,
+        song: &Song,
+        trash_id: i64,
+    ) -> Result<i64, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let explicit_id = match song.id {
+            Some(id) => {
+                let taken: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM songs WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                (taken == 0).then_some(id)
+            }
+            None => None,
+        };
+
+        insert_song_tx(&mut *tx, song, explicit_id).await?;
+
+        // An upsert on an existing path keeps that row's id, so look the id up by path.
+        let id: i64 = sqlx::query_scalar("SELECT id FROM songs WHERE path = ?")
+            .bind(&song.path)
+            .fetch_one(&mut *tx)
+            .await?;
+
+        sqlx::query("DELETE FROM trash_items WHERE id = ?")
+            .bind(trash_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(id)
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    async fn setup_test_db() -> Database {
+    pub(crate) async fn setup_test_db() -> Database {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS playlists (

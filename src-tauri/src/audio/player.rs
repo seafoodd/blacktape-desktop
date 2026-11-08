@@ -290,6 +290,11 @@ impl AudioPlayer {
         self.update_current_metadata();
     }
 
+    /// Id of the loaded (current) song, if any.
+    pub fn current_song_id(&self) -> Option<i64> {
+        self.current_song.as_ref().and_then(|s| s.id)
+    }
+
     pub fn toggle(&mut self) {
         if self.is_paused() {
             self.resume();
