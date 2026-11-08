@@ -1,9 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WindowControls } from "@/layouts/WindowControls";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
 import { pickFolder } from "@/shared/lib/dialog.ts";
 import { scanMusic } from "@/shared/lib/audio.ts";
+import {
+  MAX_SIZE_OPTIONS,
+  RETENTION_OPTIONS,
+  getTrashSettings,
+  gbToMb,
+  mbToGb,
+  setTrashSettings,
+  type TrashSettings,
+} from "@/shared/lib/trash.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import styles from "./settings.module.css";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -25,6 +34,32 @@ export const Settings = () => {
   const [libraryDir, setLibraryDir] = useState<string>(() => {
     return localStorage.getItem("library_dir") || "Not set";
   });
+
+  const [trashConfig, setTrashConfig] = useState<TrashSettings | null>(null);
+
+  useEffect(() => {
+    getTrashSettings()
+      .then(setTrashConfig)
+      .catch((err) => console.error("Failed to load trash settings:", err));
+  }, []);
+
+  async function handleTrashSettingChange(next: TrashSettings) {
+    const previous = trashConfig;
+    setTrashConfig(next);
+    try {
+      await setTrashSettings(next.retention_days, next.max_size_mb);
+    } catch (err) {
+      console.error("Failed to save trash settings:", err);
+      setTrashConfig(previous);
+    }
+  }
+
+  // A stored limit that is not one of the offered whole-GB steps (for example
+  // set outside this UI) gets its own option so the select never goes blank.
+  const maxSizeMb = trashConfig?.max_size_mb ?? null;
+  const maxSizeIsCustom =
+    maxSizeMb !== null &&
+    !MAX_SIZE_OPTIONS.some((o) => o.gb !== null && gbToMb(o.gb) === maxSizeMb);
 
   async function handleChangeFolder() {
     const dir = await pickFolder();
@@ -140,6 +175,7 @@ export const Settings = () => {
           )}
 
           {activeTab === "library" && (
+            <>
             <section className={styles.section}>
               <h2>Library</h2>
               <div className={styles.settingRowStart}>
@@ -169,6 +205,83 @@ export const Settings = () => {
                 <input type="checkbox" disabled={true} />
               </div>
             </section>
+
+            <section className={styles.section}>
+              <h2>Trash</h2>
+              <div className={styles.settingRow}>
+                <label htmlFor="trash-retention-select">Delete items after</label>
+                <select
+                  id="trash-retention-select"
+                  className={styles.select}
+                  disabled={!trashConfig}
+                  value={
+                    trashConfig?.retention_days === null
+                      ? "never"
+                      : String(trashConfig?.retention_days ?? "")
+                  }
+                  onChange={(e) =>
+                    trashConfig &&
+                    handleTrashSettingChange({
+                      ...trashConfig,
+                      retention_days:
+                        e.target.value === "never"
+                          ? null
+                          : Number(e.target.value),
+                    })
+                  }
+                >
+                  {RETENTION_OPTIONS.map((o) => (
+                    <option
+                      key={o.label}
+                      value={o.days === null ? "never" : String(o.days)}
+                    >
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={styles.settingRow}>
+                <label htmlFor="trash-size-select">Maximum Trash size</label>
+                <select
+                  id="trash-size-select"
+                  className={styles.select}
+                  disabled={!trashConfig}
+                  value={
+                    !trashConfig
+                      ? ""
+                      : maxSizeMb === null
+                        ? "unlimited"
+                        : maxSizeIsCustom
+                          ? "custom"
+                          : String(mbToGb(maxSizeMb))
+                  }
+                  onChange={(e) => {
+                    if (!trashConfig || e.target.value === "custom") return;
+                    handleTrashSettingChange({
+                      ...trashConfig,
+                      max_size_mb:
+                        e.target.value === "unlimited"
+                          ? null
+                          : gbToMb(Number(e.target.value)),
+                    });
+                  }}
+                >
+                  {maxSizeIsCustom && (
+                    <option value="custom">Custom ({maxSizeMb} MB)</option>
+                  )}
+                  {MAX_SIZE_OPTIONS.map((o) => (
+                    <option
+                      key={o.label}
+                      value={o.gb === null ? "unlimited" : String(o.gb)}
+                    >
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </section>
+            </>
           )}
         </main>
       </div>

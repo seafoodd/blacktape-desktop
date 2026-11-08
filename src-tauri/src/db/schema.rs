@@ -1,5 +1,23 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+/// Trash tables (D10). Idempotent, so it runs both as migration 6 and from
+/// `Database::ensure_trash_schema()` (the app DB is also opened by sqlx directly).
+pub const TRASH_SCHEMA_SQL: &str = "
+    CREATE TABLE IF NOT EXISTS trash_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        song_json TEXT NOT NULL,
+        original_path TEXT NOT NULL,
+        trash_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        trashed_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+";
+
 pub fn get_migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -74,6 +92,12 @@ pub fn get_migrations() -> Vec<Migration> {
 
                 CREATE INDEX IF NOT EXISTS idx_playlist_songs_position ON playlist_songs(playlist_id, position);
             ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "create trash items and app settings tables",
+            sql: TRASH_SCHEMA_SQL,
             kind: MigrationKind::Up,
         },
     ]

@@ -74,6 +74,10 @@
     overflow-y: auto;
 }
 
+.section + .section {
+    margin-top: 28px;
+}
+
 .section h2 {
     font-size: var(--font-sm);
     text-transform: uppercase;

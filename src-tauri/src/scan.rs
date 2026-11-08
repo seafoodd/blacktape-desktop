@@ -1,3 +1,4 @@
+use crate::trash::TRASH_DIR_NAME;
 use crate::types::{Platform, QualityTier, Song};
 use crate::utils::{determine_quality, make_canonical_slug};
 use dashmap::{DashMap, DashSet};
@@ -7,20 +8,24 @@ use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64 as hash64;
 
-pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
-    if !covers_dir.exists() {
-        let _ = fs::create_dir_all(covers_dir);
-    }
-
-    let dir_covers: Arc<DashMap<PathBuf, Option<String>>> = Arc::new(DashMap::new());
-    let written_hashes: Arc<DashSet<String>> = Arc::new(DashSet::new());
-
-    let entries: Vec<PathBuf> = WalkDir::new(&dir)
+/// Audio files under `dir`, skipping every directory named like the trash folder (D18).
+pub fn collect_audio_paths(dir: &str) -> Vec<PathBuf> {
+    WalkDir::new(dir)
+        .process_read_dir(|_depth, _path, _state, children| {
+            // Pruned before descending, so trashed files are never even opened.
+            children.retain(|entry| match entry {
+                Ok(e) => {
+                    !(e.file_type().is_dir() && e.file_name() == OsStr::new(TRASH_DIR_NAME))
+                }
+                Err(_) => true,
+            });
+        })
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
@@ -32,7 +37,18 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
                 "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aiff" | "opus"
             )
         })
-        .collect();
+        .collect()
+}
+
+pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
+    if !covers_dir.exists() {
+        let _ = fs::create_dir_all(covers_dir);
+    }
+
+    let dir_covers: Arc<DashMap<PathBuf, Option<String>>> = Arc::new(DashMap::new());
+    let written_hashes: Arc<DashSet<String>> = Arc::new(DashSet::new());
+
+    let entries: Vec<PathBuf> = collect_audio_paths(&dir);
 
     println!(
         "[Scanner] Found {} matching files by extension on disk. Inspecting containers...",
@@ -395,4 +411,38 @@ fn parse_artists(raw_artist: &str) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"x").unwrap();
+    }
+
+    #[test]
+    fn collect_audio_paths_skips_trash_folder_at_any_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("keep.mp3"));
+        touch(&root.join("Artist").join("Album").join("song.flac"));
+        touch(&root.join(TRASH_DIR_NAME).join("gone.mp3"));
+        touch(
+            &root
+                .join("Artist")
+                .join(TRASH_DIR_NAME)
+                .join("nested.mp3"),
+        );
+        touch(&root.join("Artist").join("notes.txt"));
+
+        let mut found: Vec<String> = collect_audio_paths(&root.to_string_lossy())
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        found.sort();
+
+        assert_eq!(found, vec!["keep.mp3".to_string(), "song.flac".to_string()]);
+    }
 }
