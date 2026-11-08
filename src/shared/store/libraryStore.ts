@@ -45,7 +45,11 @@ export interface StartDownloadParams {
   coverUrl?: string;
 }
 
-export type ActiveView = "ARTIST_ALBUMS" | "SEARCH_RESULTS" | "PLAYLIST";
+export type ActiveView =
+  | "ARTIST_ALBUMS"
+  | "SEARCH_RESULTS"
+  | "PLAYLIST"
+  | "TRASH";
 
 export enum ItemType {
   Track = "Track",

@@ -13,7 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export const Header = () => {
   const { activeThemeId, setThemeId } = useTheme();
-  const { fetchTabs } = useLibraryStore();
+  const { fetchTabs, setActiveView } = useLibraryStore();
 
   async function handlePickFolder() {
     const dir = await pickFolder();
@@ -84,6 +84,10 @@ export const Header = () => {
             </Dropdown.Item>
           ))}
         </Dropdown.Sub>
+
+        <Dropdown.Item onClick={() => setActiveView("TRASH")}>
+          Trash
+        </Dropdown.Item>
 
         <Dropdown.Separator />
         <Dropdown.Item onClick={openNativeSettingsWindow}>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
+import { trashSongs } from "@/shared/lib/trash.ts";
 import { Song } from "@/shared/types.ts";
 import styles from "./delete-song-modal.module.css";
 
@@ -20,12 +21,37 @@ const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleDelete = async (deleteFile: boolean) => {
+  const handleRemove = async () => {
     setBusy(true);
     setError(null);
     try {
-      await invoke("delete_songs", { ids: songs.map((s) => s.id), deleteFile });
+      await invoke("delete_songs", {
+        ids: songs.map((s) => s.id),
+        deleteFile: false,
+      });
       await refreshLibrary();
+      closeModal();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  const handleMoveToTrash = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const outcome = await trashSongs(songs.map((s) => s.id));
+      // Songs that did move are already gone from the library, so refresh
+      // even when some failed.
+      await refreshLibrary();
+      if (outcome.failures.length > 0) {
+        // The error style is in a CSS file this worker does not own, so the
+        // failures are joined on one line rather than with line breaks.
+        setError(outcome.failures.join(" | "));
+        setBusy(false);
+        return;
+      }
       closeModal();
     } catch (e) {
       setError(String(e));
@@ -45,8 +71,9 @@ const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
           {isMany ? " files stay" : " file stays"} on disk (a rescan can bring it back).
         </li>
         <li>
-          <b>Delete from disk</b> permanently deletes {isMany ? "the files" : "the file"}.
-          This cannot be undone.
+          <b>Move to Trash</b> moves {isMany ? "the files" : "the file"} to the
+          Trash, where {isMany ? "they" : "it"} can be restored or deleted
+          permanently later.
         </li>
       </ul>
       {error && <span className={styles.error}>{error}</span>}
@@ -60,17 +87,17 @@ const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
         </button>
         <button
           className={styles.cancelButton}
-          onClick={() => handleDelete(false)}
+          onClick={handleRemove}
           disabled={busy}
         >
           Remove from app
         </button>
         <button
           className={styles.deleteButton}
-          onClick={() => handleDelete(true)}
+          onClick={handleMoveToTrash}
           disabled={busy}
         >
-          Delete from disk
+          Move to Trash
         </button>
       </div>
     </div>
