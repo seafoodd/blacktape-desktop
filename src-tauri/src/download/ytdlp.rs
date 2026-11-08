@@ -215,6 +215,13 @@ impl DownloadContext {
         let _ = crate::utils::set_hidden(&temp_root, true);
 
         let temp_dir = temp_root.join(&session_id);
+
+        // Register the path BEFORE creating it, so an abort at any later await
+        // point still lets cancel_download clean the directory up.
+        if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
+            registry.set_temp_dir(task_id, temp_dir.clone()).await;
+        }
+
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .map_err(|e| e.to_string())?;
@@ -224,7 +231,6 @@ impl DownloadContext {
                 let _ = crate::utils::force_remove_dir_all(&temp_dir);
                 return Err("Task cancelled".into());
             }
-            registry.set_temp_dir(task_id, temp_dir.clone()).await;
         }
 
         let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

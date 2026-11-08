@@ -82,12 +82,31 @@ impl TaskRegistry {
             .lock()
             .await
             .insert(task_id.to_string());
-        let mut tasks = self.tasks.lock().await;
-        if let Some(info) = tasks.get_mut(task_id) {
-            info.is_cancelled = true;
-            if let Some(handle) = &info.abort_handle {
-                handle.abort();
+        let (pids, handle) = {
+            let mut tasks = self.tasks.lock().await;
+            match tasks.get_mut(task_id) {
+                Some(info) => {
+                    info.is_cancelled = true;
+                    (std::mem::take(&mut info.child_pids), info.abort_handle.take())
+                }
+                None => (Vec::new(), None),
             }
+        };
+
+        // Kill process trees BEFORE aborting the future: aborting drops the Child
+        // (kill_on_drop) which kills only the parent, after which `taskkill /T`
+        // can no longer walk the tree and grandchildren keep files locked.
+        if !pids.is_empty() {
+            let _ = tokio::task::spawn_blocking(move || {
+                for pid in pids {
+                    Self::kill_pid(pid);
+                }
+            })
+            .await;
+        }
+
+        if let Some(handle) = handle {
+            handle.abort();
         }
     }
 
@@ -324,4 +343,93 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
     });
 
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Far above any real PID range, so kill_pid targets no live process.
+    const FAKE_PID: u32 = 4_000_000_000;
+    const FAKE_PID_AFTER_CANCEL: u32 = 4_000_000_001;
+
+    fn make_state(id: &str) -> ActiveDownloadState {
+        ActiveDownloadState {
+            id: id.to_string(),
+            platform: "bandcamp".to_string(),
+            download_type: "album".to_string(),
+            url: "https://example.com/album".to_string(),
+            artist_name: String::new(),
+            album_title: String::new(),
+            cover_url: None,
+            status: "queued".to_string(),
+            current: 0,
+            total: 0,
+            overall_percent: 0,
+            message: String::new(),
+            tracks: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_cancelled_sets_flag_and_clears_child_pids() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-1")).await;
+        registry.register_pid("task-1", FAKE_PID).await;
+
+        let pids_before = registry.tasks.lock().await.get("task-1").unwrap().child_pids.clone();
+        assert_eq!(pids_before, vec![FAKE_PID]);
+
+        registry.mark_cancelled("task-1").await;
+
+        assert!(registry.is_cancelled("task-1").await);
+        let tasks = registry.tasks.lock().await;
+        assert!(tasks.get("task-1").unwrap().child_pids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mark_cancelled_aborts_registered_future() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-2")).await;
+
+        let join = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        registry
+            .set_abort_handle("task-2", join.abort_handle())
+            .await;
+
+        registry.mark_cancelled("task-2").await;
+
+        let err = join
+            .await
+            .expect_err("aborted task should not complete normally");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn set_temp_dir_stores_path() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-3")).await;
+
+        let temp_dir = PathBuf::from("some").join("temp").join("task-3");
+        registry.set_temp_dir("task-3", temp_dir.clone()).await;
+
+        let tasks = registry.tasks.lock().await;
+        assert_eq!(tasks.get("task-3").unwrap().temp_dir, Some(temp_dir));
+    }
+
+    #[tokio::test]
+    async fn register_pid_after_cancel_is_not_tracked() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-4")).await;
+        registry.mark_cancelled("task-4").await;
+
+        registry
+            .register_pid("task-4", FAKE_PID_AFTER_CANCEL)
+            .await;
+
+        let tasks = registry.tasks.lock().await;
+        assert!(tasks.get("task-4").unwrap().child_pids.is_empty());
+    }
 }
