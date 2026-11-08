@@ -7,8 +7,8 @@
 //! those sub-trees before converting the HTML to text.
 
 use super::common::{
-    build_url, get_json, get_text, is_acceptable, is_trusted_https_url, LyricsSource,
-    BROWSER_USER_AGENT,
+    artist_matches, build_url, get_json, get_text, is_acceptable, is_trusted_https_url,
+    title_matches, LyricsSource, BROWSER_USER_AGENT,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -226,24 +226,9 @@ pub fn extract_genius_lyrics(html: &str) -> Option<String> {
 // Search + fetch
 // ---------------------------------------------------------------------------
 
-fn normalize(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-fn artist_matches(wanted: &str, found: &str) -> bool {
-    let (w, f) = (normalize(wanted), normalize(found));
-    if w.is_empty() || f.is_empty() {
-        return true;
-    }
-    w.contains(&f) || f.contains(&w) || strsim::normalized_levenshtein(&w, &f) >= 0.7
-}
-
 /// Picks the first search hit that is a song page (not an artist/album page)
 /// on genius.com whose artist plausibly matches.
-pub fn pick_song_url(search_json: &Value, artist: &str) -> Option<String> {
+pub fn pick_song_url(search_json: &Value, artist: &str, title: &str) -> Option<String> {
     let sections = search_json.pointer("/response/sections")?.as_array()?;
     for section in sections {
         let sec_type = section.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -275,6 +260,11 @@ pub fn pick_song_url(search_json: &Value, artist: &str) -> Option<String> {
                     continue;
                 }
             }
+            if let Some(ft) = result.get("title").and_then(|t| t.as_str()) {
+                if !title_matches(title, ft) {
+                    continue;
+                }
+            }
             return Some(url.to_string());
         }
     }
@@ -294,7 +284,7 @@ pub async fn fetch(
         .await
         .map_err(|e| format!("Genius search failed: {e}"))?;
 
-    let song_url = pick_song_url(&search_json, artist)
+    let song_url = pick_song_url(&search_json, artist, title)
         .ok_or_else(|| "Genius: no song match found".to_string())?;
 
     let html = get_text(client, &song_url, BROWSER_USER_AGENT)
@@ -465,7 +455,7 @@ mod tests {
             {"type": "song", "result": {"url": "https://genius.com/Black-sabbath-iron-man-lyrics", "primary_artist": {"name": "Black Sabbath"}}},
         ]));
         assert_eq!(
-            pick_song_url(&v, "Black Sabbath").as_deref(),
+            pick_song_url(&v, "Black Sabbath", "Iron Man").as_deref(),
             Some("https://genius.com/Black-sabbath-iron-man-lyrics")
         );
     }
@@ -475,12 +465,12 @@ mod tests {
         let other = search(json!([
             {"type": "song", "result": {"url": "https://genius.com/x-lyrics", "primary_artist": {"name": "Totally Different"}}}
         ]));
-        assert_eq!(pick_song_url(&other, "Black Sabbath"), None);
+        assert_eq!(pick_song_url(&other, "Black Sabbath", "Iron Man"), None);
 
         let variant = search(json!([
             {"type": "song", "result": {"url": "https://genius.com/y-lyrics", "primary_artist": {"name": "Beyoncé"}}}
         ]));
-        assert!(pick_song_url(&variant, "Beyonce").is_some());
-        assert!(pick_song_url(&json!({}), "x").is_none());
+        assert!(pick_song_url(&variant, "Beyonce", "Halo").is_some());
+        assert!(pick_song_url(&json!({}), "x", "y").is_none());
     }
 }

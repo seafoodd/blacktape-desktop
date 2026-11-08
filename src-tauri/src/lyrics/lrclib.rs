@@ -1,7 +1,8 @@
 //! LRCLIB provider (https://lrclib.net) — free, supports synced (LRC) lyrics.
 
 use super::common::{
-    build_url, get_json, is_acceptable, LyricsSource, APP_USER_AGENT, INSTRUMENTAL_LYRICS,
+    build_url, get_json, is_acceptable, track_matches, LyricsSource, APP_USER_AGENT,
+    INSTRUMENTAL_LYRICS,
 };
 
 const SOURCE: &str = "https://lrclib.net";
@@ -16,6 +17,8 @@ pub struct LrclibTrack {
     #[serde(default)]
     pub instrumental: bool,
     pub duration: Option<f64>,
+    pub track_name: Option<String>,
+    pub artist_name: Option<String>,
 }
 
 fn non_empty(s: &Option<String>) -> Option<&str> {
@@ -70,6 +73,21 @@ pub fn pick_from_search(results: &[LrclibTrack], wanted_secs: Option<u64>) -> Op
     })
 }
 
+/// Keeps only search hits that are really the requested song.
+pub fn filter_matching(results: Vec<LrclibTrack>, artist: &str, title: &str) -> Vec<LrclibTrack> {
+    results
+        .into_iter()
+        .filter(|t| {
+            track_matches(
+                artist,
+                title,
+                t.artist_name.as_deref().unwrap_or(""),
+                t.track_name.as_deref().unwrap_or(""),
+            )
+        })
+        .collect()
+}
+
 pub async fn fetch(
     client: &reqwest::Client,
     artist: &str,
@@ -104,6 +122,7 @@ pub async fn fetch(
         &[("artist_name", artist), ("track_name", title)],
     );
     if let Ok(results) = get_json::<Vec<LrclibTrack>>(client, &search_url, APP_USER_AGENT).await {
+        let results = filter_matching(results, artist, title);
         if let Some(l) = pick_from_search(&results, duration_secs) {
             return Ok(ok(l));
         }
@@ -210,5 +229,31 @@ mod tests {
     fn pick_from_search_empty_slice_gives_none() {
         assert_eq!(pick_from_search(&[], None), None);
         assert_eq!(pick_from_search(&[], Some(200)), None);
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn hit(name: &str, artist: &str) -> LrclibTrack {
+        LrclibTrack {
+            track_name: Some(name.into()),
+            artist_name: Some(artist.into()),
+            plain_lyrics: Some("lyrics".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn search_hits_for_other_songs_are_dropped() {
+        let hits = vec![
+            hit("Widow's Walk", "Larkin Poe"),
+            hit("Widow", "Christopher Larkin"),
+        ];
+        let kept = filter_matching(hits, "Christopher Larkin", "Widow");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].artist_name.as_deref(), Some("Christopher Larkin"));
+        assert!(filter_matching(vec![hit("Other", "Someone")], "Christopher Larkin", "Widow").is_empty());
     }
 }

@@ -150,6 +150,58 @@ pub fn clean_track_title(title: &str) -> String {
     cleaned.trim().to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Match validation: fuzzy provider searches may return a different song
+// ("Widow" by Christopher Larkin -> "Widow's Walk" by Larkin Poe).
+// ---------------------------------------------------------------------------
+
+/// Lowercased alphanumeric characters only.
+pub fn normalize(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Artist plausibly the same: equal, one contains the other (e.g. "A & B"
+/// vs "A", min 3 chars) or very similar spelling. Unknown (empty) matches.
+pub fn artist_matches(wanted: &str, found: &str) -> bool {
+    let (w, f) = (normalize(wanted), normalize(found));
+    if w.is_empty() || f.is_empty() {
+        return true;
+    }
+    if w == f {
+        return true;
+    }
+    let (short, long) = if w.len() <= f.len() { (&w, &f) } else { (&f, &w) };
+    if short.chars().count() >= 3 && long.contains(short.as_str()) {
+        return true;
+    }
+    strsim::normalized_levenshtein(&w, &f) >= 0.8
+}
+
+/// Title is the same song: equal after removing "(feat. X)", "(Official Audio)"
+/// etc., or near-identical spelling. Deliberately NOT "contains":
+/// "Widow" must not match "Widow's Walk".
+pub fn title_matches(wanted: &str, found: &str) -> bool {
+    let w = normalize(&clean_track_title(wanted));
+    let f = normalize(&clean_track_title(found));
+    if w.is_empty() || f.is_empty() {
+        return true;
+    }
+    w == f || strsim::normalized_levenshtein(&w, &f) >= 0.85
+}
+
+/// Both artist and title must match.
+pub fn track_matches(
+    wanted_artist: &str,
+    wanted_title: &str,
+    found_artist: &str,
+    found_title: &str,
+) -> bool {
+    artist_matches(wanted_artist, found_artist) && title_matches(wanted_title, found_title)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +302,42 @@ mod tests {
     #[test]
     fn build_url_without_params_has_no_query() {
         assert_eq!(build_url("https://example.com/api", &[]), "https://example.com/api");
+    }
+}
+
+#[cfg(test)]
+mod match_tests {
+    use super::*;
+
+    #[test]
+    fn widow_does_not_match_widows_walk_by_larkin_poe() {
+        // Regression: Musixmatch returned the wrong song.
+        assert!(!title_matches("Widow", "Widow's Walk"));
+        assert!(!artist_matches("Christopher Larkin", "Larkin Poe"));
+        assert!(!track_matches(
+            "Christopher Larkin",
+            "Widow",
+            "Larkin Poe",
+            "Widow's Walk"
+        ));
+        assert!(track_matches("Christopher Larkin", "Widow", "Christopher Larkin", "Widow"));
+    }
+
+    #[test]
+    fn title_matching_ignores_noise_case_and_punctuation() {
+        assert!(title_matches("Song (Official Audio)", "song"));
+        assert!(title_matches("Track (feat. X)", "Track"));
+        assert!(title_matches("Don't Stop", "Dont Stop"));
+        assert!(!title_matches("Love", "Love Story"));
+    }
+
+    #[test]
+    fn artist_matching_tolerates_collaborations_and_accents_but_not_unrelated() {
+        assert!(artist_matches("Daft Punk", "Daft Punk feat. Pharrell Williams"));
+        assert!(artist_matches("Beyonce", "Beyoncé"));
+        assert!(artist_matches("", "Anyone"));
+        assert!(!artist_matches("AC/DC", "Abba"));
+        // Too short to count as containment.
+        assert!(!artist_matches("Al", "Metallica"));
     }
 }

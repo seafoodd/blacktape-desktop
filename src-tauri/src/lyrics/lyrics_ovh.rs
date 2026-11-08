@@ -1,6 +1,6 @@
 //! lyrics.ovh provider — plain (unsynced) lyrics only.
 
-use super::common::{get_json, is_acceptable, LyricsSource};
+use super::common::{get_json, is_acceptable, track_matches, LyricsSource};
 use serde::Deserialize;
 
 const SOURCE: &str = "https://lyrics.ovh";
@@ -54,7 +54,12 @@ pub async fn fetch(
     let mut clean_artist = artist_input.to_string();
     let mut clean_title = title_input.to_string();
     if let Ok(s) = get_json::<SuggestResponse>(client, &suggest_url, "Blacktape").await {
-        if let Some(best) = s.data.first() {
+        // Only trust a suggestion that is really the requested song.
+        if let Some(best) = s
+            .data
+            .iter()
+            .find(|d| track_matches(artist_input, title_input, &d.artist.name, &d.title_short))
+        {
             clean_artist = best.artist.name.clone();
             clean_title = best.title_short.clone();
         }
