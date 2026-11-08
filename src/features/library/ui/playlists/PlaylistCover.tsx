@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 import placeholderPlaylistImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import { Song } from "@/shared/types.ts";
 import styles from "./playlist-cover.module.css";
@@ -20,7 +20,9 @@ export const PlaylistCover = ({
   if (coverUrl) {
     return (
       <img
-        src={convertFileSrc(coverUrl)}
+ loading="lazy"
+ decoding="async"
+        src={coverSrc(coverUrl, 200)}
         className={clsx(styles.playlistImage, className)}
         alt=""
       />
@@ -40,7 +42,7 @@ export const PlaylistCover = ({
     return (
       <div className={clsx(styles.playlistImageGrid, className)}>
         {uniqueCovers.map((url, index) => (
-          <img key={index} src={convertFileSrc(url!)} alt="" />
+          <img loading="lazy" decoding="async" key={index} src={coverSrc(url!, 100)} alt="" />
         ))}
       </div>
     );
@@ -49,7 +51,9 @@ export const PlaylistCover = ({
   const singleCover = uniqueCovers[0];
   return (
     <img
-      src={singleCover ? convertFileSrc(singleCover) : placeholderPlaylistImage}
+ loading="lazy"
+ decoding="async"
+      src={singleCover ? coverSrc(singleCover, 200) : placeholderPlaylistImage}
       className={clsx(styles.playlistImage, className)}
       alt=""
     />

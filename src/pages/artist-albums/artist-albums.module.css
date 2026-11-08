@@ -21,10 +21,11 @@
     align-items: flex-start;
 }
 
+/* Fixed width (not derived from the image): covers load lazily, and an
+   auto-sized column would jump from 120px to 200px when the image arrives. */
 .albumBlockLeft {
-    /*height: 100%;*/
-    max-width: 200px;
-    min-width: 120px;
+    width: 200px;
+    flex-shrink: 0;
 }
 
 .albumCover,
@@ -37,6 +38,7 @@
     object-fit: cover;
     display: block;
     border-radius: var(--radius-sm, 4px);
+    background-color: var(--color-surface); /* placeholder while the image loads */
 }
 
 .downloadingAlbumBlock {

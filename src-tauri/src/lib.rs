@@ -7,6 +7,7 @@ mod lyrics;
 mod playlists;
 pub mod scan;
 mod search;
+mod thumbs;
 pub mod types;
 pub mod utils;
 
@@ -432,6 +433,19 @@ async fn get_active_downloads(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // thumb://localhost/<encoded path>?s=<px> -> downscaled cover (see thumbs.rs)
+        .register_asynchronous_uri_scheme_protocol("thumb", |ctx, request, responder| {
+            let cache_dir = ctx
+                .app_handle()
+                .path()
+                .app_cache_dir()
+                .ok()
+                .map(|d| d.join("thumbs"));
+            let uri = request.uri().clone();
+            thumbs::spawn_job(move || {
+                responder.respond(thumbs::handle(cache_dir, uri.path(), uri.query()));
+            });
+        })
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:blacktape.db", get_migrations())

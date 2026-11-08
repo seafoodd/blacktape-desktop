@@ -1,5 +1,5 @@
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 import styles from "./queue.module.css";
 import placeholderSongImage from "@/assets/react.svg";
 import clsx from "clsx";
@@ -67,10 +67,12 @@ const Queue = ({ className }: QueueProps) => {
             onClick={() => handlePlaySong(index)}
           >
             <img
+ loading="lazy"
+ decoding="async"
               className={styles.songCover}
               src={
                 song.cover_url
-                  ? convertFileSrc(song.cover_url)
+                  ? coverSrc(song.cover_url, 48)
                   : placeholderSongImage
               }
               alt={song.title}

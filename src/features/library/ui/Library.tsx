@@ -3,7 +3,7 @@ import styles from "@/layouts/left-sidebar.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
 import { HiX } from "react-icons/hi";
 import clsx from "clsx";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 import placeholderArtistImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import Fuse from "fuse.js";
 import {
@@ -159,12 +159,12 @@ export const Library = ({ className }: LibraryProps) => {
             onClick={() => handleSelectTab(artist.artistName)}
           >
             <div className={styles.coverWrapper}>
-              <img
+              <img loading="lazy" decoding="async"
                 src={
                   artist.coverUrl
                     ? artist.coverUrl.startsWith("http")
                       ? artist.coverUrl
-                      : convertFileSrc(artist.coverUrl)
+                      : coverSrc(artist.coverUrl, 200)
                     : placeholderArtistImage
                 }
                 referrerPolicy="no-referrer"
@@ -231,10 +231,10 @@ export const Library = ({ className }: LibraryProps) => {
             })}
             onClick={() => handleSelectTab(artist.name)}
           >
-            <img
+            <img loading="lazy" decoding="async"
               src={
                 artist.cover_url
-                  ? convertFileSrc(artist.cover_url)
+                  ? coverSrc(artist.cover_url, 64)
                   : placeholderArtistImage
               }
               referrerPolicy="no-referrer"

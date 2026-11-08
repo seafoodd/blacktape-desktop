@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import styles from "./artist-albums.module.css";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import clsx from "clsx";
 import { Song } from "@/shared/types.ts";
@@ -56,12 +56,12 @@ const ArtistAlbums = () => {
           >
             <div className={styles.albumBlockLeft}>
               <div className={styles.downloadingCoverWrapper}>
-                <img
+                <img loading="lazy" decoding="async"
                   src={
                     download.coverUrl
                       ? download.coverUrl.startsWith("http")
                         ? download.coverUrl
-                        : convertFileSrc(download.coverUrl)
+                        : coverSrc(download.coverUrl, 200)
                       : placeholderAlbumImage
                   }
                   referrerPolicy="no-referrer"
@@ -149,10 +149,10 @@ const ArtistAlbums = () => {
         {albums.map((album, index) => (
           <section className={styles.albumBlock} key={index}>
             <div className={styles.albumBlockLeft}>
-              <img
+              <img loading="lazy" decoding="async"
                 src={
                   album.cover_url
-                    ? convertFileSrc(album.cover_url)
+                    ? coverSrc(album.cover_url, 200)
                     : placeholderAlbumImage
                 }
                 referrerPolicy="no-referrer"
