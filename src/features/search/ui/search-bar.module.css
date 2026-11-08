@@ -55,7 +55,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-full);
     transition: all 100ms ease;
 
     &:hover {
@@ -70,11 +70,12 @@
 
 .filterPopover {
     position: absolute;
-    top: 38px;
-    right: -1px;
+    top: calc(35px + 4px);
+    right: 4px;
     width: 280px;
     background-color: var(--color-surface);
     border: 1px solid gray;
+    border-radius: var(--radius-md);
     padding: 14px;
     display: flex;
     flex-direction: column;
@@ -113,6 +114,7 @@
     cursor: pointer;
     text-transform: capitalize;
     transition: all 100ms ease;
+    border-radius: var(--radius-md);
 
     &:hover {
         background-color: rgba(255, 255, 255, 0.1);
@@ -146,7 +148,7 @@
     background-color: var(--color-background);
     border: 1px solid gray;
     border-top: none;
-    border-radius: 0 0 4px 4px;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
     z-index: 100;
     /*box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);*/
     display: flex;
@@ -230,7 +232,7 @@
     font-size: var(--font-sm);
     padding: 1px 5px;
     font-weight: 700;
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
     text-transform: uppercase;
 }
 
@@ -245,9 +247,9 @@
     padding: 12px;
     border-top: 1px solid var(--color-muted);
     transition: 100ms linear;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
 
     &:hover {
-
         cursor: not-allowed;
         background-color: var(--color-surface);
         color: var(--color-primary);
@@ -332,14 +334,14 @@
     height: 14px;
     width: 100%;
     background-color: rgba(255, 255, 255, 0.08);
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
 }
 
 .skeletonLineMeta {
     height: 10px;
     width: 40%;
     background-color: rgba(255, 255, 255, 0.04);
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
 }
 
 .skeletonItem::after {
