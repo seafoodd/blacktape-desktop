@@ -1,7 +1,7 @@
 //! User-initiated library edits: metadata changes (file tags + DB) and deletion.
 
 use crate::db::db::Database;
-use crate::tags::{write_basic_tags, BasicTags};
+use crate::tags::{write_basic_tags, write_basic_tags_replace, BasicTags};
 use crate::types::Song;
 use std::path::Path;
 
@@ -86,11 +86,25 @@ impl SongInfo {
 /// Writes `info` into the audio file's tags (so a rescan keeps the edit). A missing
 /// file is not an error: the DB entry can still be edited.
 pub fn write_song_file(song: &Song, info: &SongInfo) -> Result<(), String> {
+    write_song_file_with(song, info, write_basic_tags)
+}
+
+/// Like `write_song_file`, but swaps in a rewritten copy instead of modifying the
+/// file in place, so a player that has the file open is not disturbed.
+pub fn write_song_file_replace(song: &Song, info: &SongInfo) -> Result<(), String> {
+    write_song_file_with(song, info, write_basic_tags_replace)
+}
+
+fn write_song_file_with(
+    song: &Song,
+    info: &SongInfo,
+    write: fn(&Path, &BasicTags) -> Result<(), String>,
+) -> Result<(), String> {
     let path = Path::new(&song.path);
     if !path.exists() {
         return Ok(());
     }
-    write_basic_tags(
+    write(
         path,
         &BasicTags {
             title: &info.title,

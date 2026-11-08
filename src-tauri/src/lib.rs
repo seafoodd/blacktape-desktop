@@ -299,6 +299,21 @@ async fn save_song_with_player(
     info: &song_edit::SongInfo,
 ) -> Result<Song, String> {
     let song = db.require_song_by_id(id).await?;
+    // Preferred: write a copy and swap it in. The player keeps reading the old file
+    // handle, so playback is not touched at all and no lock is needed.
+    if let Err(e) = song_edit::write_song_file_replace(&song, info) {
+        eprintln!("[tag edit] atomic replace failed ({e}); falling back to in-place write");
+        write_song_in_place(&song, player, id, info)?;
+    }
+    song_edit::update_song_db(db, id, info).await
+}
+
+fn write_song_in_place(
+    song: &Song,
+    player: &Mutex<AudioPlayer>,
+    id: i64,
+    info: &song_edit::SongInfo,
+) -> Result<(), String> {
     {
         // The lock is held for the whole write so the player's background watchers
         // cannot react to the temporarily empty queue.
@@ -314,13 +329,12 @@ async fn save_song_with_player(
                 p.release_song_file(id)
             }
         };
-        let result = song_edit::write_song_file(&song, info);
+        let result = song_edit::write_song_file(song, info);
         if let Some(s) = suspended {
             p.restore_song_file(s);
         }
-        result?;
+        result
     }
-    song_edit::update_song_db(db, id, info).await
 }
 
 /// Saves edited metadata of one song into the file's tags and the database.

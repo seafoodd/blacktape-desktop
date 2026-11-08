@@ -63,6 +63,31 @@ pub fn write_basic_tags(path: &Path, info: &BasicTags) -> Result<(), String> {
         .map_err(|e| format!("Failed to write tags to {}: {}", path.display(), e))
 }
 
+/// Writes the tags to a temporary copy and swaps it over the original. A decoder
+/// that has the original open keeps reading its old, untouched contents, so playing
+/// the file is not disturbed. Fails (leaving the original intact) when the OS refuses
+/// to replace an open file; callers then fall back to `write_basic_tags`.
+pub fn write_basic_tags_replace(path: &Path, info: &BasicTags) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("Invalid path {}", path.display()))?;
+    // Keeps the extension so lofty detects the format.
+    let tmp = path.with_file_name(format!(".edit-{file_name}"));
+
+    let result = std::fs::copy(path, &tmp)
+        .map_err(|e| format!("Failed to copy {}: {}", path.display(), e))
+        .and_then(|_| write_basic_tags(&tmp, info))
+        .and_then(|_| {
+            std::fs::rename(&tmp, path)
+                .map_err(|e| format!("Failed to replace {}: {}", path.display(), e))
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +226,41 @@ mod tests {
             .expect("tag should exist after second write");
         assert!(tag.genre().is_none());
         assert!(tag.date().is_none());
+    }
+
+    #[test]
+    fn replace_keeps_open_handle_readable_and_updates_file() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.wav");
+        let original = silent_wav_bytes(8000, 1);
+        std::fs::write(&path, &original).unwrap();
+
+        // like the player: a handle that stays open during the edit
+        let mut open = std::fs::File::open(&path).unwrap();
+        let artists = vec!["Art".to_string()];
+        write_basic_tags_replace(
+            &path,
+            &BasicTags {
+                title: "New",
+                artists: &artists,
+                album: "Al",
+                album_artist: "Art",
+                track_number: None,
+                genre: None,
+                release_year: None,
+            },
+        )
+        .unwrap();
+
+        let mut seen = Vec::new();
+        open.read_to_end(&mut seen).unwrap();
+        assert_eq!(seen, original, "open handle must still see the old bytes");
+
+        let tagged = Probe::open(&path).unwrap().read().unwrap();
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag()).unwrap();
+        assert_eq!(tag.title().as_deref(), Some("New"));
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(leftovers.len(), 1, "temp copy must be gone");
     }
 }
