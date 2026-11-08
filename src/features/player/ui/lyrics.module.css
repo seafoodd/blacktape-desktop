@@ -2,9 +2,9 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 8px;
+    padding: var(--spacing-sm);
     box-sizing: border-box;
-    font-size: var(--font-lg, 1.125rem);
+    font-size: var(--font-lg);
     overflow-y: auto;
     scrollbar-width: thin;
     scroll-behavior: smooth;
@@ -12,26 +12,26 @@
 
 .statusText {
     color: var(--color-muted);
-    font-size: var(--font-md, 1rem);
-    padding: 8px 0;
+    font-size: var(--font-md);
+    padding: var(--spacing-sm) 0;
 }
 
 .emptyState {
     color: var(--color-muted);
-    font-size: var(--font-md, 1rem);
-    padding: 8px 0;
+    font-size: var(--font-md);
+    padding: var(--spacing-sm) 0;
 }
 
 .lyricsWrapper {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 0.65em; /* scales with the font size setting */
 }
 
 .lyricLine {
     min-height: 1.5em;
     line-height: 1.5;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     transition: color 200ms ease, opacity 200ms ease, transform 200ms ease, background-color 200ms ease;
     user-select: text;
 }
@@ -44,13 +44,15 @@
     cursor: pointer;
     color: var(--color-muted);
     opacity: 0.5;
-    padding: 6px 10px;
+    padding: 0.35em 0.6em;
     max-width: fit-content;
-
+    /* One weight for every timed line: bold glyphs are wider, so changing the
+       weight on the active line would shift/re-wrap it. Active is shown via color/fill. */
+    font-weight: 600;
 
     &:hover {
         opacity: 0.85;
-        background-color: rgba(255, 255, 255, 0.05);
+        background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
     }
 }
 
@@ -60,11 +62,10 @@
 
 .activeLine {
     color: var(--color-text);
-    font-weight: 700;
     opacity: 1;
     /*transform: scale(1.02);*/
     /*transform-origin: left center;*/
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 
 /* Karaoke-style: the active line's text is recolored left to right.
@@ -75,8 +76,8 @@
     initial-value: 0%;
 }
 
-.activeLine .lineText:not(.wordMode),
-.activeLine .lineWord {
+.fillOn .activeLine .lineText:not(.wordMode),
+.fillOn .activeLine .lineWord {
     background: linear-gradient(
         90deg,
         var(--color-text) var(--p),
@@ -98,26 +99,97 @@
     opacity: 0.6;
 }
 
+/* Pinned to the top-right of the lyrics while scrolling (zero height, so it takes no space) */
+.stickyActions {
+    position: sticky;
+    top: var(--spacing-xs);
+    z-index: 2;
+    display: flex;
+    justify-content: flex-end;
+    height: 0;
+    pointer-events: none;
+}
+
+.fillToggle {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.4em;
+    height: 2.4em;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background-color: var(--color-surface);
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    cursor: pointer;
+    transition: color 100ms linear, background-color 100ms linear;
+
+    &:hover {
+        /*color: var(--color-text);*/
+        background-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-surface));
+    }
+}
+
+.fillToggleOn {
+    color: var(--color-primary);
+    /*background-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-surface));*/
+}
+
+.fillToggleIcon {
+    width: 20px;
+    height: 20px;
+}
+
+/* Slim header above the lyrics; text aligned with the lyric lines (same inset as the lines) */
 .source {
     display: flex;
-    margin-top: 1.6em;
-    padding-top: 12px;
-    border-top: 1px solid var(--color-border);
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.75em;
+    /* horizontal inset matches the lyric lines (0.6em at the lyrics font size) */
+    padding: 0.15em calc(var(--font-md) * 2.4) 0.75em calc(var(--font-lg) * 0.6);
+    border-bottom: 1px solid var(--color-border);
     color: var(--color-muted);
-    font-size: var(--font-sm, 0.875rem);
+    font-size: var(--font-sm);
     text-align: start;
-    gap: 4px;
 
     a {
-        color: unset;
-        text-decoration: underline;
+        color: var(--color-text);
+        text-decoration: none;
         cursor: pointer;
-        transition: color 100ms linear;
+        opacity: 0.85;
+        transition: opacity 100ms linear;
 
         &:hover {
-            color: var(--color-text);
+            opacity: 1;
+            text-decoration: underline;
         }
     }
+}
+
+.sourceTag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25em;
+    flex-shrink: 0;
+    padding: 0 0.5em 0 0.25em;
+    border-radius: var(--radius-full);
+    font-size: var(--font-sm);
+    line-height: 1.6;
+    color: var(--color-on-rich-sync);
+    /* soft shadow keeps the text readable on the yellow */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    background-color: var(--color-rich-sync);
+    cursor: help;
+}
+
+.sourceTagIcon {
+    width: 1.1em;
+    height: 1.1em;
+    flex-shrink: 0;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6)); /* text-shadow doesn't affect SVG */
 }
 
 .sourceUrl {

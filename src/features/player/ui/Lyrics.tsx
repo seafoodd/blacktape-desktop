@@ -1,5 +1,6 @@
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -11,6 +12,8 @@ import styles from "./lyrics.module.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import { LyricLine, parseLyrics } from "../lib/lyricsParser";
+import { providerName } from "../lib/lyricsSource";
+import { MdFormatColorText, MdSync } from "react-icons/md";
 import {
   ContextMenu,
   ContextMenuPosition,
@@ -41,6 +44,8 @@ const invokeWithTimeout = async <T,>(
 /** How often the store position is refreshed while timed lyrics are shown. */
 const PROGRESS_POLL_MS = 250;
 
+const FILL_STORAGE_KEY = "lyrics.lineFill";
+
 interface LyricsProps {
   className?: string;
 }
@@ -58,6 +63,23 @@ export const Lyrics = ({ className }: LyricsProps) => {
   const [activeMenu, setActiveMenu] = useState<{
     position: ContextMenuPosition;
   } | null>(null);
+
+  // Whether the active line fills progressively (karaoke) or is simply white
+  const [fillEnabled, setFillEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(FILL_STORAGE_KEY) !== "off";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILL_STORAGE_KEY, fillEnabled ? "on" : "off");
+    } catch {
+      /* storage unavailable: setting just won't persist */
+    }
+  }, [fillEnabled]);
+  const toggleFill = useCallback(() => setFillEnabled((v) => !v), []);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLDivElement | null>(null);
@@ -222,6 +244,14 @@ export const Lyrics = ({ className }: LyricsProps) => {
         label: "",
       },
       {
+        label: fillEnabled ? "Disable Line Fill" : "Enable Line Fill",
+        action: toggleFill,
+      },
+      {
+        separator: true,
+        label: "",
+      },
+      {
         label: "Edit Lyrics...",
         action: handleEditLyrics,
       },
@@ -231,11 +261,17 @@ export const Lyrics = ({ className }: LyricsProps) => {
         action: handleDeleteLyrics,
       },
     ];
-  }, [currentSong?.id, lyrics, source]);
+  }, [currentSong?.id, lyrics, source, fillEnabled]);
 
   const parsedLyrics = useMemo(() => {
     return lyrics ? parseLyrics(lyrics) : null;
   }, [lyrics]);
+
+  // Word-level timing present (Musixmatch richsync as Enhanced LRC)
+  const hasWordTiming = useMemo(
+    () => !!parsedLyrics?.lines.some((l) => l.words && l.words.length > 0),
+    [parsedLyrics],
+  );
 
   // Current playback time in milliseconds
   const currentTimeMs = currentSong ? currentSong.duration_ms * progress : 0;
@@ -289,7 +325,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
   // polls can't keep up; computing the fill from real time can.
   useLayoutEffect(() => {
     const root = activeLineRef.current;
-    if (!root) return;
+    if (!root || !fillEnabled) return;
     const items = Array.from(
       root.querySelectorAll<HTMLElement>("[data-fill-start]"),
     ).map((el) => ({
@@ -321,7 +357,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     };
     apply();
     return () => cancelAnimationFrame(raf);
-  }, [activeIndex, parsedLyrics, isPlaying, activeLineEndMs]);
+  }, [activeIndex, parsedLyrics, isPlaying, activeLineEndMs, fillEnabled]);
 
   // Handle user manual scrolling: pause auto-scroll temporarily
   const handleScroll = () => {
@@ -373,7 +409,9 @@ export const Lyrics = ({ className }: LyricsProps) => {
       ref={containerRef}
       onScroll={handleScroll}
       onContextMenu={handleContextMenu}
-      className={clsx(styles.container, className)}
+      className={clsx(styles.container, className, {
+        [styles.fillOn]: fillEnabled,
+      })}
     >
       {retrieving && (
         <div className={styles.statusText}>Retrieving lyrics...</div>
@@ -381,6 +419,61 @@ export const Lyrics = ({ className }: LyricsProps) => {
 
       {!retrieving && parsedLyrics && parsedLyrics.lines.length > 0 && (
         <>
+          {parsedLyrics.isTimed && (
+            // Zero-height sticky wrapper: keeps the button pinned top-right while scrolling
+            <div className={styles.stickyActions}>
+              <button
+                type="button"
+                className={clsx(styles.fillToggle, {
+                  [styles.fillToggleOn]: fillEnabled,
+                })}
+                onClick={toggleFill}
+                aria-pressed={fillEnabled}
+                title={
+                  fillEnabled
+                    ? "Line fill is on. Click to keep the active line fully white."
+                    : "Line fill is off. Click to fill the active line as it is sung."
+                }
+              >
+                <MdFormatColorText className={styles.fillToggleIcon} />
+              </button>
+            </div>
+          )}
+
+          <div className={styles.source}>
+            Source:{" "}
+            {source ? (
+              /^https?:\/\//.test(source) ? (
+                <a
+                  href="#"
+                  title={source}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(source);
+                  }}
+                  className={clsx(styles.sourceUrl, "truncate")}
+                >
+                  {providerName(source)}
+                </a>
+              ) : (
+                <span className={clsx(styles.sourceUrl, "truncate")}>
+                  {providerName(source)}
+                </span>
+              )
+            ) : (
+              "Unknown"
+            )}
+            {hasWordTiming && source && providerName(source) === "Musixmatch" && (
+              <span
+                className={styles.sourceTag}
+                title="Rich Sync: Musixmatch provides the timing of every word, so each word lights up exactly when it is sung, instead of the whole line filling evenly."
+              >
+                <MdSync className={styles.sourceTagIcon} />
+                Rich Sync
+              </span>
+            )}
+          </div>
+
           <div className={styles.lyricsWrapper}>
             {parsedLyrics.lines.map((line, index) => {
               const isTimed = parsedLyrics.isTimed;
@@ -416,8 +509,12 @@ export const Lyrics = ({ className }: LyricsProps) => {
                             {wi > 0 && " "}
                             <span
                               className={styles.lineWord}
-                              data-fill-start={word.startMs}
-                              data-fill-end={end}
+                              {...(fillEnabled
+                                ? {
+                                    "data-fill-start": word.startMs,
+                                    "data-fill-end": end,
+                                  }
+                                : {})}
                             >
                               {word.text}
                             </span>
@@ -428,7 +525,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
                   ) : (
                     <span
                       className={styles.lineText}
-                      {...(isActive
+                      {...(isActive && fillEnabled
                         ? {
                             "data-fill-start": line.timeMs ?? 0,
                             "data-fill-end": activeLineEndMs,
@@ -445,24 +542,6 @@ export const Lyrics = ({ className }: LyricsProps) => {
                 </div>
               );
             })}
-          </div>
-
-          <div className={styles.source}>
-            Source:{" "}
-            {source ? (
-              <a
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
-                  openUrl(source);
-                }}
-                className={clsx(styles.sourceUrl, "truncate")}
-              >
-                {source.replace(/^https?:\/\//, "")}
-              </a>
-            ) : (
-              "Unknown"
-            )}
           </div>
         </>
       )}
