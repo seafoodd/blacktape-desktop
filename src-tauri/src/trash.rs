@@ -557,12 +557,18 @@ pub async fn write_settings(db: &Database, settings: &TrashSettings) -> Result<(
 // Tauri glue
 // ---------------------------------------------------------------------------
 
-/// Stops playback when the playing song is about to be trashed (D9). Queued copies are
+/// Moves playback on (next track, or stop when there is none) when the playing song is
+/// about to be trashed (D9). Queued copies are
 /// left alone, like `delete_songs`.
 fn stop_if_playing(player: &Mutex<AudioPlayer>, ids: &[i64]) {
     if let Ok(mut p) = player.lock() {
-        if p.current_song_id().is_some_and(|id| ids.contains(&id)) {
-            p.stop();
+        if let Some(playing) = p.current_song_id().filter(|id| ids.contains(id)) {
+            // Skip to the next track like the Next button (this also releases the
+            // file). If there is no next track, just stop.
+            p.next();
+            if p.current_song_id() == Some(playing) {
+                p.stop();
+            }
         }
     }
 }
