@@ -1,11 +1,11 @@
 use super::youtube;
 use super::{bandcamp, ytdlp};
-use crate::download::types::DownloadResult;
+use crate::download::types::{AlbumMetaEvent, DownloadResult, TrackMetaItem};
 use crate::types::Platform;
 use crate::utils::{remove_empty_parents_up_to, sanitize_fs};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 
 pub async fn process_album_url(
     platform: Platform,
@@ -29,9 +29,49 @@ pub async fn process_album_url(
         track.album_artist = album_info.album_artist.clone();
     }
 
+    let _ = app_handle.emit(
+        "download-album-meta",
+        AlbumMetaEvent {
+            task_id: task_id.to_string(),
+            title: album_info.title.clone(),
+            artist: album_info.album_artist.clone(),
+            cover_url: album_info.external_cover_url.clone(),
+            tracks: tracks
+                .iter()
+                .enumerate()
+                .map(|(idx, t)| TrackMetaItem {
+                    title: t.title.clone(),
+                    track_number: t.track_number.or(Some((idx + 1) as i32)),
+                })
+                .collect(),
+        },
+    );
+
     let target_library_dir = root_library_dir
         .join(sanitize_fs(&album_info.album_artist))
         .join(sanitize_fs(&album_info.title));
+
+    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+        registry
+            .update_metadata(
+                task_id,
+                &album_info.title,
+                &album_info.album_artist,
+                album_info.external_cover_url.as_deref(),
+                tracks
+                    .iter()
+                    .map(|t| (t.title.clone(), t.track_number))
+                    .collect(),
+            )
+            .await;
+        registry
+            .set_target_dir(
+                task_id,
+                target_library_dir.clone(),
+                root_library_dir.clone(),
+            )
+            .await;
+    }
 
     let folder_created = target_library_dir != root_library_dir;
     if folder_created {

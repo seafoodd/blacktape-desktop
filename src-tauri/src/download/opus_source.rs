@@ -24,7 +24,13 @@ impl OpusSource<BufReader<File>> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let path_buf = path.as_ref().to_path_buf();
         let file = File::open(&path_buf)?;
-        let reader = BufReader::new(file);
+        Self::from_reader(BufReader::new(file), path_buf)
+    }
+}
+
+impl<R: Read + Seek> OpusSource<R> {
+    /// Builds a source from any seekable reader (e.g. an in-memory copy of the file).
+    pub fn from_reader(reader: R, path_buf: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let mut packet_reader = PacketReader::new(reader);
 
         let id_packet = packet_reader.read_packet_expected()?;

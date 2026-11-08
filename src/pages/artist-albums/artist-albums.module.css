@@ -21,19 +21,99 @@
     align-items: flex-start;
 }
 
+/* Fixed width (not derived from the image): covers load lazily, and an
+   auto-sized column would jump from 120px to 200px when the image arrives. */
 .albumBlockLeft {
-    /*height: 100%;*/
-    max-width: 200px;
-    min-width: 120px;
+    width: 200px;
+    flex-shrink: 0;
 }
 
-.albumCover {
+.albumCover,
+.playlistImage {
     /*max-height: 300px;*/
     /*max-width: 300px;*/
     height: 100%;
     width: 100%;
+    aspect-ratio: 1;
     object-fit: cover;
-    /*display: block;*/
+    display: block;
+    border-radius: var(--radius-sm, 4px);
+    background-color: var(--color-surface); /* placeholder while the image loads */
+}
+
+.downloadingAlbumBlock {
+    position: relative;
+    opacity: 0.65;
+    filter: grayscale(40%);
+    transition: opacity 200ms ease;
+}
+
+.downloadingCoverWrapper {
+    position: relative;
+    width: 200px;
+    flex-shrink: 0;
+    aspect-ratio: 1;
+    border-radius: var(--radius-sm, 4px);
+    overflow: hidden;
+}
+
+.downloadingCoverBadge {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.75);
+    color: var(--color-primary);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    backdrop-filter: blur(2px);
+}
+
+.downloadingHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.downloadingOverallBadge {
+    font-size: var(--font-sm, 12px);
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    padding: 2px 8px;
+    border-radius: var(--radius-full, 9999px);
+    font-weight: 500;
+}
+
+.downloadingSong {
+    cursor: default !important;
+    user-select: none;
+    pointer-events: none;
+
+    &:hover {
+        background-color: transparent !important;
+    }
+}
+
+.trackPercentage {
+    font-size: var(--font-md, 14px);
+    font-weight: 600;
+    min-width: 48px;
+    text-align: right;
+}
+
+.percentCompleted {
+    color: var(--color-primary);
+}
+
+.percentActive {
+    color: var(--color-text, #ffffff);
+}
+
+.percentPending {
+    color: var(--color-muted, #888888);
 }
 
 .albumBlockRight {

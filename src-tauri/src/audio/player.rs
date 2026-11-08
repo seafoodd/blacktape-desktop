@@ -44,6 +44,28 @@ pub struct AudioPlayer {
     cursor: Option<usize>,
 }
 
+/// Playback position saved while the current song's file is released for a tag edit.
+pub struct EditSuspend {
+    pos: Duration,
+    paused: bool,
+}
+
+/// Copies user-editable metadata from `updated` into `target` when both are the
+/// same song; everything else (path, duration, playback fields) is kept.
+pub fn apply_song_edit(target: &mut Song, updated: &Song) -> bool {
+    if target.id.is_none() || target.id != updated.id {
+        return false;
+    }
+    target.title = updated.title.clone();
+    target.artists = updated.artists.clone();
+    target.album = updated.album.clone();
+    target.album_artist = updated.album_artist.clone();
+    target.track_number = updated.track_number;
+    target.canonical_track_slug = updated.canonical_track_slug.clone();
+    target.canonical_album_slug = updated.canonical_album_slug.clone();
+    true
+}
+
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
         let sink = Self::create_sink().expect("Failed to open default audio stream");
@@ -625,6 +647,131 @@ impl AudioPlayer {
         self.player.is_paused()
     }
 
+    /// Decodes an in-memory copy of an audio file (same format handling as `decode_source`).
+    fn decode_source_from_memory(
+        path_str: &str,
+        bytes: Vec<u8>,
+    ) -> Result<BoxedSource, Box<dyn std::error::Error>> {
+        let path = Path::new(path_str);
+        let len = bytes.len() as u64;
+        let cursor = std::io::Cursor::new(bytes);
+
+        if path.extension().and_then(|ext| ext.to_str()) == Some("opus") {
+            return Ok(Box::new(OpusSource::from_reader(cursor, path.to_path_buf())?));
+        }
+
+        let decoder = Decoder::builder()
+            .with_data(cursor)
+            .with_byte_len(len)
+            .with_seekable(true)
+            .build()?;
+        Ok(Box::new(decoder))
+    }
+
+    /// If `id` is the current song, switches playback to an in-memory copy of its
+    /// file at (almost) the same position, so the file on disk is no longer open and
+    /// can be rewritten with no audible gap. Does nothing for other songs. On error
+    /// playback is left untouched.
+    pub fn move_song_to_memory(&mut self, id: i64) -> Result<(), String> {
+        let Some(song) = self
+            .current_song
+            .clone()
+            .filter(|s| s.id == Some(id))
+        else {
+            return Ok(());
+        };
+
+        let bytes = std::fs::read(&song.path).map_err(|e| e.to_string())?;
+        let mut source =
+            Self::decode_source_from_memory(&song.path, bytes).map_err(|e| e.to_string())?;
+
+        let now_pos = |p: &Self| p.seek_offset + p.player.get_pos();
+
+        // The first seek only measures how long seeking takes, the second one lands
+        // on where playback will be by the time the swap happens.
+        let t0 = Instant::now();
+        source
+            .try_seek(now_pos(self))
+            .map_err(|e| format!("seek failed: {e:?}"))?;
+        let target = now_pos(self) + t0.elapsed();
+        source
+            .try_seek(target)
+            .map_err(|e| format!("seek failed: {e:?}"))?;
+
+        let paused = self.is_paused();
+        self.seek_offset = target;
+        if self.player.len() <= 1 {
+            // append + skip_one hands over inside the mixer without clearing it
+            self.player.append(source);
+            self.player.skip_one();
+        } else {
+            // a gapless next track is already queued; it gets buffered again later
+            self.player.clear();
+            self.player.append(source);
+        }
+        if paused {
+            self.player.pause();
+        } else {
+            self.player.play();
+        }
+        Ok(())
+    }
+
+    /// Fallback: if `id` is the current song, drops its open decoder (so the file can be
+    /// rewritten safely) and returns the position to resume from.
+    pub fn release_song_file(&mut self, id: i64) -> Option<EditSuspend> {
+        if self.current_song.as_ref().and_then(|s| s.id) != Some(id) {
+            return None;
+        }
+        let pos = self.seek_offset + self.player.get_pos();
+        let paused = self.is_paused();
+        self.player.clear();
+        Some(EditSuspend { pos, paused })
+    }
+
+    /// Re-opens the current song's file after an edit and continues from where it was.
+    pub fn restore_song_file(&mut self, suspended: EditSuspend) {
+        let Some(song) = self.current_song.clone() else {
+            return;
+        };
+        match Self::decode_source(&song.path) {
+            Ok(mut source) => {
+                if suspended.pos > Duration::ZERO {
+                    let _ = source.try_seek(suspended.pos);
+                }
+                self.seek_offset = suspended.pos;
+                self.player.append(source);
+                if suspended.paused {
+                    self.player.pause();
+                } else {
+                    self.player.play();
+                }
+            }
+            Err(e) => eprintln!("Failed to reopen {} after tag edit: {e}", song.path),
+        }
+    }
+
+    /// Applies edited metadata to the playing song and every queued copy of it,
+    /// then pushes the new state to the UI and OS media controls.
+    pub fn refresh_song_metadata(&mut self, updated: &Song) {
+        if let Some(current) = self.current_song.as_mut() {
+            apply_song_edit(current, updated);
+        }
+        for queued in self.queue.iter_mut() {
+            apply_song_edit(queued, updated);
+        }
+
+        if self
+            .current_song
+            .as_ref()
+            .is_some_and(|s| s.id == updated.id)
+        {
+            self.update_current_metadata();
+            self.update_discord_song(None);
+        }
+        self.emit_state();
+    }
+
     pub fn emit_state(&self) {
         let ordered_queue = self.get_ordered_queue();
 
@@ -781,5 +928,161 @@ impl AudioPlayer {
                 }
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_song_edit, AudioPlayer};
+    use crate::types::{Platform, QualityTier, Song};
+    use rodio::Source;
+    use std::time::Duration;
+
+    fn make_song(id: Option<i64>, title: &str) -> Song {
+        Song {
+            id,
+            path: "/music/track.opus".to_string(),
+            title: title.to_string(),
+            artists: vec!["Artist A".to_string()],
+            album_artist: "Album Artist".to_string(),
+            album: "Album".to_string(),
+            duration_ms: 180_000,
+            track_number: Some(1),
+            genre: None,
+            release_year: None,
+            cover_url: Some("/covers/a.jpg".to_string()),
+            external_cover_url: None,
+            lyrics: Some("original lyrics".to_string()),
+            lyrics_source: None,
+            source: Platform::Local,
+            source_url: None,
+            source_item_id: None,
+            canonical_track_slug: "artist-a-title".to_string(),
+            canonical_album_slug: "artist-a-album".to_string(),
+            quality_tier: QualityTier::Standard,
+        }
+    }
+
+    #[test]
+    fn apply_song_edit_same_id_copies_editable_fields_and_keeps_playback_fields() {
+        let mut target = make_song(Some(7), "Old Title");
+        let mut updated = make_song(Some(7), "New Title");
+        updated.artists = vec!["Artist B".to_string(), "Artist C".to_string()];
+        updated.album = "New Album".to_string();
+        updated.album_artist = "New Album Artist".to_string();
+        updated.track_number = Some(5);
+        updated.canonical_track_slug = "artist-b-new-title".to_string();
+        updated.canonical_album_slug = "artist-b-new-album".to_string();
+        updated.path = "/music/other.mp3".to_string();
+        updated.duration_ms = 1;
+        updated.cover_url = Some("/covers/b.jpg".to_string());
+        updated.lyrics = Some("new lyrics".to_string());
+
+        let applied = apply_song_edit(&mut target, &updated);
+
+        assert!(applied);
+        assert_eq!(target.title, "New Title");
+        assert_eq!(target.artists, vec!["Artist B", "Artist C"]);
+        assert_eq!(target.album, "New Album");
+        assert_eq!(target.album_artist, "New Album Artist");
+        assert_eq!(target.track_number, Some(5));
+        assert_eq!(target.canonical_track_slug, "artist-b-new-title");
+        assert_eq!(target.canonical_album_slug, "artist-b-new-album");
+
+        assert_eq!(target.path, "/music/track.opus");
+        assert_eq!(target.duration_ms, 180_000);
+        assert_eq!(target.cover_url.as_deref(), Some("/covers/a.jpg"));
+        assert_eq!(target.lyrics.as_deref(), Some("original lyrics"));
+        assert_eq!(target.id, Some(7));
+    }
+
+    #[test]
+    fn apply_song_edit_different_id_returns_false_and_leaves_target_unchanged() {
+        let mut target = make_song(Some(7), "Old Title");
+        let before = target.clone();
+        let updated = make_song(Some(8), "New Title");
+
+        let applied = apply_song_edit(&mut target, &updated);
+
+        assert!(!applied);
+        assert_eq!(target.id, before.id);
+        assert_eq!(target.title, before.title);
+        assert_eq!(target.artists, before.artists);
+        assert_eq!(target.album, before.album);
+        assert_eq!(target.album_artist, before.album_artist);
+        assert_eq!(target.track_number, before.track_number);
+        assert_eq!(target.canonical_track_slug, before.canonical_track_slug);
+        assert_eq!(target.canonical_album_slug, before.canonical_album_slug);
+        assert_eq!(target.path, before.path);
+        assert_eq!(target.duration_ms, before.duration_ms);
+        assert_eq!(target.cover_url, before.cover_url);
+        assert_eq!(target.lyrics, before.lyrics);
+    }
+
+    #[test]
+    fn apply_song_edit_target_without_id_returns_false_and_leaves_target_unchanged() {
+        let mut target = make_song(None, "Old Title");
+        let before = target.clone();
+        let updated = make_song(Some(7), "New Title");
+
+        let applied = apply_song_edit(&mut target, &updated);
+
+        assert!(!applied);
+        assert_eq!(target.id, None);
+        assert_eq!(target.title, before.title);
+        assert_eq!(target.artists, before.artists);
+        assert_eq!(target.album, before.album);
+        assert_eq!(target.album_artist, before.album_artist);
+        assert_eq!(target.track_number, before.track_number);
+        assert_eq!(target.canonical_track_slug, before.canonical_track_slug);
+        assert_eq!(target.canonical_album_slug, before.canonical_album_slug);
+    }
+
+    /// Builds a minimal valid 16-bit mono PCM WAV containing `seconds` of silence.
+    fn silent_wav_bytes(sample_rate: u32, seconds: u32) -> Vec<u8> {
+        let channels: u16 = 1;
+        let bits_per_sample: u16 = 16;
+        let block_align = channels * bits_per_sample / 8;
+        let byte_rate = sample_rate * block_align as u32;
+        let data_len = byte_rate * seconds;
+
+        let mut buf = Vec::with_capacity(44 + data_len as usize);
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(36 + data_len).to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        buf.extend_from_slice(&channels.to_le_bytes());
+        buf.extend_from_slice(&sample_rate.to_le_bytes());
+        buf.extend_from_slice(&byte_rate.to_le_bytes());
+        buf.extend_from_slice(&block_align.to_le_bytes());
+        buf.extend_from_slice(&bits_per_sample.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_len.to_le_bytes());
+        buf.resize(44 + data_len as usize, 0);
+        buf
+    }
+
+    #[test]
+    fn decode_from_memory_wav_decodes_and_seeks() {
+        let bytes = silent_wav_bytes(8000, 2);
+
+        let mut source = AudioPlayer::decode_source_from_memory("x.wav", bytes)
+            .expect("valid in-memory WAV should decode");
+
+        source
+            .try_seek(Duration::from_millis(500))
+            .expect("seeking a seekable in-memory WAV should succeed");
+
+        let produced = source.take(100).count();
+        assert!(produced >= 1, "expected at least one sample after seeking, got {produced}");
+    }
+
+    #[test]
+    fn decode_from_memory_rejects_garbage() {
+        let result = AudioPlayer::decode_source_from_memory("x.wav", b"not audio".to_vec());
+
+        assert!(result.is_err());
     }
 }

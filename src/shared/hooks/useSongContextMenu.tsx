@@ -4,12 +4,21 @@ import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
+import { EditLyricsModal } from "@/features/player/ui/EditLyricsModal.tsx";
+import EditSongInfoModal from "@/features/library/ui/EditSongInfoModal.tsx";
+import FetchLyricsModal from "@/features/library/ui/FetchLyricsModal.tsx";
+import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
 
 interface UseSongContextMenuOptions {
   playbackContext: PlaybackContext;
   contextId?: number;
   onPlay?: (song: Song) => void;
   onRemoveFromPlaylist?: (index: number) => void;
+  /** Adds a "Delete..." item (remove from library / delete file). */
+  allowDelete?: boolean;
 }
 
 export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
@@ -87,6 +96,106 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
         },
       },
     ];
+
+    const artistText =
+      song.artists.join(", ") || song.album_artist || "Unknown Artist";
+    const copy = (text: string) =>
+      navigator.clipboard
+        .writeText(text)
+        .catch((e) => console.error("clipboard error: ", e));
+    const canRedownload =
+      !!song.source_url &&
+      (song.source === "youtube" || song.source === "bandcamp");
+
+    items.push(
+      { separator: true, label: "" },
+      {
+        label: "Copy",
+        submenu: [
+          { label: "Title", action: () => copy(song.title) },
+          {
+            label: "Artist – Title",
+            action: () => copy(`${artistText} – ${song.title}`),
+          },
+        ],
+      },
+      { separator: true, label: "" },
+      {
+        label: "Edit Info...",
+        action: () => openModal(<EditSongInfoModal song={song} />),
+      },
+      {
+        label: "Edit Lyrics...",
+        action: () =>
+          openModal(
+            <EditLyricsModal
+              song={song}
+              initialLyrics={song.lyrics ?? ""}
+              initialSource={song.lyrics_source}
+              onSuccess={() => {
+                refreshLibrary().catch((e) =>
+                  console.error("refreshLibrary error: ", e),
+                );
+              }}
+            />,
+          ),
+      },
+      {
+        label: "Fetch Lyrics...",
+        action: () => openModal(<FetchLyricsModal song={song} />),
+      },
+      { separator: true, label: "" },
+      ...(song.source_url
+        ? [
+            {
+              label: "Open Source Page",
+              action: () => {
+                openUrl(song.source_url!).catch((e) =>
+                  console.error("openUrl error: ", e),
+                );
+              },
+            },
+          ]
+        : []),
+      ...(canRedownload
+        ? [
+            {
+              label: "Re-download",
+              action: () => {
+                useLibraryStore
+                  .getState()
+                  .startDownload({
+                    platform: song.source,
+                    downloadType: ItemType.Track,
+                    url: song.source_url!,
+                    artistName: song.album_artist || artistText,
+                    title: song.title,
+                  })
+                  .catch((e) => console.error("re-download error: ", e));
+              },
+            },
+          ]
+        : []),
+      {
+        label: "Show in Explorer",
+        action: () => {
+          revealItemInDir(song.path).catch((e) =>
+            console.error("revealItemInDir error: ", e),
+          );
+        },
+      },
+    );
+
+    if (options.allowDelete) {
+      items.push(
+        { separator: true, label: "" },
+        {
+          label: "Delete...",
+          danger: true,
+          action: () => openModal(<DeleteSongModal songs={[song]} />),
+        },
+      );
+    }
 
     if (index === undefined) return items;
 

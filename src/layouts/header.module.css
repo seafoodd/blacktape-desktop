@@ -18,16 +18,11 @@
     }
 }
 
-.middleSection {
-    position: absolute;
-    inset: 0;
-    width: fit-content;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: auto;
-}
+
 
 .searchBar {
+    position: absolute;
+    inset: 0;
+    margin: auto;
     height: fit-content;
 }

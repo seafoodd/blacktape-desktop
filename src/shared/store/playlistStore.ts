@@ -110,6 +110,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   },
 
   removeSongs: async (playlistId: number, positions: number[]) => {
+    console.log("removeSongs", playlistId, positions);
     const currentSongs = get().activePlaylistSongs;
     const positionsSet = new Set(positions);
 
@@ -120,7 +121,10 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     set({ activePlaylistSongs: newSongs });
 
     try {
-      await playlistApi.removeSongs(playlistId, positions);
+      await playlistApi.removeSongs(
+        playlistId,
+        positions.map((p) => p + 1),
+      );
     } catch (error) {
       console.error("Failed to remove songs:", error);
       set({ activePlaylistSongs: currentSongs });

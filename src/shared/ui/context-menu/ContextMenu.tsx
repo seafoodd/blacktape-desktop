@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./context-menu.module.css";
 import clsx from "clsx";
+import { MdArrowRight } from "react-icons/md";
 
 export interface ContextMenuPosition {
   x: number;
@@ -13,6 +14,8 @@ export interface MenuItemOption {
   action?: () => void;
   separator?: boolean;
   danger?: boolean;
+  /** Nested items shown in a flyout on hover/click; `action` is ignored when set. */
+  submenu?: MenuItemOption[];
 }
 
 interface ContextMenuProps {
@@ -25,6 +28,15 @@ export const ContextMenu = ({ position, onClose, items }: ContextMenuProps) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] =
     useState<ContextMenuPosition>(position);
+  const [openSub, setOpenSub] = useState<{ index: number; flip: boolean } | null>(
+    null,
+  );
+
+  const showSubmenu = (index: number, el: HTMLElement) => {
+    // open to the left when the flyout would run off the right edge
+    const flip = el.getBoundingClientRect().right + 200 > window.innerWidth;
+    setOpenSub({ index, flip });
+  };
 
   // Adjust menu coordinates if it overflows the viewport window boundaries
   useLayoutEffect(() => {
@@ -89,6 +101,52 @@ export const ContextMenu = ({ position, onClose, items }: ContextMenuProps) => {
       {items.map((item, index) => {
         if (item.separator) {
           return <div key={`sep-${index}`} className={styles.separator} />;
+        }
+
+        if (item.submenu) {
+          const isOpen = openSub?.index === index;
+          return (
+            <div
+              key={`${item.label}-${index}`}
+              className={styles.submenuWrap}
+              onMouseEnter={(e) => showSubmenu(index, e.currentTarget)}
+              onMouseLeave={() => setOpenSub(null)}
+            >
+              <button
+                className={clsx(styles.item, {
+                  [styles.itemDanger]: item.danger,
+                })}
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
+                onClick={(e) => showSubmenu(index, e.currentTarget.parentElement!)}
+              >
+                <span>{item.label}</span>
+                <MdArrowRight className={styles.arrow} size={24} />
+              </button>
+              {isOpen && (
+                <div
+                  className={clsx(styles.menu, styles.submenu, {
+                    [styles.submenuFlip]: openSub?.flip,
+                  })}
+                >
+                  {item.submenu.map((sub, subIndex) => (
+                    <button
+                      key={`${sub.label}-${subIndex}`}
+                      className={clsx(styles.item, {
+                        [styles.itemDanger]: sub.danger,
+                      })}
+                      onClick={() => {
+                        sub.action?.();
+                        onClose();
+                      }}
+                    >
+                      <span>{sub.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
         }
 
         return (

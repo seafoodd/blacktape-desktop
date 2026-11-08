@@ -47,6 +47,10 @@
     --color-warning: #f59e0b;
     --color-error: #dc2626;
     --color-info: #3b82f6;
+
+    /* Rich Sync (word-level lyrics) badge */
+    --color-rich-sync: #b88a12;
+    --color-on-rich-sync: #ffffff;
 }
 
 /* Adjust shadows and states for dark palettes */

@@ -15,7 +15,7 @@ import {
   MdVolumeUp,
 } from "react-icons/md";
 import clsx from "clsx";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 import placeholderSongImage from "@/assets/react.svg";
 import { RepeatMode } from "@/shared/types.ts";
 
@@ -130,8 +130,10 @@ export const PlayerControls = () => {
             <>
               {currentSong.cover_url ? (
                 <img
+ loading="lazy"
+ decoding="async"
                   className={styles.currentSongCover}
-                  src={convertFileSrc(currentSong.cover_url)}
+                  src={coverSrc(currentSong.cover_url, 64)}
                   alt={currentSong.title}
                 />
               ) : (

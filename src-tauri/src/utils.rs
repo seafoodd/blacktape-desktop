@@ -2,7 +2,7 @@ use crate::types::QualityTier;
 use lofty::file::AudioFile;
 use std::path::Path;
 use winapi::um::fileapi;
-use winapi::um::winnt::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL};
+use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
 
 pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
@@ -13,10 +13,18 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
             .chain(std::iter::once(0))
             .collect();
         unsafe {
-            if hidden {
-                fileapi::SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN);
+            let current = fileapi::GetFileAttributesW(wide.as_ptr());
+            if current != fileapi::INVALID_FILE_ATTRIBUTES {
+                let new_attrs = if hidden {
+                    current | FILE_ATTRIBUTE_HIDDEN
+                } else {
+                    current & !FILE_ATTRIBUTE_HIDDEN
+                };
+                if fileapi::SetFileAttributesW(wide.as_ptr(), new_attrs) == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
             } else {
-                fileapi::SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_NORMAL);
+                return Err(std::io::Error::last_os_error());
             }
         }
         Ok(())
@@ -25,6 +33,35 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     {
         Ok(())
     }
+}
+
+pub fn force_remove_dir_all(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if std::fs::remove_dir_all(path).is_ok() {
+        return Ok(());
+    }
+
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let _ = force_remove_dir_all(&p);
+            } else {
+                if let Ok(metadata) = std::fs::metadata(&p) {
+                    let mut perms = metadata.permissions();
+                    #[allow(clippy::permissions_set_readonly_false)]
+                    perms.set_readonly(false);
+                    let _ = std::fs::set_permissions(&p, perms);
+                }
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+
+    std::fs::remove_dir_all(path)
 }
 
 pub fn sanitize(name: &str) -> String {

@@ -15,6 +15,7 @@ interface SongListItemProps {
   playbackContext: PlaybackContext;
   contextId?: number;
   index?: number;
+  allowDelete?: boolean;
 }
 
 const SongListItem = ({
@@ -23,12 +24,14 @@ const SongListItem = ({
   playbackContext,
   contextId,
   index,
+  allowDelete,
 }: SongListItemProps) => {
   const { currentSong, isPlaying } = useAudioStore();
   const { getContextMenuItems } = useSongContextMenu({
     onPlay: (song) => onPlay(song.id),
     playbackContext,
     contextId,
+    allowDelete,
   });
 
   const [activeMenu, setActiveMenu] = useState<{

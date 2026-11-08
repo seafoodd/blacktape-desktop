@@ -8,7 +8,7 @@ import React, { useState } from "react";
 import { ContextMenu, ContextMenuPosition } from "@/shared/ui/context-menu";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { coverSrc } from "@/shared/lib/cover";
 
 interface SongGridProps {
   songs: Song[];
@@ -205,7 +205,7 @@ const SongGridRow = ({
   };
 
   const isCurrent = currentSong && song.id === currentSong.id;
-  const coverSrc = song.cover_url ? convertFileSrc(song.cover_url) : undefined;
+  const songCoverSrc = song.cover_url ? coverSrc(song.cover_url, 48) : undefined;
 
   const isTopTarget =
     dropTarget?.index === index && dropTarget.position === "top";
@@ -244,8 +244,8 @@ const SongGridRow = ({
         </div>
 
         <div className={clsx(styles.cell, styles.cellTitle)}>
-          {coverSrc && (
-            <img src={coverSrc} className={styles.songCover} alt="" />
+          {songCoverSrc && (
+            <img loading="lazy" decoding="async" src={songCoverSrc} className={styles.songCover} alt="" />
           )}
           <span className="truncate">{song.title}</span>
         </div>
