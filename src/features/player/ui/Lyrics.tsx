@@ -46,6 +46,14 @@ const PROGRESS_POLL_MS = 250;
 
 const FILL_STORAGE_KEY = "lyrics.lineFill";
 
+/**
+ * A line becomes active this much BEFORE its timestamp. After a click-seek the
+ * player lands a few ms before the requested time (decoder frame boundaries,
+ * float rounding), which briefly highlighted the previous line. Highlighting
+ * slightly early is also how most lyric players behave.
+ */
+const LINE_LEAD_MS = 120;
+
 interface LyricsProps {
   className?: string;
 }
@@ -84,6 +92,8 @@ export const Lyrics = ({ className }: LyricsProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLDivElement | null>(null);
   const [userScrolled, setUserScrolled] = useState<boolean>(false);
+  // Scrolled away from the very top: the toggle button grows (see .fillToggleLarge)
+  const [scrolledDown, setScrolledDown] = useState<boolean>(false);
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -292,7 +302,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     let found = -1;
     for (let i = 0; i < parsedLyrics.lines.length; i++) {
       const lineTime = parsedLyrics.lines[i].timeMs ?? 0;
-      if (lineTime <= currentTimeMs) {
+      if (lineTime <= currentTimeMs + LINE_LEAD_MS) {
         found = i;
       } else {
         break;
@@ -305,12 +315,14 @@ export const Lyrics = ({ className }: LyricsProps) => {
   const activeLineEndMs = useMemo(() => {
     if (!parsedLyrics?.isTimed || activeIndex < 0) return 0;
     const lines = parsedLyrics.lines;
-    return (
-      lines[activeIndex + 1]?.timeMs ??
-      currentSong?.duration_ms ??
-      lines[activeIndex].timeMs ??
-      0
-    );
+    const start = lines[activeIndex].timeMs ?? 0;
+    const next = lines[activeIndex + 1]?.timeMs;
+    // The next line activates LINE_LEAD_MS early, so the fill must be done by then.
+    const end =
+      next !== undefined
+        ? next - LINE_LEAD_MS
+        : (currentSong?.duration_ms ?? start);
+    return Math.max(end, start);
   }, [parsedLyrics, activeIndex, currentSong?.duration_ms]);
 
   // Playback position anchor: the store position is only refreshed every
@@ -361,6 +373,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
 
   // Handle user manual scrolling: pause auto-scroll temporarily
   const handleScroll = () => {
+    setScrolledDown((containerRef.current?.scrollTop ?? 0) > 4);
     setUserScrolled(true);
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current);
@@ -373,6 +386,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
   // Reset scroll state on song change
   useEffect(() => {
     setUserScrolled(false);
+    setScrolledDown(false);
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
@@ -426,6 +440,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
                 type="button"
                 className={clsx(styles.fillToggle, {
                   [styles.fillToggleOn]: fillEnabled,
+                  [styles.fillToggleLarge]: scrolledDown,
                 })}
                 onClick={toggleFill}
                 aria-pressed={fillEnabled}
@@ -502,8 +517,13 @@ export const Lyrics = ({ className }: LyricsProps) => {
                     // Word-level timing (Enhanced LRC / richsync): each word fills on its own beat
                     <span className={clsx(styles.lineText, styles.wordMode)}>
                       {line.words.map((word, wi, words) => {
-                        const end =
+                        const wordEnd =
                           word.endMs ?? words[wi + 1]?.startMs ?? activeLineEndMs;
+                        // The last word must finish before the next line takes over.
+                        const end =
+                          wi === words.length - 1 && activeLineEndMs > word.startMs
+                            ? Math.min(wordEnd, activeLineEndMs)
+                            : wordEnd;
                         return (
                           <span key={wi}>
                             {wi > 0 && " "}

@@ -32,7 +32,10 @@
     min-height: 1.5em;
     line-height: 1.5;
     border-radius: var(--radius-lg);
-    transition: color 200ms ease, opacity 200ms ease, transform 200ms ease, background-color 200ms ease;
+    /* No opacity/transform here: animating them promotes every hovered line to its own
+       compositor layer, whose text snaps to a different pixel grid and visibly jitters
+       while scrolling. Dimming is done with color instead. */
+    transition: color 200ms ease, background-color 200ms ease;
     user-select: text;
 }
 
@@ -42,16 +45,15 @@
 
 .timedLine {
     cursor: pointer;
-    color: var(--color-muted);
-    opacity: 0.5;
+    color: color-mix(in srgb, var(--color-muted) 50%, transparent);
     padding: 0.35em 0.6em;
     max-width: fit-content;
     /* One weight for every timed line: bold glyphs are wider, so changing the
        weight on the active line would shift/re-wrap it. Active is shown via color/fill. */
     font-weight: 600;
 
-    &:hover {
-        opacity: 0.85;
+    &:not(.activeLine):hover {
+        color: color-mix(in srgb, var(--color-muted) 85%, transparent);
         background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
     }
 }
@@ -62,7 +64,6 @@
 
 .activeLine {
     color: var(--color-text);
-    opacity: 1;
     /*transform: scale(1.02);*/
     /*transform-origin: left center;*/
     background-color: color-mix(in srgb, var(--color-text) 8%, transparent);
@@ -90,19 +91,17 @@
 }
 
 .passedLine {
-    color: var(--color-muted);
-    opacity: 0.4;
+    color: color-mix(in srgb, var(--color-muted) 40%, transparent);
 }
 
 .futureLine {
-    color: var(--color-muted);
-    opacity: 0.6;
+    color: color-mix(in srgb, var(--color-muted) 60%, transparent);
 }
 
 /* Pinned to the top-right of the lyrics while scrolling (zero height, so it takes no space) */
 .stickyActions {
     position: sticky;
-    top: var(--spacing-xs);
+    top: 0;
     z-index: 2;
     display: flex;
     justify-content: flex-end;
@@ -115,21 +114,34 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.4em;
-    height: 2.4em;
+    /* sized from the header text (--font-sm) so it lines up with the source row */
+    width: 2em;
+    height: 2em;
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background-color: var(--color-surface);
     color: var(--color-muted);
-    font-size: var(--font-md);
+    font-size: var(--font-sm);
     cursor: pointer;
-    transition: color 100ms linear, background-color 100ms linear;
+    transition:
+        color 100ms linear,
+        background-color 100ms linear,
+        width 150ms ease,
+        height 150ms ease,
+        font-size 150ms ease;
 
     &:hover {
         /*color: var(--color-text);*/
         background-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-surface));
     }
+}
+
+/* Compact next to the source header at the top; bigger once the list is scrolled */
+.fillToggleLarge {
+    font-size: var(--font-md);
+    width: 2.4em;
+    height: 2.4em;
 }
 
 .fillToggleOn {
@@ -138,8 +150,8 @@
 }
 
 .fillToggleIcon {
-    width: 20px;
-    height: 20px;
+    width: 1.3em;
+    height: 1.3em;
 }
 
 /* Slim header above the lyrics; text aligned with the lyric lines (same inset as the lines) */
@@ -149,7 +161,7 @@
     gap: 0.5em;
     margin-bottom: 0.75em;
     /* horizontal inset matches the lyric lines (0.6em at the lyrics font size) */
-    padding: 0.15em calc(var(--font-md) * 2.4) 0.75em calc(var(--font-lg) * 0.6);
+    padding: 0.15em calc(var(--font-sm) * 2.6) 0.75em calc(var(--font-lg) * 0.6);
     border-bottom: 1px solid var(--color-border);
     color: var(--color-muted);
     font-size: var(--font-sm);
