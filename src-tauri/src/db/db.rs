@@ -94,6 +94,39 @@ impl Database {
         Ok(())
     }
 
+    /// Updates user-editable metadata and recomputes the canonical slugs.
+    pub async fn update_song_info(
+        &self,
+        id: i64,
+        title: &str,
+        artists: &[String],
+        album: &str,
+        album_artist: &str,
+        track_number: Option<i32>,
+        genre: Option<&str>,
+        release_year: Option<i32>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE songs SET title = ?, artists = ?, album = ?, album_artist = ?,
+                track_number = ?, genre = ?, release_year = ?,
+                canonical_track_slug = ?, canonical_album_slug = ?
+             WHERE id = ?",
+        )
+        .bind(title)
+        .bind(sqlx::types::Json(artists))
+        .bind(album)
+        .bind(album_artist)
+        .bind(track_number)
+        .bind(genre)
+        .bind(release_year)
+        .bind(crate::utils::make_canonical_slug(album_artist, title))
+        .bind(crate::utils::make_canonical_slug(album_artist, album))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn delete_song_lyrics(&self, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE songs SET lyrics = NULL, lyrics_source = NULL WHERE id = ?")
             .bind(id)
@@ -830,5 +863,94 @@ mod tests {
         let remaining_after = db.get_playlist_songs(playlist_id).await.unwrap();
         assert_eq!(remaining_after.len(), 1);
         assert_eq!(remaining_after[0].title, "B");
+    }
+
+    #[tokio::test]
+    async fn test_delete_songs_removes_rows_and_playlist_links() {
+        let db = setup_test_db().await;
+        let playlist_id = db
+            .create_playlist("Test Playlist", None, None)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO songs (path, title, duration_ms) VALUES ('/a.mp3', 'A', 1000), ('/b.mp3', 'B', 2000), ('/c.mp3', 'C', 3000)")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        db.add_songs_to_playlist(playlist_id, &[1, 2, 3])
+            .await
+            .unwrap();
+
+        // Delete the middle song
+        db.delete_songs(vec![2]).await.unwrap();
+
+        let song_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM songs ORDER BY id ASC")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(song_ids, vec![1, 3]);
+
+        let songs = db.get_playlist_songs(playlist_id).await.unwrap();
+        assert_eq!(songs.len(), 2);
+        assert_eq!(songs[0].title, "A");
+        assert_eq!(songs[1].title, "C");
+
+        // Empty input is a no-op
+        db.delete_songs(vec![]).await.unwrap();
+
+        let song_ids_after: Vec<i64> = sqlx::query_scalar("SELECT id FROM songs ORDER BY id ASC")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(song_ids_after, vec![1, 3]);
+        let songs_after = db.get_playlist_songs(playlist_id).await.unwrap();
+        assert_eq!(songs_after.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_song_info_updates_fields_and_slugs() {
+        let db = setup_test_db().await;
+
+        sqlx::query(
+            "INSERT INTO songs (path, title, duration_ms, album_artist, album, track_number) VALUES ('/a.mp3', 'Old Title', 1000, 'Old Artist', 'Old Album', 1)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        db.update_song_info(
+            1,
+            "New Title",
+            &["A".to_string(), "B".to_string()],
+            "New Album",
+            "A",
+            Some(3),
+            Some("Rock"),
+            Some(1999),
+        )
+        .await
+        .unwrap();
+
+        let songs = db.get_songs_by_ids(&[1]).await.unwrap();
+        assert_eq!(songs.len(), 1);
+        let song = &songs[0];
+        assert_eq!(song.title, "New Title");
+        assert_eq!(song.artists, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(song.album, "New Album");
+        assert_eq!(song.album_artist, "A");
+        assert_eq!(song.track_number, Some(3));
+        assert_eq!(song.genre.as_deref(), Some("Rock"));
+        assert_eq!(song.release_year, Some(1999));
+        assert_eq!(song.canonical_track_slug, "a-new-title");
+        assert_eq!(song.canonical_album_slug, "a-new-album");
+
+        // Clearing the track number stores NULL
+        db.update_song_info(1, "New Title", &["A".to_string()], "New Album", "A", None, None, None)
+            .await
+            .unwrap();
+
+        let songs = db.get_songs_by_ids(&[1]).await.unwrap();
+        assert_eq!(songs[0].track_number, None);
     }
 }

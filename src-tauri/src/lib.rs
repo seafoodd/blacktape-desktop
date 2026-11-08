@@ -6,7 +6,9 @@ pub mod download;
 mod lyrics;
 mod playlists;
 pub mod scan;
+pub mod song_edit;
 mod search;
+pub mod tags;
 mod thumbs;
 pub mod types;
 pub mod utils;
@@ -275,6 +277,160 @@ async fn delete_lyrics(
     db.delete_song_lyrics(id).await.map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Pushes edited metadata to the player (current song, queue, media controls).
+fn refresh_player_songs(player_state: &Mutex<AudioPlayer>, songs: &[Song]) {
+    if let Ok(mut player) = player_state.lock() {
+        for song in songs {
+            player.refresh_song_metadata(song);
+        }
+    }
+}
+
+/// Writes edited metadata into the song's file tags, then the database (the DB is
+/// untouched if the file write fails). If the song is playing right now its file is
+/// released first and playback resumes from the same position afterwards: rewriting
+/// tags under an open decoder otherwise makes the track stop.
+async fn save_song_with_player(
+    db: &Database,
+    player: &Mutex<AudioPlayer>,
+    id: i64,
+    info: &song_edit::SongInfo,
+) -> Result<Song, String> {
+    let song = db.require_song_by_id(id).await?;
+    {
+        // The lock is held for the whole write so the player's background watchers
+        // cannot react to the temporarily empty queue.
+        let mut p = player
+            .lock()
+            .map_err(|_| "Player lock poisoned".to_string())?;
+        // Preferred: keep playing from an in-memory copy (no gap). If that is not
+        // possible, fall back to closing the file and resuming afterwards.
+        let suspended = match p.move_song_to_memory(id) {
+            Ok(()) => None,
+            Err(e) => {
+                eprintln!("[tag edit] in-memory handover failed ({e}); falling back");
+                p.release_song_file(id)
+            }
+        };
+        let result = song_edit::write_song_file(&song, info);
+        if let Some(s) = suspended {
+            p.restore_song_file(s);
+        }
+        result?;
+    }
+    song_edit::update_song_db(db, id, info).await
+}
+
+/// Saves edited metadata of one song into the file's tags and the database.
+#[command]
+async fn update_song_info(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+    id: i64,
+    title: String,
+    artists: String,
+    album: String,
+    album_artist: String,
+    track_number: Option<i32>,
+    genre: Option<String>,
+    release_year: Option<i32>,
+) -> Result<(), String> {
+    let info = song_edit::SongInfo::from_input(
+        &title,
+        &artists,
+        &album,
+        &album_artist,
+        track_number,
+        genre.as_deref(),
+        release_year,
+    )?;
+
+    let updated = {
+        let db = state.lock().await;
+        save_song_with_player(&db, &player_state, id, &info).await?
+    };
+    refresh_player_songs(&player_state, &[updated]);
+    Ok(())
+}
+
+/// Changes album-level fields for every given song (title, artists and track
+/// numbers are kept). `genre` / `release_year` of `None` keep each song's own value.
+#[command]
+async fn update_album_info(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+    ids: Vec<i64>,
+    album: String,
+    album_artist: String,
+    genre: Option<String>,
+    release_year: Option<i32>,
+) -> Result<(), String> {
+    let mut updated = Vec::with_capacity(ids.len());
+    let mut failures = Vec::new();
+    {
+        let db = state.lock().await;
+        for id in ids {
+            let song = db.require_song_by_id(id).await?;
+            let info = song_edit::SongInfo::from_input(
+                &song.title,
+                &song.artists.join(", "),
+                &album,
+                &album_artist,
+                song.track_number,
+                genre.as_deref().or(song.genre.as_deref()),
+                release_year.or(song.release_year),
+            )?;
+            match save_song_with_player(&db, &player_state, id, &info).await {
+                Ok(s) => updated.push(s),
+                Err(e) => failures.push(format!("{}: {}", song.title, e)),
+            }
+        }
+    }
+    refresh_player_songs(&player_state, &updated);
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to update {} track(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        ))
+    }
+}
+
+/// Removes songs from the library. With `delete_file` the audio files are also
+/// deleted from disk (and their folders, if that leaves them empty); otherwise only
+/// the database entries go away (a later rescan may add them back). Songs whose
+/// file cannot be deleted stay in the library and are reported in the error.
+#[command]
+async fn delete_songs(
+    state: State<'_, tokio::sync::Mutex<Database>>,
+    ids: Vec<i64>,
+    delete_file: bool,
+) -> Result<(), String> {
+    let db = state.lock().await;
+    let songs = db
+        .get_songs_by_ids(&ids)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let outcome = song_edit::delete_song_files(&songs, delete_file);
+    db.delete_songs(outcome.deleted_ids)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if outcome.failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not delete {} file(s):\n{}",
+            outcome.failures.len(),
+            outcome.failures.join("\n")
+        ))
+    }
 }
 
 #[command]
@@ -551,6 +707,9 @@ pub fn run() {
             refetch_lyrics,
             save_lyrics,
             delete_lyrics,
+            delete_songs,
+            update_album_info,
+            update_song_info,
             // Search
             get_search_suggestions,
             // Download
