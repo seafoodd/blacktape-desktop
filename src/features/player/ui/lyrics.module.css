@@ -32,7 +32,6 @@
     min-height: 1.5em;
     line-height: 1.5;
     border-radius: 8px;
-    padding: 6px 10px;
     transition: color 200ms ease, opacity 200ms ease, transform 200ms ease, background-color 200ms ease;
     user-select: text;
 }
@@ -45,6 +44,7 @@
     cursor: pointer;
     color: var(--color-muted);
     opacity: 0.5;
+    padding: 6px 10px;
 
     &:hover {
         opacity: 0.85;
@@ -76,12 +76,14 @@
 }
 
 .source {
+    display: flex;
     margin-top: 1.6em;
     padding-top: 12px;
     border-top: 1px solid var(--color-border);
     color: var(--color-muted);
     font-size: var(--font-sm, 0.875rem);
     text-align: start;
+    gap: 4px;
 
     a {
         color: unset;
@@ -93,4 +95,9 @@
             color: var(--color-text);
         }
     }
+}
+
+.sourceUrl {
+    display: block;
+    min-width: 0;
 }

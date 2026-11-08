@@ -357,6 +357,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
                   e.preventDefault();
                   openUrl(source);
                 }}
+                className={clsx(styles.sourceUrl, "truncate")}
               >
                 {source.replace(/^https?:\/\//, "")}
               </a>
