@@ -32,6 +32,11 @@ interface PlaylistState {
     fromPosition: number,
     toPosition: number,
   ) => Promise<void>;
+  moveSongs: (
+    playlistId: number,
+    indices: number[],
+    insertAt: number,
+  ) => Promise<void>;
 }
 
 export const usePlaylistStore = create<PlaylistState>((set, get) => ({
@@ -129,6 +134,19 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       console.error("Failed to remove songs:", error);
       set({ activePlaylistSongs: currentSongs });
     }
+  },
+
+  /**
+   * Moves the rows at 0-based `indices` as a block to just before the row that is at
+   * `insertAt` (0-based index in the current list, `length` = the end).
+   */
+  moveSongs: async (playlistId: number, indices: number[], insertAt: number) => {
+    await playlistApi.moveSongs(
+      playlistId,
+      indices.map((i) => i + 1),
+      insertAt + 1,
+    );
+    await get().selectPlaylist(playlistId);
   },
 
   reorderSongs: async (

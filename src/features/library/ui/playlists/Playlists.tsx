@@ -1,3 +1,4 @@
+import { addSongsToPlaylist } from "@/features/library/lib/addToPlaylist.tsx";
 import { SONG_DRAG_MIME, decodeSongDrag } from "@/shared/lib/dragSongs.ts";
 import styles from "./playlists.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
@@ -22,7 +23,6 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     fetchPlaylists,
     selectPlaylist,
     activePlaylistId,
-    addSongs,
   } = usePlaylistStore();
   const { setActiveView, setSelectedTab } = useLibraryStore();
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<number | null>(
@@ -68,7 +68,7 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     try {
       const songIds = decodeSongDrag(data);
       if (songIds.length === 0) return;
-      await addSongs(playlistId, songIds);
+      await addSongsToPlaylist(playlistId, songIds);
       await fetchPlaylists();
     } catch (err) {
       console.error("Failed to add song to playlist via drag and drop:", err);

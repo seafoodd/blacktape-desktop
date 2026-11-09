@@ -27,7 +27,8 @@ use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask, TaskR
 use crate::lyrics::{fetch_lyrics, fetch_lyrics_from_provider, LyricsSource};
 use crate::playlists::commands::{
     add_songs_to_playlist, create_playlist, delete_playlist, get_all_playlists, get_playlist_by_id,
-    get_playlist_songs, remove_songs_from_playlist, reorder_playlist_song, update_playlist_details,
+    get_playlist_songs, move_playlist_songs, remove_songs_from_playlist, reorder_playlist_song,
+    update_playlist_details,
 };
 use crate::search::{process_raw_results, SearchSuggestion};
 use crate::types::{Album, ArtistSummary, DownloadType, Platform};
@@ -750,6 +751,7 @@ pub fn run() {
             add_songs_to_playlist,
             remove_songs_from_playlist,
             reorder_playlist_song,
+            move_playlist_songs,
             // Trash
             trash::trash_songs,
             trash::list_trash,

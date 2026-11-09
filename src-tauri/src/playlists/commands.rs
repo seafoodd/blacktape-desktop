@@ -111,6 +111,19 @@ pub async fn remove_songs_from_playlist(
 // }
 
 #[command]
+pub async fn move_playlist_songs(
+    state: State<'_, Mutex<Database>>,
+    playlist_id: i64,
+    positions: Vec<i64>,
+    insert_before: i64,
+) -> Result<(), String> {
+    let db = state.lock().await;
+    db.move_playlist_songs(playlist_id, &positions, insert_before)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
 pub async fn reorder_playlist_song(
     state: State<'_, Mutex<Database>>,
     playlist_id: i64,

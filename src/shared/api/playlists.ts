@@ -25,6 +25,16 @@ export const playlistApi = {
     invoke<Song[]>("get_playlist_songs", { playlistId }),
   addSongs: (playlistId: number, songIds: number[]) =>
     invoke<void>("add_songs_to_playlist", { playlistId, songIds }),
+  moveSongs: (
+    playlistId: number,
+    positions: number[],
+    insertBefore: number,
+  ) =>
+    invoke<void>("move_playlist_songs", {
+      playlistId,
+      positions,
+      insertBefore,
+    }),
   removeSongs: async (playlistId: number, positions: number[]) => {
     await invoke("remove_songs_from_playlist", { playlistId, positions });
   },

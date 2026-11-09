@@ -79,6 +79,11 @@ pub struct PlayerState {
     pub shuffle_mode: bool,
     pub repeat_mode: RepeatMode,
     pub queue: Vec<Song>,
+    /// Position of the current song in `queue` (play order).
+    pub queue_cursor: Option<usize>,
+    /// Index of the current song in the list playback was started from (differs from
+    /// `queue_cursor` when shuffled). Lets the UI tell duplicates of one song apart.
+    pub source_index: Option<usize>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

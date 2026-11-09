@@ -549,6 +549,63 @@ impl Database {
         Ok(())
     }
 
+    /// Moves several rows (1-based `positions`) as one block so that they end up
+    /// before the row that was at `insert_before` (1-based, `len + 1` = the end).
+    pub async fn move_playlist_songs(
+        &self,
+        playlist_id: i64,
+        positions: &[i64],
+        insert_before: i64,
+    ) -> Result<(), Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let ids: Vec<(i64,)> = sqlx::query_as(
+            "SELECT id FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
+        )
+        .bind(playlist_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let len = ids.len();
+
+        if insert_before < 1
+            || insert_before as usize > len + 1
+            || positions.is_empty()
+            || positions.iter().any(|&p| p < 1 || p as usize > len)
+        {
+            return Err(Error::RowNotFound);
+        }
+
+        let selected: Vec<usize> = positions.iter().map(|&p| p as usize - 1).collect();
+        let order = crate::playlists::ordering::move_block_order(
+            len,
+            &selected,
+            insert_before as usize - 1,
+        );
+
+        // Park every row above the final range first (positions are UNIQUE per playlist).
+        sqlx::query("UPDATE playlist_songs SET position = position + ? WHERE playlist_id = ?")
+            .bind(len as i64 + 1)
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for (new_index, old_index) in order.iter().enumerate() {
+            sqlx::query("UPDATE playlist_songs SET position = ? WHERE id = ?")
+                .bind(new_index as i64 + 1)
+                .bind(ids[*old_index].0)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query("UPDATE playlists SET date_modified = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn reorder_playlist_song(
         &self,
         playlist_id: i64,
@@ -1211,5 +1268,160 @@ pub(crate) mod tests {
 
         let songs = db.get_songs_by_ids(&[1]).await.unwrap();
         assert_eq!(songs[0].track_number, None);
+    }
+
+    /// Creates a playlist whose rows are `song_for_row` in order (position i+1 gets
+    /// `song_for_row[i]`). Songs 1..=max are inserted first so the ids exist.
+    async fn setup_move_playlist(db: &Database, song_for_row: &[i64]) -> i64 {
+        let playlist_id = db.create_playlist("Moves", None, None).await.unwrap();
+        let max_song = *song_for_row.iter().max().unwrap();
+        for i in 1..=max_song {
+            sqlx::query("INSERT INTO songs (path, title, duration_ms) VALUES (?, ?, 1000)")
+                .bind(format!("/s{i}.mp3"))
+                .bind(format!("S{i}"))
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
+        for (i, song_id) in song_for_row.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO playlist_songs (playlist_id, song_id, position) VALUES (?, ?, ?)",
+            )
+            .bind(playlist_id)
+            .bind(*song_id)
+            .bind(i as i64 + 1)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        }
+        playlist_id
+    }
+
+    /// (playlist_songs.id, song_id, position) for every row, ordered by position.
+    async fn playlist_rows(db: &Database, playlist_id: i64) -> Vec<(i64, i64, i64)> {
+        sqlx::query_as(
+            "SELECT id, song_id, position FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC",
+        )
+        .bind(playlist_id)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap()
+    }
+
+    fn row_ids(rows: &[(i64, i64, i64)]) -> Vec<i64> {
+        rows.iter().map(|r| r.0).collect()
+    }
+
+    fn song_ids(rows: &[(i64, i64, i64)]) -> Vec<i64> {
+        rows.iter().map(|r| r.1).collect()
+    }
+
+    fn positions(rows: &[(i64, i64, i64)]) -> Vec<i64> {
+        rows.iter().map(|r| r.2).collect()
+    }
+
+    #[tokio::test]
+    async fn test_move_playlist_songs_moves_block_and_renumbers() {
+        let db = setup_test_db().await;
+        // Row ids and song ids both 1..=5 in order.
+        let playlist_id = setup_move_playlist(&db, &[1, 2, 3, 4, 5]).await;
+
+        // Move positions 2 and 4 (S2, S4) before position 1.
+        db.move_playlist_songs(playlist_id, &[2, 4], 1).await.unwrap();
+
+        let rows = playlist_rows(&db, playlist_id).await;
+        assert_eq!(song_ids(&rows), vec![2, 4, 1, 3, 5]);
+        assert_eq!(row_ids(&rows), vec![2, 4, 1, 3, 5]);
+        // No gaps or duplicates: positions are exactly 1..=5.
+        assert_eq!(positions(&rows), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn test_move_playlist_songs_moves_block_to_end() {
+        let db = setup_test_db().await;
+        let playlist_id = setup_move_playlist(&db, &[1, 2, 3, 4, 5]).await;
+
+        // Move positions 1 and 2 before position 6 (len + 1 = end).
+        db.move_playlist_songs(playlist_id, &[1, 2], 6).await.unwrap();
+
+        let rows = playlist_rows(&db, playlist_id).await;
+        assert_eq!(song_ids(&rows), vec![3, 4, 5, 1, 2]);
+        assert_eq!(positions(&rows), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn test_move_playlist_songs_moves_by_position_not_song_id() {
+        let db = setup_move_playlist_with_duplicates().await;
+        // Playlist: S1, S2, S1, S3, S1 (song 1 appears at positions 1, 3, 5).
+        let playlist_id = 1;
+
+        // Move only the row at position 3 (a duplicate of S1) before position 1.
+        db.move_playlist_songs(playlist_id, &[3], 1).await.unwrap();
+
+        let rows = playlist_rows(&db, playlist_id).await;
+        assert_eq!(row_ids(&rows), vec![3, 1, 2, 4, 5]);
+        assert_eq!(song_ids(&rows), vec![1, 1, 2, 3, 1]);
+        assert_eq!(positions(&rows), vec![1, 2, 3, 4, 5]);
+
+        // Current order: ids [3,1,2,4,5]. Move positions 1 and 3 (ids 3 and 2) to the end.
+        db.move_playlist_songs(playlist_id, &[1, 3], 6).await.unwrap();
+
+        let rows = playlist_rows(&db, playlist_id).await;
+        assert_eq!(row_ids(&rows), vec![1, 4, 5, 3, 2]);
+        assert_eq!(song_ids(&rows), vec![1, 3, 1, 1, 2]);
+        assert_eq!(positions(&rows), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn test_move_playlist_songs_noop_drops_keep_order() {
+        let db = setup_test_db().await;
+        let playlist_id = setup_move_playlist(&db, &[1, 2, 3, 4, 5]).await;
+        let before = playlist_rows(&db, playlist_id).await;
+
+        // Dropping a row right before itself or right after itself changes nothing.
+        db.move_playlist_songs(playlist_id, &[2], 2).await.unwrap();
+        db.move_playlist_songs(playlist_id, &[2], 3).await.unwrap();
+
+        assert_eq!(playlist_rows(&db, playlist_id).await, before);
+    }
+
+    #[tokio::test]
+    async fn test_move_playlist_songs_rejects_invalid_input_without_changes() {
+        let db = setup_test_db().await;
+        let playlist_id = setup_move_playlist(&db, &[1, 2, 3, 4, 5]).await;
+        let before = playlist_rows(&db, playlist_id).await;
+
+        let empty: &[i64] = &[];
+        let cases: Vec<(&[i64], i64)> = vec![
+            (&[0], 1),          // position 0
+            (&[6], 1),          // position > len
+            (&[-1], 1),         // negative position
+            (&[1, 6], 2),       // one bad position among good ones
+            (&[1], 0),          // insert_before 0
+            (&[1], 7),          // insert_before len + 2
+            (empty, 1),         // empty positions
+        ];
+
+        for (positions, insert_before) in cases {
+            let result = db
+                .move_playlist_songs(playlist_id, positions, insert_before)
+                .await;
+            assert!(
+                result.is_err(),
+                "expected error for positions={positions:?} insert_before={insert_before}"
+            );
+            assert_eq!(
+                playlist_rows(&db, playlist_id).await,
+                before,
+                "order changed for positions={positions:?} insert_before={insert_before}"
+            );
+        }
+    }
+
+    /// Playlist (playlist id 1) with rows S1, S2, S1, S3, S1.
+    async fn setup_move_playlist_with_duplicates() -> Database {
+        let db = setup_test_db().await;
+        setup_move_playlist(&db, &[1, 2, 1, 3, 1]).await;
+        db
     }
 }

@@ -5,6 +5,7 @@ import placeholderSongImage from "@/assets/react.svg";
 import clsx from "clsx";
 import { useEffect, useRef } from "react";
 import { playSongInQueue } from "@/shared/lib/audio.ts";
+import { findPlayingRow } from "@/shared/lib/playingRow.ts";
 
 // import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 
@@ -13,7 +14,9 @@ interface QueueProps {
 }
 
 const Queue = ({ className }: QueueProps) => {
-  const { queue, currentSong } = useAudioStore();
+  const { queue, currentSong, queueCursor } = useAudioStore();
+  // Only one row is current even if the song is queued several times.
+  const playingIndex = findPlayingRow(queue, currentSong?.id, queueCursor);
   // const { albums } = useLibraryStore();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeItemRef = useRef<HTMLDivElement | null>(null);
@@ -38,7 +41,7 @@ const Queue = ({ className }: QueueProps) => {
         });
       }
     }
-  }, [currentSong?.id]);
+  }, [currentSong?.id, playingIndex]);
 
   const handlePlaySong = (index: number) => {
     playSongInQueue(index).catch((e) =>
@@ -55,7 +58,7 @@ const Queue = ({ className }: QueueProps) => {
   return (
     <div ref={containerRef} className={clsx(styles.container, className)}>
       {queue.map((song, index) => {
-        const isCurrent = song.id === currentSong?.id;
+        const isCurrent = index === playingIndex;
 
         return (
           <div
