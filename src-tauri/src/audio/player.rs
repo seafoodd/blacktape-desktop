@@ -19,6 +19,11 @@ use std::time::Instant;
 use std::{fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Index in the original queue of the song at `cursor` in the play order.
+pub fn source_index_at(play_order: Option<&[usize]>, cursor: Option<usize>) -> Option<usize> {
+    play_order?.get(cursor?).copied()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
     Off,
@@ -788,6 +793,8 @@ impl AudioPlayer {
             shuffle_mode: self.shuffle_mode,
             repeat_mode: self.repeat_mode,
             queue: ordered_queue,
+            queue_cursor: self.cursor,
+            source_index: source_index_at(self.play_order.as_deref(), self.cursor),
         };
 
         if let Some(ref song) = state.current_song {
@@ -938,7 +945,7 @@ impl AudioPlayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_song_edit, AudioPlayer};
+    use super::{apply_song_edit, source_index_at, AudioPlayer};
     use crate::types::{Platform, QualityTier, Song};
     use rodio::Source;
     use std::time::Duration;
@@ -1089,5 +1096,47 @@ mod tests {
         let result = AudioPlayer::decode_source_from_memory("x.wav", b"not audio".to_vec());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_index_at_none_play_order_returns_none() {
+        assert_eq!(source_index_at(None, Some(0)), None);
+        assert_eq!(source_index_at(None, None), None);
+    }
+
+    #[test]
+    fn source_index_at_none_cursor_returns_none() {
+        let order = [2usize, 0, 1];
+        assert_eq!(source_index_at(Some(&order), None), None);
+    }
+
+    #[test]
+    fn source_index_at_returns_order_entry_for_cursor() {
+        let order = [2usize, 0, 1];
+        assert_eq!(source_index_at(Some(&order), Some(0)), Some(2));
+        assert_eq!(source_index_at(Some(&order), Some(1)), Some(0));
+        assert_eq!(source_index_at(Some(&order), Some(2)), Some(1));
+    }
+
+    #[test]
+    fn source_index_at_cursor_out_of_range_returns_none() {
+        let order = [2usize, 0, 1];
+        assert_eq!(source_index_at(Some(&order), Some(3)), None);
+        assert_eq!(source_index_at(Some(&order), Some(usize::MAX)), None);
+    }
+
+    #[test]
+    fn source_index_at_empty_order_returns_none() {
+        let order: [usize; 0] = [];
+        assert_eq!(source_index_at(Some(&order), Some(0)), None);
+        assert_eq!(source_index_at(Some(&order), None), None);
+    }
+
+    #[test]
+    fn source_index_at_identity_order_returns_cursor() {
+        let order: Vec<usize> = (0..5).collect();
+        for cursor in 0..5 {
+            assert_eq!(source_index_at(Some(&order), Some(cursor)), Some(cursor));
+        }
     }
 }

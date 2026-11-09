@@ -3,6 +3,7 @@ import { usePlaylistStore } from "@/shared/store/playlistStore";
 import styles from "./playlist.module.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
+import { findPlayingRow } from "@/shared/lib/playingRow.ts";
 import { useDominantColor } from "@/shared/hooks/useDominantColor.tsx";
 import { FaCirclePause, FaCirclePlay, FaShuffle } from "react-icons/fa6";
 import { BsThreeDots } from "react-icons/bs";
@@ -47,6 +48,7 @@ const Playlist = () => {
     removeSongs,
     fetchPlaylists,
     reorderSongs,
+    moveSongs,
   } = usePlaylistStore();
 
   const {
@@ -57,6 +59,8 @@ const Playlist = () => {
     playbackContextId,
     togglePlay,
     toggleShuffle,
+    currentSong,
+    sourceIndex,
   } = useAudioStore();
 
   const { openModal } = useModalStore();
@@ -73,12 +77,11 @@ const Playlist = () => {
     });
   }, [activePlaylistId, selectPlaylist]);
 
-  const handlePlaySong = useCallback(
-    (clickedSongId: number) => {
-      const currentIndex = activePlaylistSongs.findIndex(
-        (song) => song.id === clickedSongId,
-      );
-      if (currentIndex === -1) return;
+  // Start playback from the row at `currentIndex` (not the first row with that song:
+  // a playlist can contain the same song several times).
+  const handlePlayIndex = useCallback(
+    (currentIndex: number) => {
+      if (currentIndex < 0 || currentIndex >= activePlaylistSongs.length) return;
 
       const queueIds = activePlaylistSongs.map((s) => s.id);
 
@@ -90,6 +93,14 @@ const Playlist = () => {
       ).catch((e) => console.log("startPlayback error: ", e));
     },
     [activePlaylistSongs, activePlaylistId, startPlayback],
+  );
+
+  const sourceIndexValid =
+    playbackContext === "playlist" && playbackContextId === activePlaylistId;
+  const playingIndex = findPlayingRow(
+    activePlaylistSongs,
+    currentSong?.id,
+    sourceIndexValid ? sourceIndex : null,
   );
 
   const isPlaylistPlaying =
@@ -105,14 +116,14 @@ const Playlist = () => {
       activePlaylistId !== playbackContextId &&
       activePlaylistSongs.length > 0
     ) {
-      return handlePlaySong(activePlaylistSongs[0].id);
+      return handlePlayIndex(0);
     }
     togglePlay();
   }, [
     activePlaylistId,
     playbackContextId,
     activePlaylistSongs,
-    handlePlaySong,
+    handlePlayIndex,
     togglePlay,
   ]);
 
@@ -129,6 +140,20 @@ const Playlist = () => {
         });
     },
     [activePlaylistId, removeSongs, fetchPlaylists],
+  );
+
+  const handleRemoveManyFromPlaylist = useCallback(
+    (indices: number[]) => {
+      if (activePlaylistId === null) return;
+
+      removeSongs(activePlaylistId, indices)
+        .catch((e) => console.log("remove songs error: ", e))
+        .finally(() => {
+          fetchPlaylists();
+          selectPlaylist(activePlaylistId);
+        });
+    },
+    [activePlaylistId, removeSongs, fetchPlaylists, selectPlaylist],
   );
 
   const [isReordering, setIsReordering] = useState(false);
@@ -152,6 +177,24 @@ const Playlist = () => {
       }
     },
     [activePlaylistId, isReordering, reorderSongs, fetchPlaylists],
+  );
+
+  const handleMoveSelection = useCallback(
+    async (indices: number[], insertAt: number) => {
+      const playlistId = activePlaylistId;
+      if (playlistId === null || isReordering) return;
+
+      setIsReordering(true);
+      try {
+        await moveSongs(playlistId, indices, insertAt);
+        await fetchPlaylists();
+      } catch (error) {
+        console.error("[UI] Failed to move playlist songs:", error);
+      } finally {
+        setIsReordering(false);
+      }
+    },
+    [activePlaylistId, isReordering, moveSongs, fetchPlaylists],
   );
 
   if (!activePlaylist || !activePlaylistId) return;
@@ -253,11 +296,14 @@ const Playlist = () => {
       <div className={styles.songList}>
         <SongGrid
           songs={activePlaylistSongs}
-          onPlay={handlePlaySong}
+          onPlay={handlePlayIndex}
           playbackContext={"playlist"}
-          contextId={playbackContextId ?? undefined}
+          contextId={activePlaylistId}
+          playingIndex={playingIndex}
           onRemoveFromPlaylist={handleRemoveFromPlaylist}
+          onRemoveManyFromPlaylist={handleRemoveManyFromPlaylist}
           onReorderSongs={handleReorderSongs}
+          onMoveSelection={handleMoveSelection}
         />
       </div>
     </div>

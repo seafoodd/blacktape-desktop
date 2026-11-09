@@ -44,10 +44,38 @@
     padding: 3px 12px;
     height: 36px;
     transition: 100ms ease-out background-color;
-    cursor: pointer;
+    cursor: default;
+    user-select: none;
 
     &:nth-child(even) {
         background-color: var(--color-surface);
+    }
+
+    /* One frame around each run of selected rows: sides on every row, top on the
+       first, bottom on the last. */
+    &.selected {
+        background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+        box-shadow:
+            inset 2px 0 0 var(--color-primary-light),
+            inset -2px 0 0 var(--color-primary-light);
+    }
+
+    &.selected.selectedTop {
+        box-shadow:
+            inset 2px 0 0 var(--color-primary-light),
+            inset -2px 0 0 var(--color-primary-light),
+            inset 0 2px 0 var(--color-primary-light);
+    }
+
+    &.selected.selectedBottom {
+        box-shadow:
+            inset 2px 0 0 var(--color-primary-light),
+            inset -2px 0 0 var(--color-primary-light),
+            inset 0 -2px 0 var(--color-primary-light);
+    }
+
+    &.selected.selectedTop.selectedBottom {
+        box-shadow: inset 0 0 0 2px var(--color-primary-light);
     }
 
     &.playing {

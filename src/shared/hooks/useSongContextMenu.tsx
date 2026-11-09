@@ -15,7 +15,8 @@ import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
 interface UseSongContextMenuOptions {
   playbackContext: PlaybackContext;
   contextId?: number;
-  onPlay?: (song: Song) => void;
+  /** `index` is the row the menu was opened on, when the list passes one. */
+  onPlay?: (song: Song, index?: number) => void;
   onRemoveFromPlaylist?: (index: number) => void;
   /** Adds a "Delete..." item (remove from library / delete file). */
   allowDelete?: boolean;
@@ -25,11 +26,17 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
   const { currentSong, isPlaying, togglePlay, startPlayback } = useAudioStore();
   const { openModal } = useModalStore();
 
+  /**
+   * `isCurrentRow` overrides the default "same id as the playing song" check, for
+   * lists where one song can appear several times and only one row is playing.
+   */
   const getContextMenuItems = (
     song: Song,
     index?: number,
+    isCurrentRow?: boolean,
   ): MenuItemOption[] => {
-    const isCurrentSong = currentSong && song.id === currentSong.id;
+    const isCurrentSong =
+      isCurrentRow ?? (currentSong && song.id === currentSong.id);
 
     const items: MenuItemOption[] = [
       isCurrentSong
@@ -54,7 +61,7 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
             label: "Play",
             action: () => {
               if (options?.onPlay) {
-                options.onPlay(song);
+                options.onPlay(song, index);
               } else {
                 startPlayback(
                   [song.id],

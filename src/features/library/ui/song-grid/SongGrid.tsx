@@ -4,19 +4,38 @@ import { formatDuration } from "@/shared/lib/time.ts";
 import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
 import { Song } from "@/shared/types.ts";
 import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
-import React, { useState } from "react";
-import { ContextMenu, ContextMenuPosition } from "@/shared/ui/context-menu";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ContextMenu,
+  ContextMenuPosition,
+  MenuItemOption,
+} from "@/shared/ui/context-menu";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { coverSrc } from "@/shared/lib/cover";
+import {
+  EMPTY_SELECTION,
+  nextSelection,
+  selectionForContextMenu,
+  type SelectionState,
+} from "@/shared/lib/selection.ts";
+import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
+import { useModalStore } from "@/shared/store/modalStore.ts";
+import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 
 interface SongGridProps {
   songs: Song[];
-  onPlay: (clickedSongId: number) => void;
+  /** Double click / menu "Play": start playing the row at `index`. */
+  onPlay: (index: number) => void;
   playbackContext: PlaybackContext;
   contextId?: number;
+  /** The one row that is playing (a song can be in the list several times). */
+  playingIndex: number | null;
   onRemoveFromPlaylist?: (index: number) => void;
+  onRemoveManyFromPlaylist?: (indices: number[]) => void;
   onReorderSongs?: (fromIndex: number, toIndex: number) => void;
+  /** Drag of a selected row: move all selected rows to before `insertAt` (original index). */
+  onMoveSelection?: (indices: number[], insertAt: number) => void;
 }
 
 export const SongGrid = ({
@@ -24,19 +43,141 @@ export const SongGrid = ({
   onPlay,
   playbackContext,
   contextId,
+  playingIndex,
   onRemoveFromPlaylist,
+  onRemoveManyFromPlaylist,
   onReorderSongs,
+  onMoveSelection,
 }: SongGridProps) => {
-  const { currentSong, isPlaying } = useAudioStore();
+  const { isPlaying, startPlayback } = useAudioStore();
+  const { openModal } = useModalStore();
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     index: number;
     position: "top" | "bottom";
   } | null>(null);
 
+  // Selection is by row index, not song id: the same song can appear many times.
+  const rowIndices = useMemo(() => songs.map((_, i) => i), [songs]);
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+  const [menu, setMenu] = useState<{
+    position: ContextMenuPosition;
+    items: MenuItemOption[];
+  } | null>(null);
+
+  // Rows move when the list changes (reorder, remove, refresh), so indices go stale.
+  useEffect(() => {
+    setSelection(EMPTY_SELECTION);
+  }, [songs]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelection(EMPTY_SELECTION);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const { getContextMenuItems } = useSongContextMenu({
+    onPlay: (_song, index) => {
+      if (index !== undefined) onPlay(index);
+    },
+    playbackContext,
+    contextId,
+    onRemoveFromPlaylist,
+  });
+
+  const handleSelect = (index: number, e: React.MouseEvent) => {
+    setSelection((prev) =>
+      nextSelection(prev, rowIndices, index, {
+        ctrl: e.ctrlKey || e.metaKey,
+        shift: e.shiftKey,
+      }),
+    );
+  };
+
+  /** Menu for several selected rows. */
+  const multiMenuItems = (indices: number[]): MenuItemOption[] => {
+    const ids = indices.map((i) => songs[i].id);
+    const label = `${indices.length} tracks`;
+    const items: MenuItemOption[] = [
+      {
+        label: `Play ${label}`,
+        action: () => {
+          startPlayback(ids, 0, "library").catch((e) =>
+            console.error("Play selection error: ", e),
+          );
+        },
+      },
+      {
+        label: "Play Next",
+        action: async () => {
+          try {
+            // Each one goes right after the current track, so insert backwards
+            // to keep the selection order.
+            for (const id of [...ids].reverse()) await AddNextToQueue(id);
+          } catch (e) {
+            console.error("Play Next error: ", e);
+          }
+        },
+      },
+      {
+        label: "Add to Queue",
+        action: async () => {
+          try {
+            for (const id of ids) await AddToQueue(id);
+          } catch (e) {
+            console.error("Add to Queue error: ", e);
+          }
+        },
+      },
+      { separator: true, label: "" },
+      {
+        label: "Add to Playlist...",
+        action: () => openModal(<AddToPlaylistModal songIds={ids} />),
+      },
+    ];
+    if (onRemoveManyFromPlaylist) {
+      items.push(
+        { separator: true, label: "" },
+        {
+          label: "Remove from Playlist",
+          action: () => onRemoveManyFromPlaylist(indices),
+        },
+      );
+    }
+    return items;
+  };
+
+  const handleOpenMenu = (index: number, position: ContextMenuPosition) => {
+    const next = selectionForContextMenu(selection, index);
+    setSelection(next);
+    const indices = [...next.selected].sort((a, b) => a - b);
+    setMenu({
+      position,
+      items:
+        indices.length > 1
+          ? multiMenuItems(indices)
+          : getContextMenuItems(songs[index], index, index === playingIndex),
+    });
+  };
+
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
+
+    // Dragging a selected row drags the whole selection: show a small badge.
+    const count = selection.selected.has(index) ? selection.selected.size : 1;
+    if (count > 1) {
+      const ghost = document.createElement("div");
+      ghost.textContent = `${count} tracks`;
+      ghost.style.cssText =
+        "position:absolute;top:-9999px;left:-9999px;padding:6px 12px;border-radius:8px;" +
+        "background:rgba(18,18,18,0.95);color:#fff;font-size:13px;font-weight:600;";
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 10, 10);
+      requestAnimationFrame(() => document.body.removeChild(ghost));
+    }
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
@@ -66,6 +207,19 @@ export const SongGrid = ({
       insertIndex += 1;
     }
 
+    // Dragging one of several selected rows moves the whole selection as a block.
+    if (
+      onMoveSelection &&
+      selection.selected.size > 1 &&
+      selection.selected.has(draggedIndex)
+    ) {
+      const indices = [...selection.selected].sort((a, b) => a - b);
+      setDraggedIndex(null);
+      setDropTarget(null);
+      onMoveSelection(indices, insertIndex);
+      return;
+    }
+
     // 2. Adjust for the array shift if dragging DOWN
     if (draggedIndex < insertIndex) {
       insertIndex -= 1;
@@ -78,10 +232,6 @@ export const SongGrid = ({
       return;
     }
 
-    const updatedSongs = [...songs];
-    const [movedSong] = updatedSongs.splice(draggedIndex, 1);
-    updatedSongs.splice(insertIndex, 0, movedSong);
-
     setDraggedIndex(null);
     setDropTarget(null);
     onReorderSongs(draggedIndex, insertIndex);
@@ -93,7 +243,15 @@ export const SongGrid = ({
   };
 
   return (
-    <div className={styles.trackTable}>
+    <div
+      className={styles.trackTable}
+      onClick={(e) => {
+        // A click outside the song rows clears the selection.
+        if (!(e.target as HTMLElement).closest("[data-song-row]")) {
+          setSelection(EMPTY_SELECTION);
+        }
+      }}
+    >
       <div className={styles.tableHeader}>
         <span className={styles.headerNum}>#</span>
         <span>Title</span>
@@ -107,16 +265,14 @@ export const SongGrid = ({
             key={`${song.id}-${index}`}
             song={song}
             index={index}
-            currentSong={currentSong}
+            isCurrent={index === playingIndex}
             isPlaying={isPlaying}
-            playbackContext={playbackContext}
-            contextId={contextId}
+            selected={selection.selected.has(index)}
+            selectedAbove={selection.selected.has(index - 1)}
+            selectedBelow={selection.selected.has(index + 1)}
+            onSelect={handleSelect}
             onPlay={onPlay}
-            onRemoveFromPlaylist={
-              onRemoveFromPlaylist
-                ? () => onRemoveFromPlaylist(index)
-                : undefined
-            }
+            onOpenMenu={handleOpenMenu}
             draggable={!!onReorderSongs}
             isDragged={draggedIndex === index}
             dropTarget={dropTarget}
@@ -127,6 +283,13 @@ export const SongGrid = ({
           />
         ))}
       </div>
+      {menu && (
+        <ContextMenu
+          position={menu.position}
+          items={menu.items}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 };
@@ -134,12 +297,14 @@ export const SongGrid = ({
 interface SongGridRowProps {
   song: Song;
   index: number;
-  currentSong: Song | null;
+  isCurrent: boolean;
   isPlaying: boolean;
-  playbackContext: PlaybackContext;
-  contextId?: number;
-  onPlay: (id: number) => void;
-  onRemoveFromPlaylist?: (index: number) => void;
+  selected: boolean;
+  selectedAbove: boolean;
+  selectedBelow: boolean;
+  onSelect: (index: number, e: React.MouseEvent) => void;
+  onPlay: (index: number) => void;
+  onOpenMenu: (index: number, position: ContextMenuPosition) => void;
   draggable?: boolean;
   isDragged?: boolean;
   dropTarget: { index: number; position: "top" | "bottom" } | null;
@@ -152,12 +317,14 @@ interface SongGridRowProps {
 const SongGridRow = ({
   song,
   index,
-  currentSong,
+  isCurrent,
   isPlaying,
-  playbackContext,
-  contextId,
+  selected,
+  selectedAbove,
+  selectedBelow,
+  onSelect,
   onPlay,
-  onRemoveFromPlaylist,
+  onOpenMenu,
   draggable,
   isDragged,
   dropTarget,
@@ -166,45 +333,18 @@ const SongGridRow = ({
   onDrop,
   onDragEnd,
 }: SongGridRowProps) => {
-  const { getContextMenuItems } = useSongContextMenu({
-    onPlay: (s) => onPlay(s.id),
-    playbackContext,
-    contextId,
-    onRemoveFromPlaylist,
-  });
-
-  const [activeMenu, setActiveMenu] = useState<{
-    position: ContextMenuPosition;
-    song: Song;
-    index: number;
-  } | null>(null);
-
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    setActiveMenu({ position: { x: e.clientX, y: e.clientY }, song, index });
+    onOpenMenu(index, { x: e.clientX, y: e.clientY });
   };
 
-  const handleOpenContextMenu = (
-    e: React.MouseEvent,
-    song: Song,
-    fromThreeDots = false,
-  ) => {
+  const handleThreeDots = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    let x = e.clientX;
-    let y = e.clientY;
-
-    if (fromThreeDots) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      x = rect.left;
-      y = rect.bottom + 4;
-    }
-
-    setActiveMenu({ position: { x, y }, song, index });
+    const rect = e.currentTarget.getBoundingClientRect();
+    onOpenMenu(index, { x: rect.left, y: rect.bottom + 4 });
   };
 
-  const isCurrent = currentSong && song.id === currentSong.id;
   const songCoverSrc = song.cover_url ? coverSrc(song.cover_url, 48) : undefined;
 
   const isTopTarget =
@@ -213,91 +353,93 @@ const SongGridRow = ({
     dropTarget?.index === index && dropTarget.position === "bottom";
 
   return (
-    <>
-      <div
-        className={clsx(styles.songRow, {
-          [styles.playing]: isCurrent,
-          [styles.dragging]: isDragged,
-          [styles.dropTargetTop]: isTopTarget,
-          [styles.dropTargetBottom]: isBottomTarget,
-        })}
-        onClick={() => onPlay(song.id)}
-        onContextMenu={handleContextMenu}
-        draggable={draggable}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        onDragEnd={onDragEnd}
-        role="button"
-        tabIndex={0}
-      >
-        <div className={clsx(styles.cell, styles.cellNum)}>
-          {isCurrent ? (
-            isPlaying ? (
-              <HiOutlineMusicNote className={styles.playingIcon} size={18} />
-            ) : (
-              <HiMiniPause className={styles.pauseIcon} size={18} />
-            )
+    <div
+      className={clsx(styles.songRow, {
+        [styles.playing]: isCurrent,
+        [styles.selected]: selected,
+        [styles.selectedTop]: selected && !selectedAbove,
+        [styles.selectedBottom]: selected && !selectedBelow,
+        [styles.dragging]: isDragged,
+        [styles.dropTargetTop]: isTopTarget,
+        [styles.dropTargetBottom]: isBottomTarget,
+      })}
+      data-song-row
+      aria-selected={selected}
+      onClick={(e) => onSelect(index, e)}
+      onDoubleClick={() => onPlay(index)}
+      onContextMenu={handleContextMenu}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      role="button"
+      tabIndex={0}
+    >
+      <div className={clsx(styles.cell, styles.cellNum)}>
+        {isCurrent ? (
+          isPlaying ? (
+            <HiOutlineMusicNote className={styles.playingIcon} size={18} />
           ) : (
-            String(index + 1).padStart(2, "0")
-          )}
-        </div>
-
-        <div className={clsx(styles.cell, styles.cellTitle)}>
-          {songCoverSrc && (
-            <img loading="lazy" decoding="async" src={songCoverSrc} className={styles.songCover} alt="" />
-          )}
-          <span className="truncate">{song.title}</span>
-        </div>
-
-        <div
-          className={clsx(
-            styles.cell,
-            { [styles.playing]: isCurrent },
-            "truncate",
-          )}
-        >
-          {song.artists || "—"}
-        </div>
-
-        <div
-          className={clsx(
-            styles.cell,
-            { [styles.playing]: isCurrent },
-            "truncate",
-          )}
-        >
-          {song.album || "—"}
-        </div>
-
-        <div
-          className={clsx(
-            styles.cell,
-            { [styles.playing]: isCurrent },
-            styles.cellDuration,
-          )}
-        >
-          <span className={styles.durationText}>
-            {formatDuration(song.duration_ms)}
-          </span>
-          <button
-            className={styles.threeDotButton}
-            onClick={(e) => handleOpenContextMenu(e, song, true)}
-            aria-label="Song options"
-          >
-            <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
-          </button>
-        </div>
+            <HiMiniPause className={styles.pauseIcon} size={18} />
+          )
+        ) : (
+          String(index + 1).padStart(2, "0")
+        )}
       </div>
 
-      {activeMenu && (
-        <ContextMenu
-          position={activeMenu.position}
-          items={getContextMenuItems(activeMenu.song, activeMenu.index)}
-          onClose={() => setActiveMenu(null)}
-        />
-      )}
-    </>
+      <div className={clsx(styles.cell, styles.cellTitle)}>
+        {songCoverSrc && (
+          <img
+            loading="lazy"
+            decoding="async"
+            src={songCoverSrc}
+            className={styles.songCover}
+            alt=""
+          />
+        )}
+        <span className="truncate">{song.title}</span>
+      </div>
+
+      <div
+        className={clsx(
+          styles.cell,
+          { [styles.playing]: isCurrent },
+          "truncate",
+        )}
+      >
+        {song.artists || "—"}
+      </div>
+
+      <div
+        className={clsx(
+          styles.cell,
+          { [styles.playing]: isCurrent },
+          "truncate",
+        )}
+      >
+        {song.album || "—"}
+      </div>
+
+      <div
+        className={clsx(
+          styles.cell,
+          { [styles.playing]: isCurrent },
+          styles.cellDuration,
+        )}
+      >
+        <span className={styles.durationText}>
+          {formatDuration(song.duration_ms)}
+        </span>
+        <button
+          className={styles.threeDotButton}
+          onClick={handleThreeDots}
+          aria-label="Song options"
+        >
+          <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
+        </button>
+      </div>
+    </div>
   );
 };
 

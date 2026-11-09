@@ -6,13 +6,14 @@ import { CreatePlaylistModal } from "@/features/library/ui/playlists/CreatePlayl
 import { PlaylistCover } from "@/features/library/ui/playlists/PlaylistCover.tsx";
 import clsx from "clsx";
 import { BsFillPlusSquareFill } from "react-icons/bs";
+import { addSongsToPlaylist } from "@/features/library/lib/addToPlaylist.tsx";
 
 interface AddToPlaylistModalProps {
   songIds: number[];
 }
 
 export const AddToPlaylistModal = ({ songIds }: AddToPlaylistModalProps) => {
-  const { playlists, fetchPlaylists, addSongs } = usePlaylistStore();
+  const { playlists, fetchPlaylists } = usePlaylistStore();
   const closeModal = useModalStore((state) => state.closeModal);
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const { openModal } = useModalStore();
@@ -24,7 +25,8 @@ export const AddToPlaylistModal = ({ songIds }: AddToPlaylistModalProps) => {
   const handleAddToPlaylist = async (playlistId: number) => {
     try {
       setLoadingId(playlistId);
-      await addSongs(playlistId, songIds);
+      // Asks first when some songs are already in the playlist.
+      await addSongsToPlaylist(playlistId, songIds);
       closeModal();
     } catch (e) {
       console.error("Failed to add song to playlist:", e);

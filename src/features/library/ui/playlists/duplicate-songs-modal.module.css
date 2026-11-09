@@ -1,0 +1,48 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    max-width: 460px;
+}
+
+.title {
+    font-size: var(--font-xl);
+    color: var(--color-text);
+}
+
+.text {
+    margin-top: 24px;
+    font-size: var(--font-lg);
+    color: var(--color-text);
+}
+
+.buttons {
+    margin-top: 24px;
+    display: flex;
+    gap: 12px;
+    justify-content: end;
+}
+
+.button,
+.primaryButton {
+    font-size: var(--font-md);
+    padding: 6px 14px;
+    border-radius: var(--radius-full);
+    background-color: var(--color-background);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: 100ms linear background-color;
+
+    &:hover {
+        background-color: var(--color-surface);
+    }
+}
+
+.primaryButton {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+
+    &:hover {
+        background-color: var(--color-primary-light);
+    }
+}

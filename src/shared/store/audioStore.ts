@@ -25,6 +25,10 @@ interface AudioState {
   isPlaying: boolean;
   shuffleMode: boolean;
   repeatMode: RepeatMode;
+  /** Position of the current song in `queue`. */
+  queueCursor: number | null;
+  /** Index of the current song in the list playback was started from. */
+  sourceIndex: number | null;
 
   setQueue: (songs: Song[]) => void;
   fetchQueue: () => Promise<void>;
@@ -57,6 +61,8 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   isPlaying: false,
   shuffleMode: false,
   repeatMode: RepeatMode.Off,
+  queueCursor: null,
+  sourceIndex: null,
   playbackContext: null,
   playbackContextId: null,
 
@@ -145,6 +151,8 @@ if (typeof window !== "undefined") {
       shuffleMode: state.shuffle_mode,
       repeatMode: state.repeat_mode,
       queue: state.queue,
+      queueCursor: state.queue_cursor ?? null,
+      sourceIndex: state.source_index ?? null,
     });
   }).catch((e) => console.log(e));
 }
