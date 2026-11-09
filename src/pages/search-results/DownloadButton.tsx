@@ -9,6 +9,7 @@ import {
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import { remoteRefOf, useAlbumStatus, useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { downloadPercent, isDownloadBusy } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";
 
@@ -28,6 +29,12 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
   const startDownload = useLibraryStore((s) => s.startDownload);
   const busy = isDownloadBusy(progress);
   const overlay = variant === "overlay";
+  // Items already in the library show a check instead of a button that would only download them again.
+  const isAlbum = item.item_type === ItemType.Album;
+  const ref = remoteRefOf(item);
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  const inLibrary = (isAlbum ? albumState : trackState) === "downloaded";
 
   const onDownload = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -70,6 +77,16 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
           {downloadPercent(progress)}%
         </span>
       );
+  } else if (inLibrary) {
+    control = (
+      <span
+        className={clsx(styles.progressText, overlay && styles.progressBadge)}
+        title="Already in your library"
+        aria-label="Already in your library"
+      >
+        <FaCheckCircle size={overlay ? 18 : 16} />
+      </span>
+    );
   } else {
     control = (
       <button

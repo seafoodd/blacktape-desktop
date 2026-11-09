@@ -10,11 +10,7 @@ import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { searchItemToRemoteTrack } from "@/shared/lib/remoteTrack.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
-import {
-  remoteRefOf,
-  useAlbumStatus,
-  useTrackStatus,
-} from "@/shared/hooks/useDownloadStatus.ts";
+import { remoteRefOf, useAlbumStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
@@ -59,7 +55,6 @@ interface TrackRowProps {
 export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProps) => {
   const subline = trackSubline(item.band_name, item.album_name);
   const { openMenu } = useRemoteTrackMenu();
-  const status = useTrackStatus(remoteRefOf(item));
   return (
     <div
       className={styles.trackRow}
@@ -76,7 +71,6 @@ export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProp
           <p className={clsx(styles.trackTitle, styles.ellipsis)} title={item.name}>
             {item.name}
           </p>
-          <DownloadStatusBadge state={status} />
         </div>
         <p className={clsx(styles.subline, styles.ellipsis)} title={subline}>
           {subline}
@@ -119,7 +113,12 @@ export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) =
     >
       <div className={styles.coverWrap}>
         <Cover src={item.img} alt={item.name} className={styles.cover} />
-        <DownloadStatusBadge state={albumState} size={20} className={styles.coverBadge} />
+        {/* Fully downloaded albums show the check in place of the download button. */}
+        <DownloadStatusBadge
+          state={albumState === "partial" ? "partial" : "none"}
+          size={20}
+          className={styles.coverBadge}
+        />
         <DownloadButton item={item} progress={progress} variant="overlay" />
       </div>
       <div className={styles.cardText}>

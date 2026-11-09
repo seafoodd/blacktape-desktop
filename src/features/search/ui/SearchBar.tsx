@@ -11,6 +11,7 @@ import {
   useLibraryStore,
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
+import type { ReactNode } from "react";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import {
   matchesPlatformFilter,
@@ -37,13 +38,30 @@ const formatSuggestionType = (type: ItemType): string => {
   }
 };
 
+/** Tells whether a suggestion is already in the library (tracks by the library index, albums by their source). */
+const InLibrary = ({
+  item,
+  children,
+}: {
+  item: SearchSuggestion;
+  children: (inLibrary: boolean) => ReactNode;
+}) => {
+  const ref = remoteRefOf(item);
+  const isAlbum = item.item_type === ItemType.Album;
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  return <>{children((isAlbum ? albumState : trackState) === "downloaded")}</>;
+};
+
 /** Library badge of a suggestion row: tracks are looked up in the library index, albums in the album sources. */
 const SuggestionStatus = ({ item }: { item: SearchSuggestion }) => {
   const ref = remoteRefOf(item);
   const isAlbum = item.item_type === ItemType.Album;
   const trackState = useTrackStatus(isAlbum ? null : ref);
   const albumState = useAlbumStatus(isAlbum ? ref : null).state;
-  return <DownloadStatusBadge state={isAlbum ? albumState : trackState} />;
+  // "Downloaded" is shown in place of the download button; only a partial album gets the badge here.
+  const state = isAlbum ? albumState : trackState;
+  return <DownloadStatusBadge state={state === "partial" ? "partial" : "none"} />;
 };
 
 interface SearchBarProps {
@@ -308,6 +326,15 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                     <div className={styles.tools}>
                       {suggestion.item_type !== ItemType.Artist && (
                         <>
+                          <InLibrary item={suggestion}>
+                            {(inLibrary) =>
+                              inLibrary &&
+                              (!activeDownload || activeDownload.status === "failed") ? (
+                                <div className={styles.downloadStatus} title="Already in your library">
+                                  <FaCheckCircle size={20} />
+                                </div>
+                              ) : (
+                                <>
                           {!activeDownload ||
                           activeDownload.status === "failed" ? (
                             <button
@@ -355,6 +382,10 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                               )}
                             </div>
                           )}
+                                </>
+                              )
+                            }
+                          </InLibrary>
                         </>
                       )}
                     </div>
