@@ -873,3 +873,8 @@
     width: 36px;
     height: 36px;
 }
+
+/* album cards open the album preview */
+.cardClickable {
+    cursor: pointer;
+}

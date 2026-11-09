@@ -7,6 +7,7 @@ import {
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
 import { DownloadButton } from "./DownloadButton.tsx";
 import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
+import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
   formatDurationSecs,
@@ -82,7 +83,18 @@ interface AlbumCardProps {
 }
 
 export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) => (
-  <article className={styles.card}>
+  <article
+    className={clsx(styles.card, styles.cardClickable)}
+    role="button"
+    tabIndex={0}
+    aria-label={`Open album ${item.name}`}
+    onClick={() => void useAlbumPreviewStore.getState().open(item)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" && e.target === e.currentTarget) {
+        void useAlbumPreviewStore.getState().open(item);
+      }
+    }}
+  >
     <div className={styles.coverWrap}>
       <Cover src={item.img} alt={item.name} className={styles.cover} />
       <DownloadButton item={item} progress={progress} variant="overlay" />

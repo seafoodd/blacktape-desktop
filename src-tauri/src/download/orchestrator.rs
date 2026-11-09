@@ -27,7 +27,19 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
 
     let download_result = match task.payload {
         DownloadPayload::AlbumURL(url) => {
-            process_album_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await
+            process_album_url(task.platform, &url, None, &task.output_dir, &app_handle, &task_id)
+                .await
+        }
+        DownloadPayload::AlbumSelection { url, track_urls } => {
+            process_album_url(
+                task.platform,
+                &url,
+                Some(&track_urls),
+                &task.output_dir,
+                &app_handle,
+                &task_id,
+            )
+            .await
         }
         DownloadPayload::TrackURL(url) => {
             process_track_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await

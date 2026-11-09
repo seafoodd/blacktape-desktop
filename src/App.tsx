@@ -9,6 +9,7 @@ import SearchResults from "@/pages/search-results/SearchResults.tsx";
 import { Settings } from "@/pages/settings/Settings";
 import Playlist from "@/pages/playlist/Playlist.tsx";
 import Trash from "@/pages/trash/Trash.tsx";
+import AlbumPreview from "@/pages/album-preview/AlbumPreview.tsx";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
@@ -27,6 +28,7 @@ function PlayerView() {
     >
       {activeView === "ARTIST_ALBUMS" && <ArtistAlbums />}
       {activeView === "SEARCH_RESULTS" && <SearchResults />}
+      {activeView === "ALBUM_PREVIEW" && <AlbumPreview />}
       {activeView === "PLAYLIST" && <Playlist />}
       {activeView === "TRASH" && <Trash />}
     </MainLayout>

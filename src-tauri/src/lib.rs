@@ -518,6 +518,7 @@ async fn download(
     artist_name: Option<String>,
     title: Option<String>,
     cover_url: Option<String>,
+    track_urls: Option<Vec<String>>,
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
         let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
@@ -567,7 +568,12 @@ async fn download(
     task_registry.register_task(initial_state).await;
 
     let payload = match download_type {
-        DownloadType::Album => DownloadPayload::AlbumURL(url),
+        DownloadType::Album => match track_urls {
+            Some(track_urls) if !track_urls.is_empty() => {
+                DownloadPayload::AlbumSelection { url, track_urls }
+            }
+            _ => DownloadPayload::AlbumURL(url),
+        },
         DownloadType::Playlist => return Err("Playlist downloads unimplemented.".into()),
         DownloadType::Track => DownloadPayload::TrackURL(url),
     };
@@ -583,6 +589,15 @@ async fn download(
         .map_err(|e| e.to_string())?;
 
     Ok("Task queued successfully".to_string())
+}
+
+/// Track list of an album/set for the album preview page.
+#[command]
+async fn get_album_preview(
+    platform: Platform,
+    url: String,
+) -> Result<crate::download::album_preview::AlbumPreview, String> {
+    crate::download::album_preview::album_preview(platform, &url).await
 }
 
 #[command]
@@ -758,6 +773,7 @@ pub fn run() {
             preview::commands::stream_queue,
             preview::commands::stream_prefetch,
             get_stream_lyrics,
+            get_album_preview,
             // Player Commands
             start_playback,
             pause,

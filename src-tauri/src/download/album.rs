@@ -1,15 +1,28 @@
 use super::youtube;
 use super::{bandcamp, soundcloud, ytdlp};
-use crate::download::types::{AlbumMetaEvent, DownloadResult, ProgressEvent, TrackMetaItem};
+use crate::download::types::{
+    AlbumMetaEvent, DownloadResult, ProgressEvent, TrackDownload, TrackMetaItem,
+};
 use crate::types::Platform;
 use crate::utils::{remove_empty_parents_up_to, sanitize_fs};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Keeps only the tracks whose url is in `selected`, in album order. Pure.
+pub fn select_tracks(tracks: Vec<TrackDownload>, selected: &[String]) -> Vec<TrackDownload> {
+    tracks
+        .into_iter()
+        .filter(|t| selected.iter().any(|url| *url == t.url))
+        .collect()
+}
+
+/// Downloads the album at `url`; with `selected` only the tracks whose page url is listed (the album
+/// folder, cover and track numbers stay those of the whole album).
 pub async fn process_album_url(
     platform: Platform,
     url: &str,
+    selected: Option<&[String]>,
     output_dir: &str,
     app_handle: &AppHandle,
     task_id: &str,
@@ -35,6 +48,12 @@ pub async fn process_album_url(
     let mut tracks = album_info.tracks;
     for track in &mut tracks {
         track.album_artist = album_info.album_artist.clone();
+    }
+    if let Some(selected) = selected {
+        tracks = select_tracks(tracks, selected);
+        if tracks.is_empty() {
+            return Err("None of the selected tracks was found in the album.".into());
+        }
     }
 
     let _ = app_handle.emit(
@@ -140,4 +159,34 @@ pub async fn download_album_cover(url: &str, output_dir: &Path) -> Result<(), St
     tokio::fs::write(output_dir.join("cover.jpg"), &bytes)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(url: &str, number: i32) -> TrackDownload {
+        TrackDownload {
+            url: url.to_string(),
+            title: format!("t{number}"),
+            track_number: Some(number),
+            ..TrackDownload::default()
+        }
+    }
+
+    #[test]
+    fn select_tracks_keeps_album_order_and_numbers() {
+        let tracks = vec![track("a", 1), track("b", 2), track("c", 3)];
+        let picked = select_tracks(tracks, &["c".to_string(), "a".to_string()]);
+        let urls: Vec<&str> = picked.iter().map(|t| t.url.as_str()).collect();
+        assert_eq!(urls, vec!["a", "c"], "album order, not selection order");
+        assert_eq!(picked[1].track_number, Some(3), "numbers of the whole album are kept");
+    }
+
+    #[test]
+    fn select_tracks_ignores_unknown_urls_and_can_be_empty() {
+        let picked = select_tracks(vec![track("a", 1)], &["zzz".to_string()]);
+        assert!(picked.is_empty());
+        assert!(select_tracks(vec![track("a", 1)], &[]).is_empty());
+    }
 }

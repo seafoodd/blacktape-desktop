@@ -45,11 +45,14 @@ export interface StartDownloadParams {
   artistName?: string;
   title?: string;
   coverUrl?: string;
+  /** Album downloads only: page urls of the tracks to download (all tracks when omitted). */
+  trackUrls?: string[];
 }
 
 export type ActiveView =
   | "ARTIST_ALBUMS"
   | "SEARCH_RESULTS"
+  | "ALBUM_PREVIEW"
   | "PLAYLIST"
   | "TRASH";
 
@@ -503,6 +506,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       : "Unknown Artist";
     const title = isObject ? paramsOrPlatform.title || "" : "";
     const coverUrl = isObject ? paramsOrPlatform.coverUrl : undefined;
+    const trackUrls = isObject ? paramsOrPlatform.trackUrls : undefined;
 
     const taskId = crypto.randomUUID();
     const isSingleTrack =
@@ -516,7 +520,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           url,
           status: "downloading",
           current: 0,
-          total: isSingleTrack ? 1 : 0,
+          total: isSingleTrack ? 1 : (trackUrls?.length ?? 0),
           message: "Starting download...",
           artistName,
           albumTitle: isSingleTrack ? "Singles" : title || "Album",
@@ -547,6 +551,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         artistName,
         title,
         coverUrl,
+        trackUrls: trackUrls ?? null,
       });
     } catch (e) {
       console.error("Download invoke failed:", e);
