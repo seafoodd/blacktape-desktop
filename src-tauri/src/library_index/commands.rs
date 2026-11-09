@@ -111,6 +111,28 @@ pub async fn get_download_status(
     Ok(track_states(&items, &LibraryIndex::from_rows(&refs).with_slugs(slugs)))
 }
 
+/// Where the library keeps an album that was downloaded from a platform page.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LibraryAlbumRef {
+    pub album_artist: String,
+    pub album: String,
+}
+
+/// The library album a remote album url was downloaded into (`album_sources`), None when the app never downloaded
+/// it. Lets the album preview open the album's page ("Go to album").
+#[command]
+pub async fn get_library_album(
+    db: State<'_, tokio::sync::Mutex<Database>>,
+    url: String,
+) -> Result<Option<LibraryAlbumRef>, String> {
+    let Some(key) = normalize_url_key(&url) else {
+        return Ok(None);
+    };
+    let guard = db.lock().await;
+    let row = guard.get_album_source_by_key(&key).await.map_err(db_error)?;
+    Ok(row.map(|r| LibraryAlbumRef { album_artist: r.album_artist, album: r.album }))
+}
+
 /// Library state of remote ALBUM urls, from `album_sources` (albums the app never downloaded are `none`).
 #[command]
 pub async fn get_album_status(

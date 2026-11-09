@@ -74,6 +74,44 @@ export function downloadLabel(selectedCount: number, availableCount: number): st
     : `Download ${selectedCount} of ${availableCount} tracks`;
 }
 
+/** What the main button of the album preview does. */
+export type AlbumAction =
+  | { kind: "download"; label: string; urls?: undefined }
+  | { kind: "download-missing"; label: string; urls: string[] }
+  | { kind: "go-to-album"; label: "Go to album"; urls?: undefined };
+
+/**
+ * The main button: with a selection it downloads the selection (`downloadLabel`); without one it depends on what
+ * the library already has of the album: everything -> "Go to album", some tracks -> download only the missing
+ * ones, nothing -> the whole album. `states` is the library state of every track url. Pure.
+ */
+export function albumAction(
+  preview: Pick<AlbumPreview, "tracks">,
+  states: Readonly<Record<string, DownloadState>>,
+  selectedCount: number,
+): AlbumAction {
+  const tracks = selectableTracks(preview);
+  if (selectedCount > 0 || tracks.length === 0) {
+    return { kind: "download", label: downloadLabel(selectedCount, tracks.length) };
+  }
+  const missing = tracks.filter((t) => (states[t.url] ?? "none") !== "downloaded").map((t) => t.url);
+  if (missing.length === 0) return { kind: "go-to-album", label: "Go to album" };
+  if (missing.length === tracks.length) return { kind: "download", label: downloadLabel(0, tracks.length) };
+  return {
+    kind: "download-missing",
+    label: missing.length === 1 ? "Download missing track" : "Download missing tracks",
+    urls: missing,
+  };
+}
+
+/** "2020 · Ambient · 1 hr 5 min · 10 tracks": the album info line followed by the track count. */
+export function albumMetaLine(
+  preview: Pick<AlbumPreview, "year" | "genres" | "tracks"> &
+    Partial<Pick<AlbumPreview, "total_duration_ms">>,
+): string {
+  return [albumInfoLine(preview), trackCountLabel(preview)].filter((p) => p !== "").join(" · ");
+}
+
 /** "10 tracks", "1 track", "10 tracks · 2 unavailable". */
 export function trackCountLabel(preview: Pick<AlbumPreview, "tracks">): string {
   const total = preview.tracks.length;

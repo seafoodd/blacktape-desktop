@@ -57,6 +57,16 @@ export const getDownloadStatus = (items: RemoteRef[]): Promise<Record<string, Do
 export const getAlbumStatus = (items: RemoteRef[]): Promise<Record<string, AlbumStatus>> =>
   invoke<Record<string, AlbumStatus>>("get_album_status", { items });
 
+/** Where the library keeps an album downloaded from a platform page. */
+export interface LibraryAlbumRef {
+  album_artist: string;
+  album: string;
+}
+
+/** The library album the remote album `url` was downloaded into; null when the app never downloaded it. */
+export const getLibraryAlbum = (url: string): Promise<LibraryAlbumRef | null> =>
+  invoke<LibraryAlbumRef | null>("get_library_album", { url });
+
 /** Sources of the albums of an artist (one call per opened artist page). */
 export const getArtistAlbumSources = (albumArtist: string): Promise<LibraryAlbumSource[]> =>
   invoke<LibraryAlbumSource[]>("get_artist_album_sources", { albumArtist });

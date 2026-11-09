@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
 import { ItemType } from "@/shared/store/libraryStore.ts";
 import {
+  albumAction,
   albumInfoLine,
   albumLibraryState,
+  albumMetaLine,
   downloadLabel,
   getAlbumPreview,
   selectableIndexes,
@@ -371,5 +374,177 @@ describe("trackRowStatus", () => {
     ["partial", "partial" as const],
   ])("offers the download button for %s", (_label, state) => {
     expect(trackRowStatus(available, state, undefined)).toEqual({ kind: "download" });
+  });
+});
+
+describe("albumAction", () => {
+  const url = (i: number) => `https://example.test/track/${i}`;
+  const all = Array.from({ length: 10 }, (_, i) => i);
+  const stateOf = (state: DownloadState, indexes: number[]): Record<string, DownloadState> =>
+    Object.fromEntries(indexes.map((i) => [url(i), state]));
+
+  it("downloads the whole album when nothing is in the library", () => {
+    expect(albumAction(preview(tenTracks()), {}, 0)).toEqual({
+      kind: "download",
+      label: "Download album",
+    });
+  });
+
+  it("treats explicit none states like missing ones", () => {
+    expect(albumAction(preview(tenTracks()), stateOf("none", all), 0)).toEqual({
+      kind: "download",
+      label: "Download album",
+    });
+  });
+
+  it("says track instead of album for a single-track album", () => {
+    expect(albumAction(preview([track(0)]), {}, 0)).toEqual({
+      kind: "download",
+      label: "Download track",
+    });
+  });
+
+  it("goes to the album when every selectable track is downloaded", () => {
+    const result = albumAction(preview(tenTracks()), stateOf("downloaded", all), 0);
+    expect(result).toEqual({ kind: "go-to-album", label: "Go to album" });
+    expect(result.urls).toBeUndefined();
+  });
+
+  it("ignores unavailable tracks when everything selectable is downloaded", () => {
+    const states = stateOf("downloaded", [0, 1, 2, 4, 5, 6, 8, 9]);
+    expect(albumAction(preview(tenTracks([3, 7])), states, 0)).toEqual({
+      kind: "go-to-album",
+      label: "Go to album",
+    });
+  });
+
+  it("ignores an unavailable track whose url has a none state", () => {
+    const p = preview([track(0), track(1, { available: false })]);
+    expect(albumAction(p, { [url(0)]: "downloaded", [url(1)]: "none" }, 0)).toEqual({
+      kind: "go-to-album",
+      label: "Go to album",
+    });
+  });
+
+  it("ignores an available track without a url", () => {
+    const p = preview([track(0), track(1, { url: "" })]);
+    expect(albumAction(p, { [url(0)]: "downloaded" }, 0)).toEqual({
+      kind: "go-to-album",
+      label: "Go to album",
+    });
+  });
+
+  it("downloads only the missing tracks when some are downloaded", () => {
+    const result = albumAction(preview(tenTracks()), stateOf("downloaded", [0, 1, 2, 3, 4]), 0);
+    expect(result).toEqual({
+      kind: "download-missing",
+      label: "Download missing tracks",
+      urls: [url(5), url(6), url(7), url(8), url(9)],
+    });
+  });
+
+  it("lists the missing urls in album order, whatever the order of the states", () => {
+    const result = albumAction(preview(tenTracks()), stateOf("downloaded", [7, 2, 5]), 0);
+    expect(result).toMatchObject({
+      kind: "download-missing",
+      urls: [url(0), url(1), url(3), url(4), url(6), url(8), url(9)],
+    });
+  });
+
+  it("counts a partial track as missing", () => {
+    const states: Record<string, DownloadState> = {
+      [url(0)]: "downloaded",
+      [url(1)]: "partial",
+    };
+    const result = albumAction(preview(tenTracks()), states, 0);
+    expect(result).toEqual({
+      kind: "download-missing",
+      label: "Download missing tracks",
+      urls: [url(1), url(2), url(3), url(4), url(5), url(6), url(7), url(8), url(9)],
+    });
+  });
+
+  it("uses the singular label when exactly one track is missing", () => {
+    expect(albumAction(preview(tenTracks()), stateOf("downloaded", [0, 1, 2, 3, 4, 5, 6, 7, 8]), 0)).toEqual({
+      kind: "download-missing",
+      label: "Download missing track",
+      urls: [url(9)],
+    });
+  });
+
+  it("does not count unavailable tracks as missing", () => {
+    const states = stateOf("downloaded", [0, 1, 2, 4, 5, 6, 7, 8]);
+    expect(albumAction(preview(tenTracks([3])), states, 0)).toEqual({
+      kind: "download-missing",
+      label: "Download missing track",
+      urls: [url(9)],
+    });
+  });
+
+  it.each([
+    [1, "Download 1 track"],
+    [3, "Download 3 of 10 tracks"],
+    [10, "Download album"],
+  ])("with a selection of %i downloads it even when everything is downloaded", (selectedCount, label) => {
+    const result = albumAction(preview(tenTracks()), stateOf("downloaded", all), selectedCount);
+    expect(result).toEqual({ kind: "download", label });
+    expect(result.urls).toBeUndefined();
+  });
+
+  it("downloads the selection, not the missing tracks, when some are downloaded", () => {
+    const result = albumAction(preview(tenTracks()), stateOf("downloaded", [0, 1]), 2);
+    expect(result).toEqual({ kind: "download", label: "Download 2 of 10 tracks" });
+  });
+
+  it("labels a selection in a single-track album as the track", () => {
+    expect(albumAction(preview([track(0)]), {}, 1)).toEqual({
+      kind: "download",
+      label: "Download track",
+    });
+  });
+
+  it("gives a download action for an album without selectable tracks", () => {
+    const onlyUnavailable = preview([track(0, { available: false, url: "", note: "Gone" })]);
+    expect(albumAction(onlyUnavailable, {}, 0)).toEqual({
+      kind: "download",
+      label: "Download album",
+    });
+    expect(albumAction(preview([]), {}, 0)).toEqual({ kind: "download", label: "Download album" });
+  });
+});
+
+describe("albumMetaLine", () => {
+  it("joins the info line and the track count with a middle dot", () => {
+    expect(
+      albumMetaLine(
+        preview(tenTracks(), { year: 2020, genres: ["Ambient"], total_duration_ms: 3_900_000 }),
+      ),
+    ).toBe("2020 · Ambient · 1 hr 5 min · 10 tracks");
+  });
+
+  it("shows only the track count when there is no year, genre or duration", () => {
+    expect(albumMetaLine(preview([track(0), track(1), track(2)], { year: null, genres: [] }))).toBe(
+      "3 tracks",
+    );
+  });
+
+  it("uses the singular for a single track", () => {
+    expect(albumMetaLine(preview([track(0)], { year: null, genres: [] }))).toBe("1 track");
+  });
+
+  it("appends the unavailable count at the end", () => {
+    const p = preview(
+      [track(0), track(1, { available: false, url: "", note: "Gone" }), track(2)],
+      { year: null, genres: [] },
+    );
+    expect(albumMetaLine(p)).toBe("3 tracks · 1 unavailable");
+  });
+
+  it("puts the unavailable count after the info line", () => {
+    const p = preview(
+      [track(0), track(1, { available: false, url: "", note: "Gone" }), track(2)],
+      { year: 2020, genres: [], total_duration_ms: null },
+    );
+    expect(albumMetaLine(p)).toBe("2020 · 3 tracks · 1 unavailable");
   });
 });
