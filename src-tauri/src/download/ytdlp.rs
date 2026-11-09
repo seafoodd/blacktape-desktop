@@ -251,6 +251,24 @@ impl DownloadContext {
     }
 }
 
+/// yt-dlp format arguments for SoundCloud: progressive MP3 when SoundCloud still offers
+/// it, else the best HLS stream (usually AAC 160k). Go+ previews are filtered out in
+/// `download::soundcloud` before a track gets here.
+pub fn soundcloud_format_args() -> Vec<String> {
+    [
+        "-f",
+        "bestaudio[protocol^=http]/bestaudio/best",
+        "--extract-audio",
+        "--audio-format",
+        "best",
+        "--audio-quality",
+        "0",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 fn parse_download_percent(line: &str) -> Option<i32> {
     let parts: Vec<&str> = line.split('%').collect();
     if parts.len() >= 2 {
@@ -315,17 +333,7 @@ async fn download_track_internal(
             ctx.cookie_arg.clone(),
         ]);
     } else if is_soundcloud {
-        // Progressive MP3 when SoundCloud still offers it, else the best HLS stream
-        // (usually AAC 160k). Go+ previews are filtered out before a track gets here.
-        args.extend(vec![
-            "-f".to_string(),
-            "bestaudio[protocol^=http]/bestaudio/best".to_string(),
-            "--extract-audio".to_string(),
-            "--audio-format".to_string(),
-            "best".to_string(),
-            "--audio-quality".to_string(),
-            "0".to_string(),
-        ]);
+        args.extend(soundcloud_format_args());
     } else {
         args.extend(vec!["-f".to_string(), "bestaudio/best".to_string()]);
     }
