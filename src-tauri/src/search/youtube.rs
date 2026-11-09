@@ -5,7 +5,15 @@ use rustypipe::client::RustyPipe;
 use rustypipe::model::MusicItem;
 use rustypipe::param::search_filter::MusicSearchFilter;
 use std::error::Error;
+use std::sync::OnceLock;
 use tokio::try_join;
+
+/// Process-wide RustyPipe client (D7). Built on first use and shared by all searches.
+static RUSTYPIPE: OnceLock<RustyPipe> = OnceLock::new();
+
+fn rustypipe() -> &'static RustyPipe {
+    RUSTYPIPE.get_or_init(RustyPipe::new)
+}
 
 impl From<MusicItem> for SearchSuggestion {
     fn from(item: MusicItem) -> Self {
@@ -23,6 +31,7 @@ impl From<MusicItem> for SearchSuggestion {
                 item_url_path: format!("https://youtube.com/watch?v={}", t.id),
                 img: t.cover.last().map(|c| c.url.clone()).unwrap_or_default(),
                 subscriber_count: None,
+                audience_kind: None,
                 view_count: t.view_count,
                 year: None,
                 duration: t.duration,
@@ -36,6 +45,7 @@ impl From<MusicItem> for SearchSuggestion {
                 item_url_path: format!("https://youtube.com/browse/{}", a.id),
                 img: a.avatar.last().map(|c| c.url.clone()).unwrap_or_default(),
                 subscriber_count: a.subscriber_count,
+                audience_kind: None,
                 view_count: None,
                 year: None,
                 duration: None,
@@ -54,6 +64,7 @@ impl From<MusicItem> for SearchSuggestion {
                 item_url_path: format!("https://music.youtube.com/browse/{}", a.id),
                 img: a.cover.last().map(|c| c.url.clone()).unwrap_or_default(),
                 subscriber_count: None,
+                audience_kind: None,
                 view_count: None,
                 year: a.year.map(|y| y as i32),
                 duration: None,
@@ -67,6 +78,7 @@ impl From<MusicItem> for SearchSuggestion {
                 item_url_path: String::new(),
                 img: String::new(),
                 subscriber_count: None,
+                audience_kind: None,
                 view_count: None,
                 year: None,
                 duration: None,
@@ -77,7 +89,7 @@ impl From<MusicItem> for SearchSuggestion {
 }
 
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
-    let rp = RustyPipe::new();
+    let rp = rustypipe();
 
     let track_query = rp.query();
     let album_query = rp.query();

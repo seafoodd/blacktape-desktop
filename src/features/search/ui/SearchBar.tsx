@@ -11,6 +11,7 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import { useSearchPageStore } from "../model/searchPageStore.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -40,7 +41,6 @@ export const SearchBar = ({ className }: SearchBarProps) => {
     searchResults,
     setSearchQuery,
     executeSearch,
-    commitSearch,
     activeCategory,
     activePlatform,
     setActiveCategory,
@@ -54,11 +54,13 @@ export const SearchBar = ({ className }: SearchBarProps) => {
     initDownloadListeners().catch(console.error);
   }, [initDownloadListeners]);
 
-  // const handleBrowseAll = (e: React.MouseEvent) => {
-  //   e.preventDefault();
-  //   commitSearch(query);
-  //   setShowDropdown(false);
-  // };
+  const openSearchPage = useSearchPageStore((s) => s.open);
+
+  const handleBrowseAll = (e: React.MouseEvent) => {
+    e.preventDefault();
+    openSearchPage(query);
+    setShowDropdown(false);
+  };
 
   useEffect(() => {
     if (query.trim() !== "") {
@@ -111,7 +113,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
           onInput={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && query.trim() !== "") {
-              commitSearch(query);
+              openSearchPage(query);
               setShowDropdown(false);
               e.currentTarget.blur();
             }
@@ -249,12 +251,15 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                       <p className={clsx(styles.artist, "truncate")}>
                         {suggestion.item_type === ItemType.Artist ? (
                           <span className={styles.followers}>
-                            {suggestion.subscriber_count ? (
+                            {suggestion.subscriber_count &&
+                            suggestion.audience_kind ? (
                               <span className={"uppercase"}>
                                 {formatCompactNumber(
                                   suggestion.subscriber_count,
                                 )}{" "}
-                                subscribers
+                                {suggestion.audience_kind === "monthly_audience"
+                                  ? "monthly audience"
+                                  : "subscribers"}
                               </span>
                             ) : (
                               ""
@@ -338,19 +343,12 @@ export const SearchBar = ({ className }: SearchBarProps) => {
           {!isSearching && filteredResults.length > 0 && (
             <a
               className={styles.browseButton}
+              href="#"
+              onClick={handleBrowseAll}
               onMouseDown={(e) => e.preventDefault()}
             >
-              Browse all results (in development){" "}
-              <AiOutlineArrowRight size={20} />
+              Browse all results <AiOutlineArrowRight size={20} />
             </a>
-            // <a
-            //   className={styles.browseButton}
-            //   href="#"
-            //   onClick={handleBrowseAll}
-            //   onMouseDown={(e) => e.preventDefault()}
-            // >
-            //   Browse all results <AiOutlineArrowRight size={20} />
-            // </a>
           )}
         </div>
       )}

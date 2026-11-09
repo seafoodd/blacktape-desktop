@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { getArtistAlbums, getArtists } from "@/shared/lib/audio.ts";
 import { searchPlatforms } from "@/shared/lib/search.ts";
+import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
@@ -68,6 +69,8 @@ export type SearchSuggestion = {
   item_url_path: string;
   img: string;
   subscriber_count?: number;
+  /** What `subscriber_count` counts (YouTube artist rows): followers or monthly listeners. */
+  audience_kind?: "subscribers" | "monthly_audience" | null;
   view_count?: number;
   year?: number;
   duration?: number;
@@ -100,11 +103,6 @@ interface LibraryState {
   setSearchQuery: (query: string) => void;
   executeSearch: (query: string) => Promise<void>;
 
-  // Main Window Committed State
-  submittedQuery: string;
-  committedResults: SearchSuggestion[];
-  commitSearch: (query: string) => void;
-
   // Global Filters
   activeCategory: CategoryFilter;
   activePlatform: PlatformFilter;
@@ -126,6 +124,9 @@ interface LibraryState {
   cancelDownload: (taskId: string) => Promise<void>;
 }
 
+// Only the most recently started search may update `searchResults`; older responses still fill the cache.
+const searchGuard = createLatestGuard();
+
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   sortType: SortType.Artist,
   displayType: DisplayType.Albums,
@@ -140,9 +141,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   searchResults: [],
   searchCache: {},
 
-  submittedQuery: "",
-  committedResults: [],
-
   activeCategory: "All",
   activePlatform: "All",
   setActiveCategory: (cat) => set({ activeCategory: cat }),
@@ -150,6 +148,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   setSearchQuery: (query) => set({ searchQuery: query }),
   executeSearch: async (query) => {
+    const token = searchGuard.begin();
     const trimmedQuery = query.trim().toLowerCase();
     if (!trimmedQuery) {
       set({ searchResults: [] });
@@ -168,9 +167,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         "bandcamp",
         "youtube",
       ]);
+      const isLatest = searchGuard.isLatest(token);
 
       set((state) => ({
-        searchResults: results,
+        ...(isLatest ? { searchResults: results } : {}),
         searchCache: {
           ...state.searchCache,
           [trimmedQuery]: results,
@@ -179,14 +179,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     } catch (error) {
       console.error("Search failed", error);
     }
-  },
-
-  commitSearch: (query) => {
-    set((state) => ({
-      submittedQuery: query,
-      committedResults: state.searchResults,
-      activeView: "SEARCH_RESULTS",
-    }));
   },
 
   setSelectedTab: async (identifier) => {
