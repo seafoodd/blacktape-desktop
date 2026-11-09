@@ -224,6 +224,7 @@ impl AudioPlayer {
                                 .take()
                                 .or(Some(Duration::from_millis(next_song.duration_ms)));
                             player.seek_offset = Duration::ZERO;
+                            player.adopt_stream_duration();
                             player.prepare_next();
                         }
                         Some((next_cursor, next_song, false)) => {
@@ -1107,12 +1108,36 @@ impl AudioPlayer {
         self.player.append(source);
         self.player.play();
         self.current_song = Some(song);
+        self.adopt_stream_duration();
 
         self.update_current_metadata();
         let _ = self.media_controls.play();
         self.emit_state();
         self.update_discord_song(Some(0));
         self.prepare_next();
+    }
+
+    /// Search results do not always know a track's length (Bandcamp never does), so a stream song may start
+    /// with `duration_ms == 0`. Once the decoder or the platform told us, copy it into the current song and its
+    /// queue entries so the player and the queue show it.
+    fn adopt_stream_duration(&mut self) {
+        let Some(duration) = self.duration else {
+            return;
+        };
+        let ms = duration.as_millis() as u64;
+        let Some(song) = self.current_song.as_mut() else {
+            return;
+        };
+        if ms == 0 || song.duration_ms != 0 || !is_stream_song(song) {
+            return;
+        }
+        song.duration_ms = ms;
+        let url = song.source_url.clone();
+        for entry in self.queue.iter_mut() {
+            if entry.duration_ms == 0 && is_stream_song(entry) && entry.source_url == url {
+                entry.duration_ms = ms;
+            }
+        }
     }
 
     /// The prepared source of `url`, if that is the one waiting.
