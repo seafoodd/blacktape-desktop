@@ -1,0 +1,194 @@
+.topBar {
+    margin-bottom: 8px;
+}
+
+.backButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 4px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    cursor: pointer;
+}
+
+.backButton:hover {
+    color: var(--color-text);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.primaryButton,
+.secondaryButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-md);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 100ms ease;
+}
+
+.primaryButton {
+    background-color: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    color: #fff;
+}
+
+.primaryButton:hover:not(:disabled) {
+    background-color: var(--color-primaryLight);
+    border-color: var(--color-primaryLight);
+}
+
+.secondaryButton {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.secondaryButton:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.count {
+    margin-left: auto;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+}
+
+.done {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-primaryLight);
+    font-size: var(--font-md);
+}
+
+.state {
+    color: var(--color-muted);
+}
+
+.error {
+    color: var(--color-error);
+    margin-bottom: 8px;
+}
+
+.hint {
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+}
+
+.unavailable {
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+
+.trackArtist {
+    color: var(--color-muted);
+}
+
+.note {
+    max-width: 260px;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+}
+
+.numHidden {
+    visibility: hidden;
+}
+
+/* Fixed-width right-aligned columns so the durations and the download slots line up across rows. */
+.duration {
+    flex-shrink: 0;
+    width: 52px;
+    text-align: right;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.rowAction {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    margin-left: 4px;
+    /* pull the button closer to the row's right edge (the row has 12px padding) */
+    margin-right: -6px;
+}
+
+.downloadBtn {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 3px;
+    box-sizing: border-box;
+    background: none;
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    transition: color 150ms ease, background-color 100ms linear;
+}
+
+.trackRow:hover .downloadBtn,
+.downloadBtn:focus-visible {
+    color: white;
+}
+
+.downloadBtn:hover {
+    color: var(--color-primaryLight);
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.percent {
+    color: var(--color-info);
+    font-size: var(--font-sm);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.titleBadge {
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.alwaysShown {
+    display: flex !important;
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: albumSpin 700ms linear infinite;
+}
+
+@keyframes albumSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}

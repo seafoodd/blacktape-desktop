@@ -51,6 +51,8 @@ pub struct TrackDownload {
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
     pub source_item_id: Option<String>,
+    /// Length in milliseconds when the platform page/API provides it (parsers fill it; None otherwise).
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,12 +71,17 @@ pub enum DownloadPayload {
     Single(TrackDownload),
     Batch { tracks: Vec<TrackDownload> },
     AlbumURL(String),
+    /// Only the tracks of the album at `url` whose page urls are in `track_urls`.
+    AlbumSelection { url: String, track_urls: Vec<String> },
     TrackURL(String),
 }
 
 impl DownloadPayload {
     pub fn is_album(&self) -> bool {
-        matches!(self, DownloadPayload::AlbumURL(_))
+        matches!(
+            self,
+            DownloadPayload::AlbumURL(_) | DownloadPayload::AlbumSelection { .. }
+        )
     }
 }
 

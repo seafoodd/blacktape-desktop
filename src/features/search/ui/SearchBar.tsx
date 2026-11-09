@@ -7,15 +7,25 @@ import { formatCompactNumber } from "@/shared/lib/number.ts";
 import {
   ItemType,
   PlatformFilter,
+  type SearchSuggestion,
   useLibraryStore,
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
+import type { ReactNode } from "react";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import {
   matchesPlatformFilter,
   PLATFORM_FILTERS,
 } from "@/shared/lib/platforms.ts";
+import {
+  remoteRefOf,
+  useAlbumStatus,
+  useTrackStatus,
+} from "@/shared/hooks/useDownloadStatus.ts";
+import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
+import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
+import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -28,6 +38,39 @@ const formatSuggestionType = (type: ItemType): string => {
     default:
       return "UNKNOWN";
   }
+};
+
+/** Tells whether a suggestion is already in the library (tracks by the library index, albums by their source). */
+const InLibrary = ({
+  item,
+  children,
+}: {
+  item: SearchSuggestion;
+  children: (inLibrary: boolean) => ReactNode;
+}) => {
+  const ref = remoteRefOf(item);
+  const isAlbum = item.item_type === ItemType.Album;
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  return <>{children((isAlbum ? albumState : trackState) === "downloaded")}</>;
+};
+
+/** Library badge of a suggestion row: tracks are looked up in the library index, albums in the album sources. */
+const SuggestionStatus = ({ item }: { item: SearchSuggestion }) => {
+  const ref = remoteRefOf(item);
+  const isAlbum = item.item_type === ItemType.Album;
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  // "Downloaded" is shown in place of the download button; only a partial album gets the badge here.
+  const state = isAlbum ? albumState : trackState;
+  return <DownloadStatusBadge state={state === "partial" ? "partial" : "none"} />;
+};
+
+/** The album a suggestion opens in the album preview: the album itself, or the album of a track (when known). */
+const previewTarget = (item: SearchSuggestion): SearchSuggestion | null => {
+  if (item.item_type === ItemType.Album) return item;
+  if (item.item_type === ItemType.Track) return trackAlbumItem(item);
+  return null;
 };
 
 interface SearchBarProps {
@@ -236,8 +279,23 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                   (d) => d.url === suggestion.item_url_path,
                 );
 
+                const target = previewTarget(suggestion);
+
                 return (
-                  <div key={index} className={styles.suggestion}>
+                  <div
+                    key={index}
+                    className={clsx(styles.suggestion, target && styles.suggestionClickable)}
+                    title={target ? `Open album ${target.name}` : undefined}
+                    onMouseDown={target ? (e) => e.preventDefault() : undefined}
+                    onClick={
+                      target
+                        ? () => {
+                            setShowDropdown(false);
+                            void useAlbumPreviewStore.getState().open(target);
+                          }
+                        : undefined
+                    }
+                  >
                     <img
                       className={clsx(styles.cover, {
                         [styles.artist]:
@@ -248,9 +306,14 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                       alt="cover"
                     />
                     <div className={clsx(styles.rightBlock, "truncate")}>
-                      <p className={clsx(styles.title, "truncate")}>
-                        {suggestion.name}
-                      </p>
+                      <div className={styles.titleRow}>
+                        <p className={clsx(styles.title, "truncate")}>
+                          {suggestion.name}
+                        </p>
+                        {suggestion.item_type !== ItemType.Artist && (
+                          <SuggestionStatus item={suggestion} />
+                        )}
+                      </div>
                       <p className={clsx(styles.artist, "truncate")}>
                         {suggestion.item_type === ItemType.Artist ? (
                           <span className={styles.followers}>
@@ -284,9 +347,18 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                       </div>
                     </div>
 
-                    <div className={styles.tools}>
+                    <div className={styles.tools} onClick={(e) => e.stopPropagation()}>
                       {suggestion.item_type !== ItemType.Artist && (
                         <>
+                          <InLibrary item={suggestion}>
+                            {(inLibrary) =>
+                              inLibrary &&
+                              (!activeDownload || activeDownload.status === "failed") ? (
+                                <div className={styles.downloadStatus} title="Already in your library">
+                                  <FaCheckCircle size={20} />
+                                </div>
+                              ) : (
+                                <>
                           {!activeDownload ||
                           activeDownload.status === "failed" ? (
                             <button
@@ -296,15 +368,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                                 const rect =
                                   e.currentTarget.getBoundingClientRect();
                                 flyToLibrary(rect, suggestion.img);
-                                startDownload({
-                                  platform: suggestion.platform,
-                                  downloadType: suggestion.item_type,
-                                  url: suggestion.item_url_path,
-                                  artistName:
-                                    suggestion.band_name || suggestion.name,
-                                  title: suggestion.name,
-                                  coverUrl: suggestion.img,
-                                }).catch((err) => {
+                                startDownload(searchItemDownloadParams(suggestion)).catch((err) => {
                                   console.log("Download error: ", err);
                                 });
                               }}
@@ -334,6 +398,10 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                               )}
                             </div>
                           )}
+                                </>
+                              )
+                            }
+                          </InLibrary>
                         </>
                       )}
                     </div>

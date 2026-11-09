@@ -84,6 +84,10 @@ pub struct PlayerState {
     /// Index of the current song in the list playback was started from (differs from
     /// `queue_cursor` when shuffled). Lets the UI tell duplicates of one song apart.
     pub source_index: Option<usize>,
+    /// The current song is a remote stream, not a library file.
+    pub streaming: bool,
+    /// The current stream song is still being opened.
+    pub stream_loading: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

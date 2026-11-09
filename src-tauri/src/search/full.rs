@@ -440,6 +440,7 @@ mod tests {
             img: String::new(),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             duration: None,

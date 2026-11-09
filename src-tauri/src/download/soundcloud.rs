@@ -122,6 +122,7 @@ pub fn track_to_download(
         release_year,
         url,
         source_item_id: Some(track.id.to_string()),
+        duration_ms: track_duration_ms(track),
     })
 }
 
@@ -201,6 +202,15 @@ pub fn playlist_to_album(
     ))
 }
 
+/// Length of the full track in ms: `full_duration` is the real one (`duration` is 30 s for Go+ previews),
+/// `duration` is the fallback. Zero means unknown.
+pub fn track_duration_ms(track: &ScTrack) -> Option<u64> {
+    track
+        .full_duration
+        .filter(|d| *d > 0)
+        .or(track.duration.filter(|d| *d > 0))
+}
+
 fn non_empty(s: Option<&str>) -> Option<&str> {
     s.map(str::trim).filter(|s| !s.is_empty())
 }
@@ -237,6 +247,35 @@ mod tests {
         assert_eq!(t.release_year, Some(2003));
         assert_eq!(t.source_item_id.as_deref(), Some("293"));
         assert_eq!(t.track_number, None);
+    }
+
+    #[test]
+    fn single_track_has_its_full_duration() {
+        let t = track_to_download(&track(), None, None).unwrap();
+        assert_eq!(t.duration_ms, Some(213_890), "full_duration wins over duration (213886)");
+    }
+
+    #[test]
+    fn duration_falls_back_to_duration_and_zero_is_unknown() {
+        let mut t = track();
+        t.full_duration = None;
+        assert_eq!(track_duration_ms(&t), Some(213_886));
+        t.full_duration = Some(0);
+        assert_eq!(track_duration_ms(&t), Some(213_886));
+        t.duration = Some(0);
+        assert_eq!(track_duration_ms(&t), None);
+        t.duration = None;
+        t.full_duration = None;
+        assert_eq!(track_duration_ms(&t), None);
+        t.full_duration = Some(200_000);
+        assert_eq!(track_duration_ms(&t), Some(200_000));
+    }
+
+    #[test]
+    fn set_tracks_carry_their_durations() {
+        let (album, _) = playlist_to_album(&playlist()).unwrap();
+        let durations: Vec<Option<u64>> = album.tracks.iter().map(|t| t.duration_ms).collect();
+        assert_eq!(durations, vec![Some(205_348), Some(219_747)]);
     }
 
     #[test]

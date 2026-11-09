@@ -1,3 +1,4 @@
+import { sameUrl } from "@/shared/lib/urlKey.ts";
 import { create } from "zustand";
 import {
   getPosition,
@@ -23,6 +24,10 @@ interface AudioState {
   progress: number;
   volume: number;
   isPlaying: boolean;
+  /** The current song is a remote stream, not a library file. */
+  isStreaming: boolean;
+  /** The current stream song is still being opened. */
+  streamLoading: boolean;
   shuffleMode: boolean;
   repeatMode: RepeatMode;
   /** Position of the current song in `queue`. */
@@ -59,6 +64,8 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   progress: 0,
   volume: 0,
   isPlaying: false,
+  isStreaming: false,
+  streamLoading: false,
   shuffleMode: false,
   repeatMode: RepeatMode.Off,
   queueCursor: null,
@@ -136,17 +143,36 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     const { currentSong, isPlaying } = get();
     if (!currentSong || !isPlaying) return;
     const pos = await getPosition();
+    // the song changed while the position was being fetched: that position belongs to the old one
+    if (songChanged(get().currentSong, currentSong)) return;
     set({ progress: pos });
   },
 }));
 
+type SongRef = { id?: number | null; source_url?: string | null } | null | undefined;
+
+/**
+ * True when `next` is a different track than `prev`. A streamed song swapped for its downloaded file (same page
+ * url, different id) is the same track: it keeps playing, so the progress must not reset.
+ */
+export const songChanged = (prev: SongRef, next: SongRef): boolean => {
+  if (!prev || !next) return Boolean(prev) !== Boolean(next);
+  if (prev.source_url && next.source_url) return !sameUrl(prev.source_url, next.source_url);
+  return (prev.id ?? null) !== (next.id ?? null);
+};
+
 if (typeof window !== "undefined") {
   listen("player-state", (event) => {
     const state: any = event.payload;
+    const previous = useAudioStore.getState().currentSong;
+    // a different song starts at 0 right away, whatever position the event still carries
+    const changed = songChanged(previous, state.current_song);
     useAudioStore.setState({
       isPlaying: state.is_playing,
+      isStreaming: Boolean(state.streaming),
+      streamLoading: Boolean(state.stream_loading),
       currentSong: state.current_song,
-      progress: state.progress,
+      progress: changed ? 0 : state.progress,
       volume: state.volume,
       shuffleMode: state.shuffle_mode,
       repeatMode: state.repeat_mode,

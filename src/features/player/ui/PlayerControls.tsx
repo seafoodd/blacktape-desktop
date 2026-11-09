@@ -4,6 +4,7 @@ import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
+  MdCloudQueue,
   MdPause,
   MdPlayArrow,
   MdRepeat,
@@ -22,6 +23,8 @@ import { RepeatMode } from "@/shared/types.ts";
 export const PlayerControls = () => {
   const {
     currentSong,
+    isStreaming,
+    streamLoading,
     progress,
     volume,
     setVolume,
@@ -76,7 +79,7 @@ export const PlayerControls = () => {
         style={{
           background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #555 0)`,
         }}
-        disabled={!currentSong}
+        disabled={!currentSong || streamLoading}
         min={0}
         max={1000}
         value={progress * 1000}
@@ -110,7 +113,17 @@ export const PlayerControls = () => {
             onClick={togglePlay}
             disabled={!currentSong}
           >
-            {isPlaying ? <MdPause /> : <MdPlayArrow />}
+            {streamLoading ? (
+              <span
+                className={styles.loadingSpinner}
+                role="status"
+                aria-label="Loading stream"
+              />
+            ) : isPlaying ? (
+              <MdPause />
+            ) : (
+              <MdPlayArrow />
+            )}
           </button>
           <button
             onClick={() => next()}
@@ -148,6 +161,15 @@ export const PlayerControls = () => {
                   {currentSong.title}
                 </div>
                 <div className={clsx(styles.currentSongArtist, "truncate")}>
+                  {isStreaming && (
+                    <span
+                      className={styles.streamBadge}
+                      title="Streaming from the internet, not saved to your library"
+                    >
+                      <MdCloudQueue size={14} />
+                      Streaming
+                    </span>
+                  )}
                   {[
                     currentSong.album_artist,
                     currentSong.album,

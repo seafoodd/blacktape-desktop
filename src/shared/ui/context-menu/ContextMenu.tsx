@@ -14,6 +14,8 @@ export interface MenuItemOption {
   action?: () => void;
   separator?: boolean;
   danger?: boolean;
+  /** Greyed out and not clickable (a click does nothing and keeps the menu open). */
+  disabled?: boolean;
   /** Nested items shown in a flyout on hover/click; `action` is ignored when set. */
   submenu?: MenuItemOption[];
 }
@@ -154,7 +156,9 @@ export const ContextMenu = ({ position, onClose, items }: ContextMenuProps) => {
             key={`${item.label}-${index}`}
             className={clsx(styles.item, {
               [styles.itemDanger]: item.danger,
+              [styles.itemDisabled]: item.disabled,
             })}
+            disabled={item.disabled}
             onClick={() => {
               item.action?.();
               onClose();

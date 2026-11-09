@@ -75,7 +75,7 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
               }
             },
           },
-      ...(!isCurrentSong
+      ...(!isCurrentSong && song.id != null
         ? [
             {
               label: "Play Next",
@@ -95,16 +95,20 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
             },
           ]
         : []),
-      {
-        separator: true,
-        label: "",
-      },
-      {
-        label: "Add to Playlist...",
-        action: () => {
-          openModal(<AddToPlaylistModal songIds={[song.id]} />);
-        },
-      },
+      ...(song.id != null
+        ? [
+            {
+              separator: true,
+              label: "",
+            },
+            {
+              label: "Add to Playlist...",
+              action: () => {
+                openModal(<AddToPlaylistModal songIds={[song.id]} />);
+              },
+            },
+          ]
+        : []),
     ];
 
     const artistText =

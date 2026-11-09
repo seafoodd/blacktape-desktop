@@ -18,6 +18,8 @@ pub struct SearchSuggestion {
     pub subscriber_count: Option<u64>,
     /// What `subscriber_count` counts: `"subscribers"` or `"monthly_audience"`; None when unknown/not applicable.
     pub audience_kind: Option<&'static str>,
+    /// Page url of the album a TRACK belongs to (YouTube Music), so the UI can open the album from a track.
+    pub album_url: Option<String>,
     pub view_count: Option<u64>,
     pub year: Option<i32>,
     pub duration: Option<u32>,
@@ -376,6 +378,7 @@ mod fallback_tests {
             img: String::new(),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             duration: None,

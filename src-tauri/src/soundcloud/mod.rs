@@ -92,6 +92,8 @@ pub struct ScTrack {
     pub full_duration: Option<u64>,
     /// `ALLOW`, `MONETIZE`, `SNIP` (Go+ preview only) or `BLOCK` (geo-blocked).
     pub policy: Option<String>,
+    /// Token the media endpoint needs for some tracks (`?track_authorization=`).
+    pub track_authorization: Option<String>,
     pub monetization_model: Option<String>,
     pub streamable: Option<bool>,
     pub genre: Option<String>,

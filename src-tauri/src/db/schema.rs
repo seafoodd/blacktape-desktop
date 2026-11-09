@@ -18,6 +18,29 @@ pub const TRASH_SCHEMA_SQL: &str = "
     );
 ";
 
+/// Album sources (library-sync D5): one row per remote album the app downloaded, with the WHOLE track list of
+/// that album. Idempotent, so it runs both as migration 7 and from `Database::ensure_album_sources_schema()`.
+/// `album_key` is `library_index::normalize::normalize_url_key(album_url)`; `track_urls` is a JSON array of
+/// all downloadable track page urls in album order; `tracks_json` is a JSON array of `AlbumTrackInfo`
+/// (title, artists, number, url, duration) so the "missing songs" list works offline.
+pub const ALBUM_SOURCES_SCHEMA_SQL: &str = "
+    CREATE TABLE IF NOT EXISTS album_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        platform TEXT NOT NULL,
+        album_url TEXT NOT NULL,
+        album_key TEXT NOT NULL UNIQUE,
+        album_artist TEXT NOT NULL,
+        album TEXT NOT NULL,
+        cover_url TEXT,
+        year INTEGER,
+        track_urls TEXT NOT NULL DEFAULT '[]',
+        tracks_json TEXT,
+        fetched_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_album_sources_artist ON album_sources(album_artist COLLATE NOCASE);
+";
+
 pub fn get_migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -98,6 +121,12 @@ pub fn get_migrations() -> Vec<Migration> {
             version: 6,
             description: "create trash items and app settings tables",
             sql: TRASH_SCHEMA_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "create album sources table",
+            sql: ALBUM_SOURCES_SCHEMA_SQL,
             kind: MigrationKind::Up,
         },
     ]

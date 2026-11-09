@@ -49,6 +49,16 @@ pub fn play_song_in_queue(
     Ok(())
 }
 
+/// Called after downloads finished: queued streams of tracks that are in the library now play from the files.
+#[command]
+pub fn swap_streams_for_downloads(
+    songs: Vec<Song>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<usize, String> {
+    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    Ok(player.swap_streams_for_downloads(&songs))
+}
+
 #[command]
 pub fn remove_from_queue(
     positions: Vec<usize>,
@@ -129,9 +139,9 @@ pub fn stop(state: State<Mutex<AudioPlayer>>) {
 }
 
 #[command]
-pub fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) {
-    let mut player = state.lock().unwrap();
-    player.seek(fraction);
+pub fn seek(fraction: f32, state: State<Mutex<AudioPlayer>>) -> Result<(), String> {
+    let mut player = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    player.seek(fraction)
 }
 
 #[command]

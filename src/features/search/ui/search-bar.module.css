@@ -180,6 +180,10 @@
     }
 }
 
+.suggestionClickable:hover {
+    cursor: pointer;
+}
+
 .suggestion:nth-child(1) {
     border-top: none;
 }
@@ -205,6 +209,18 @@
 .title {
     font-weight: 500;
     color: white;
+}
+
+/* title and library badge on one line; the title still ellipsizes */
+.titleRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.titleRow > .title {
+    min-width: 0;
 }
 
 .artist {
@@ -250,7 +266,7 @@
     border-radius: 0 0 var(--radius-md) var(--radius-md);
 
     &:hover {
-        cursor: not-allowed;
+        cursor: pointer;
         background-color: var(--color-surface);
         color: var(--color-primary);
     }

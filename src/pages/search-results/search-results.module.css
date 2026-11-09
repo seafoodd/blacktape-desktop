@@ -362,6 +362,13 @@
     min-width: 0;
 }
 
+/* Side by side with the top songs there is room for bigger tiles: the row then fills the height of the songs. */
+@container profile (min-width: 761px) {
+    .discoItem {
+        flex-basis: 184px;
+    }
+}
+
 /* ---------- sections ---------- */
 
 .section {
@@ -381,6 +388,12 @@
 .sectionTitle {
     font-size: var(--font-xl);
     font-weight: 600;
+}
+
+.sectionActions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .sectionCount {
@@ -486,10 +499,21 @@
     min-width: 0;
 }
 
-.trackInfo > p:first-child {
+.titleRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.trackTitle {
     font-size: var(--font-lg);
     font-weight: 500;
     color: white;
+}
+
+.titleRow > .trackTitle {
+    min-width: 0;
 }
 
 .subline {
@@ -506,12 +530,20 @@
     text-align: right;
 }
 
+/* fixed widths: the columns stay aligned across rows, empty placeholders keep their width */
 .trackDuration {
-    width: 52px;
+    width: 60px;
 }
 
 .trackPlays {
     width: 96px;
+}
+
+/* platform label column of a track row: fixed width so the columns to its left line up across rows */
+.badgeColumn {
+    flex-shrink: 0;
+    width: 96px;
+    text-align: center;
 }
 
 .badge {
@@ -701,7 +733,7 @@
     border-radius: 50%;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: color 150ms ease;
+    transition: color 150ms ease, background-color 100ms linear;
 }
 
 .trackRow:hover .rowDownloadBtn,
@@ -711,6 +743,19 @@
 
 .rowDownloadBtn:hover {
     color: var(--color-primaryLight);
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.libraryMark {
+    /* same box as .rowDownloadBtn (20px icon + 6px padding) so the check lines up with the download buttons */
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    box-sizing: border-box;
+    color: var(--color-info);
 }
 
 .progressText {
@@ -841,4 +886,66 @@
 .profile .trackCover {
     width: 36px;
     height: 36px;
+}
+
+/* stream button over a track cover: like the queue, the cover dims and the play button shows on row hover */
+.trackCoverBox {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.trackCoverBox .trackCover {
+    transition:
+        filter 0.15s ease,
+        transform 0.15s ease;
+}
+
+.trackRow:hover .trackCoverBox .trackCover {
+    filter: brightness(0.5) blur(1.5px);
+    transform: scale(1.05);
+}
+
+.trackRow:hover .trackPreview {
+    display: flex;
+}
+
+.profile .trackCoverBox {
+    width: 36px;
+    height: 36px;
+}
+
+/* album cards open the album preview */
+.cardClickable {
+    cursor: pointer;
+}
+
+/* library badge of an album cover: top-left, on a dark disc so it reads over any artwork */
+.coverBadge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
+}
+
+/* album name inside the subline of a track: a link that opens the album */
+.albumLink {
+    display: inline;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.albumLink:hover,
+.albumLink:focus-visible {
+    color: var(--color-text);
+    text-decoration: underline;
 }

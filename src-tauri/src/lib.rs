@@ -3,10 +3,12 @@ pub mod auth;
 pub mod db;
 mod discord_presence;
 pub mod download;
+pub mod library_index;
 mod lyrics;
 mod playlists;
 pub mod scan;
 pub mod song_edit;
+mod preview;
 mod search;
 pub mod soundcloud;
 pub mod tags;
@@ -18,7 +20,8 @@ pub mod utils;
 use crate::audio::commands::{
     add_next_to_queue, add_to_queue, fetch_state, get_is_paused, get_position, get_volume,
     move_in_queue, next, pause, play_song_in_queue, previous, remove_from_queue, resume, seek,
-    set_repeat_mode, set_volume, start_playback, stop, toggle, toggle_shuffle,
+    set_repeat_mode, set_volume, start_playback, stop, swap_streams_for_downloads, toggle,
+    toggle_shuffle,
 };
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_login};
@@ -210,6 +213,39 @@ async fn get_lyrics(
         .map_err(|e| e.to_string())?;
 
     Ok(lyrics_source)
+}
+
+/// Lyrics of a streamed song (not in the library, so nothing is stored in the database). Results are kept in
+/// memory for the session so switching back to a song does not ask the providers again.
+#[command]
+async fn get_stream_lyrics(
+    artist: String,
+    title: String,
+    album: Option<String>,
+    duration_ms: Option<u64>,
+    provider: Option<String>,
+) -> Result<LyricsSource, String> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, LyricsSource>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let provider = provider.filter(|p| !p.trim().is_empty() && p != "auto");
+    let key = format!("{}|{}|{}", artist.to_lowercase(), title.to_lowercase(), provider.as_deref().unwrap_or(""));
+    if provider.is_none() {
+        if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            return Ok(hit.clone());
+        }
+    }
+    let album = album.filter(|a| !a.trim().is_empty());
+    let result = match provider.as_deref() {
+        Some(p) => fetch_lyrics_from_provider(p, &artist, &title, album.as_deref(), duration_ms).await,
+        None => fetch_lyrics(&artist, &title, album.as_deref(), duration_ms).await,
+    }?;
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(format!("{}|{}|", artist.to_lowercase(), title.to_lowercase()), result.clone());
+    Ok(result)
 }
 
 #[command]
@@ -446,6 +482,7 @@ async fn update_album_info(
 #[command]
 async fn delete_songs(
     state: State<'_, tokio::sync::Mutex<Database>>,
+    player: State<'_, std::sync::Mutex<crate::audio::player::AudioPlayer>>,
     ids: Vec<i64>,
     delete_file: bool,
 ) -> Result<(), String> {
@@ -456,9 +493,19 @@ async fn delete_songs(
         .map_err(|e| e.to_string())?;
 
     let outcome = song_edit::delete_song_files(&songs, delete_file);
-    db.delete_songs(outcome.deleted_ids)
+    db.delete_songs(outcome.deleted_ids.clone())
         .await
         .map_err(|e| e.to_string())?;
+
+    // deleted songs in the queue keep their place as streams
+    let removed: Vec<Song> = songs
+        .iter()
+        .filter(|s| s.id.is_some_and(|id| outcome.deleted_ids.contains(&id)))
+        .cloned()
+        .collect();
+    if let Ok(mut p) = player.lock() {
+        p.streamify_deleted(&removed);
+    }
 
     if outcome.failures.is_empty() {
         Ok(())
@@ -484,6 +531,7 @@ async fn download(
     artist_name: Option<String>,
     title: Option<String>,
     cover_url: Option<String>,
+    track_urls: Option<Vec<String>>,
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
         let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
@@ -508,7 +556,7 @@ async fn download(
         url: url.clone(),
         artist_name: initial_artist,
         album_title: if is_track {
-            "Singles".to_string()
+            String::new() // set once the track page was read
         } else {
             initial_title.clone()
         },
@@ -533,7 +581,12 @@ async fn download(
     task_registry.register_task(initial_state).await;
 
     let payload = match download_type {
-        DownloadType::Album => DownloadPayload::AlbumURL(url),
+        DownloadType::Album => match track_urls {
+            Some(track_urls) if !track_urls.is_empty() => {
+                DownloadPayload::AlbumSelection { url, track_urls }
+            }
+            _ => DownloadPayload::AlbumURL(url),
+        },
         DownloadType::Playlist => return Err("Playlist downloads unimplemented.".into()),
         DownloadType::Track => DownloadPayload::TrackURL(url),
     };
@@ -549,6 +602,15 @@ async fn download(
         .map_err(|e| e.to_string())?;
 
     Ok("Task queued successfully".to_string())
+}
+
+/// Track list of an album/set for the album preview page.
+#[command]
+async fn get_album_preview(
+    platform: Platform,
+    url: String,
+) -> Result<crate::download::album_preview::AlbumPreview, String> {
+    crate::download::album_preview::album_preview(platform, &url).await
 }
 
 #[command]
@@ -654,6 +716,8 @@ pub fn run() {
             let media_controls = MediaControls::new(&window, app_handle.clone());
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
             app.manage(Mutex::new(audio_player));
+            // Start a yt-dlp process ahead of time so the first YouTube stream starts faster.
+            preview::resolve::warm_up(app_handle.clone());
 
             let app_dir = app
                 .path()
@@ -718,6 +782,21 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(generate_handler![
+            // Streaming
+            preview::commands::stream_queue,
+            preview::commands::stream_prefetch,
+            preview::commands::stream_add_to_queue,
+            preview::commands::start_mixed_playback,
+            // Library index (status of remote items, missing tracks)
+            library_index::commands::get_download_status,
+            library_index::commands::get_album_status,
+            library_index::commands::get_artist_album_sources,
+            library_index::commands::get_missing_tracks,
+            library_index::commands::link_album_source,
+            library_index::commands::unlink_album_source,
+            library_index::candidates::find_album_candidates,
+            get_stream_lyrics,
+            get_album_preview,
             // Player Commands
             start_playback,
             pause,
@@ -738,6 +817,7 @@ pub fn run() {
             add_next_to_queue,
             play_song_in_queue,
             remove_from_queue,
+            swap_streams_for_downloads,
             move_in_queue,
             // Scan
             scan_music,

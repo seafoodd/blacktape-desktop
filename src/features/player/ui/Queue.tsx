@@ -41,7 +41,14 @@ const Queue = ({ className }: QueueProps) => {
   const activeItemRef = useRef<HTMLDivElement | null>(null);
 
   // Only one row is current even if the song is queued several times.
-  const playingIndex = findPlayingRow(queue, currentSong?.id, queueCursor);
+  const playingIndex =
+    currentSong && currentSong.id == null
+      ? // Stream songs have no id: trust the cursor when that row holds the stream.
+        queueCursor !== null &&
+        queue[queueCursor]?.source_url === currentSong.source_url
+        ? queueCursor
+        : null
+      : findPlayingRow(queue, currentSong?.id, queueCursor);
 
   // Selection is by position in the queue (the same song can be queued many times).
   const positions = useMemo(() => queue.map((_, i) => i), [queue.length]);

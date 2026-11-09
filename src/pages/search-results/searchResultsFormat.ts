@@ -2,7 +2,12 @@
  * Pure presentational helpers of the search results page: durations, inputs, labels, download state.
  * No React and no runtime imports of the store (type-only imports are erased), so they are cheap to unit test.
  */
-import type { DownloadProgress } from "@/shared/store/libraryStore.ts";
+import {
+  ItemType,
+  type DownloadProgress,
+  type SearchSuggestion,
+} from "@/shared/store/libraryStore.ts";
+import type { Platform } from "@/shared/types.ts";
 import type { SearchPageFilters } from "@/features/search/model/searchPageFilters.ts";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
 
@@ -21,6 +26,16 @@ export function formatDurationSecs(secs: number): string {
     return `${hours}:${String(minutes).padStart(2, "0")}:${ss}`;
   }
   return `${minutes}:${ss}`;
+}
+
+/**
+ * Duration column of a track row: "3:05", or "" when unknown. The column keeps its width either way, so rows
+ * with and without a duration line up.
+ */
+export function formatDurationCell(secs: number | null | undefined): string {
+  return typeof secs === "number" && Number.isFinite(secs) && secs >= 0
+    ? formatDurationSecs(secs)
+    : "";
 }
 
 /** Text shown in a duration input for a stored value (seconds). */
@@ -198,7 +213,67 @@ export function formatAudience(
   return null;
 }
 
+/**
+ * The album a track belongs to as an album search item (opens the album preview), or null when the track has no
+ * album link. The artist is the first credited one: that is how albums are filed.
+ */
+export function trackAlbumItem(item: {
+  name: string;
+  band_name: string;
+  album_name?: string | null;
+  album_url?: string | null;
+  img: string;
+  platform: Platform;
+}): SearchSuggestion | null {
+  const url = item.album_url?.trim();
+  const name = item.album_name?.trim();
+  if (!url || !name) return null;
+  return {
+    item_type: ItemType.Album,
+    name,
+    band_name: item.band_name.split(",")[0].trim(),
+    item_url_path: url,
+    img: item.img,
+    platform: item.platform,
+  };
+}
+
 /** "Band - Album" line of a track row; empty parts are skipped. */
 export function trackSubline(band: string, album?: string | null): string {
   return [band, album ?? ""].filter((p) => p.trim() !== "").join(" - ");
+}
+
+/**
+ * Parameters of "Download" for a search item. A track that knows its album goes through the album pipeline (album
+ * folder, cover, track number); everything else downloads the item itself.
+ */
+export function searchItemDownloadParams(item: SearchSuggestion): {
+  platform: Platform;
+  downloadType: ItemType;
+  url: string;
+  artistName: string;
+  title: string;
+  coverUrl: string;
+  trackUrls?: string[];
+} {
+  const album = item.item_type === ItemType.Track ? trackAlbumItem(item) : null;
+  if (album) {
+    return {
+      platform: item.platform,
+      downloadType: ItemType.Album,
+      url: album.item_url_path,
+      artistName: album.band_name,
+      title: album.name,
+      coverUrl: item.img,
+      trackUrls: [item.item_url_path],
+    };
+  }
+  return {
+    platform: item.platform,
+    downloadType: item.item_type,
+    url: item.item_url_path,
+    artistName: item.band_name || (item.item_type === ItemType.Album ? item.name : "Unknown Artist"),
+    title: item.name,
+    coverUrl: item.img,
+  };
 }

@@ -1,0 +1,45 @@
+/* Same look as the play button over a cover in the queue: transparent, white icon, shown on row hover. */
+.button {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+
+*:hover > .button,
+.button:focus-visible,
+.alwaysVisible {
+    display: flex;
+}
+
+/* The play triangle is drawn right of its box centre; shift it back so it looks centred. */
+.playIcon {
+    transform: translateX(-1px);
+}
+
+.spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: streamSpin 700ms linear infinite;
+}
+
+.errorMark {
+    font-weight: 700;
+    font-size: var(--font-lg);
+    color: var(--color-error);
+}
+
+@keyframes streamSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}

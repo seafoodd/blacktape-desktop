@@ -32,6 +32,13 @@
     color: #ffffff;
 }
 
+.itemDisabled,
+.itemDisabled:hover {
+    opacity: 0.45;
+    background-color: transparent;
+    cursor: default;
+}
+
 .itemDanger {
     color: var(--color-error);
 }

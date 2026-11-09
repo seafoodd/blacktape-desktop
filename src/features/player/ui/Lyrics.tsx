@@ -1,3 +1,4 @@
+import type { Song } from "@/shared/types.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import {
   useCallback,
@@ -21,6 +22,32 @@ import {
 } from "@/shared/ui/context-menu";
 import { useModalStore } from "@/shared/store/modalStore";
 import { EditLyricsModal } from "./EditLyricsModal";
+
+/**
+ * Command + args that load the lyrics of `song`: library songs by id (stored in the database), streamed songs
+ * (no id) by artist and title.
+ */
+export function lyricsRequest(
+  song: Song,
+  provider: string | null = null,
+  refetch = false,
+): [string, Record<string, unknown>] {
+  if (song.id != null) {
+    return refetch
+      ? ["refetch_lyrics", { id: song.id, provider }]
+      : ["get_lyrics", { id: song.id }];
+  }
+  return [
+    "get_stream_lyrics",
+    {
+      artist: song.artists[0] || song.album_artist,
+      title: song.title,
+      album: song.album || null,
+      durationMs: song.duration_ms || null,
+      provider,
+    },
+  ];
+}
 
 const invokeWithTimeout = async <T,>(
   cmd: string,
@@ -96,8 +123,11 @@ export const Lyrics = ({ className }: LyricsProps) => {
   const [scrolledDown, setScrolledDown] = useState<boolean>(false);
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Library songs are keyed by id, streamed songs (no id) by their page url.
+  const songKey = currentSong?.id ?? currentSong?.source_url ?? null;
+
   useEffect(() => {
-    if (!currentSong?.id) {
+    if (!currentSong || songKey === null) {
       setLyrics(null);
       setSource(null);
       setErrorStatus(null);
@@ -115,9 +145,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
         const lyricsSource = await invokeWithTimeout<{
           lyrics: string;
           source: string;
-        }>("get_lyrics", {
-          id: currentSong.id,
-        });
+        }>(...lyricsRequest(currentSong));
 
         if (isCurrentRequest) {
           const lyr = lyricsSource?.lyrics;
@@ -148,20 +176,17 @@ export const Lyrics = ({ className }: LyricsProps) => {
     return () => {
       isCurrentRequest = false;
     };
-  }, [currentSong?.id]);
+  }, [songKey]);
 
   const handleRefetch = async (provider?: string) => {
-    if (!currentSong?.id) return;
+    if (!currentSong || songKey === null) return;
     setRetrieving(true);
     setErrorStatus(null);
     try {
       const lyricsSource = await invokeWithTimeout<{
         lyrics: string;
         source: string;
-      }>("refetch_lyrics", {
-        id: currentSong.id,
-        provider: provider ?? null,
-      });
+      }>(...lyricsRequest(currentSong, provider ?? null, true));
 
       const lyr = lyricsSource?.lyrics;
       setLyrics(lyr && lyr.trim().length > 0 ? lyr : null);
@@ -215,14 +240,32 @@ export const Lyrics = ({ className }: LyricsProps) => {
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!currentSong?.id) return;
+    if (songKey === null) return;
     setActiveMenu({
       position: { x: e.clientX, y: e.clientY },
     });
   };
 
   const contextMenuItems: MenuItemOption[] = useMemo(() => {
-    if (!currentSong?.id) return [];
+    if (songKey === null) return [];
+    // Streamed songs are not in the library: their lyrics can be fetched but not edited or deleted.
+    const libraryOnly: MenuItemOption[] = currentSong?.id
+      ? [
+          {
+            separator: true,
+            label: "",
+          },
+          {
+            label: "Edit Lyrics...",
+            action: handleEditLyrics,
+          },
+          {
+            label: "Delete Lyrics",
+            danger: true,
+            action: handleDeleteLyrics,
+          },
+        ]
+      : [];
 
     return [
       {
@@ -257,21 +300,9 @@ export const Lyrics = ({ className }: LyricsProps) => {
         label: fillEnabled ? "Disable Line Fill" : "Enable Line Fill",
         action: toggleFill,
       },
-      {
-        separator: true,
-        label: "",
-      },
-      {
-        label: "Edit Lyrics...",
-        action: handleEditLyrics,
-      },
-      {
-        label: "Delete Lyrics",
-        danger: true,
-        action: handleDeleteLyrics,
-      },
+      ...libraryOnly,
     ];
-  }, [currentSong?.id, lyrics, source, fillEnabled]);
+  }, [songKey, lyrics, source, fillEnabled]);
 
   const parsedLyrics = useMemo(() => {
     return lyrics ? parseLyrics(lyrics) : null;
@@ -390,7 +421,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
-  }, [currentSong?.id]);
+  }, [songKey]);
 
   // Auto-scroll to active line
   useEffect(() => {

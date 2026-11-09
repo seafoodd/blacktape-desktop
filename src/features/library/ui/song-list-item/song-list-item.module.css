@@ -45,6 +45,11 @@
         background-color: var(--color-primary);
     }
 
+    /* A selected row keeps the selection colour even while it is the playing one. */
+    &.playing.selected {
+        background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    }
+
 
     font-size: var(--font-md);
 }

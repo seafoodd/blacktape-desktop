@@ -1,0 +1,218 @@
+/* Same grid as the song rows of the artist page (SongListItem), dimmed: the song is not in the library. */
+.row {
+    display: flex;
+    width: 100%;
+    max-width: 600px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 12px;
+    height: 32px;
+    list-style: none;
+    font-size: var(--font-md);
+    cursor: default;
+    user-select: none;
+    transition: 100ms ease-out background-color;
+
+    &:nth-child(even) {
+        background-color: var(--color-surface);
+    }
+
+    /* The song being played: the highlight of a playing library song, a bit more transparent. */
+    &.playing {
+        background-color: color-mix(in srgb, var(--color-primary) 70%, transparent);
+    }
+
+    /* Same selection frame as the song rows (SongListItem). */
+    &.selected {
+        background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+        box-shadow:
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight);
+    }
+
+    &.selected.selectedTop {
+        box-shadow:
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 2px 0 var(--color-primaryLight);
+    }
+
+    &.selected.selectedBottom {
+        box-shadow:
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 -2px 0 var(--color-primaryLight);
+    }
+
+    &.selected.selectedTop.selectedBottom {
+        box-shadow: inset 0 0 0 2px var(--color-primaryLight);
+    }
+}
+
+.left {
+    display: flex;
+    padding-left: 8px;
+    gap: 16px;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    text-align: start;
+}
+
+/* Number slot; the hover play button is centred on it. */
+.numSlot {
+    opacity: 0.5;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    flex-shrink: 0;
+}
+
+.numSlotCurrent {
+    opacity: 1;
+}
+
+/* The playing song is brighter; a selected row looks like an inactive one again. */
+.row.playing .title,
+.row.playing .duration {
+    opacity: 0.85;
+}
+
+.row.selected .numSlot,
+.row.selected .title,
+.row.selected .duration {
+    opacity: 0.5;
+}
+
+.number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    text-align: center;
+}
+
+/* Same icons as the playing song rows (SongListItem). */
+.playingIcon {
+    width: 18px;
+    height: 18px;
+}
+
+.pauseIcon {
+    width: 20px;
+    height: 20px;
+}
+
+.playButton {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 100%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: 100ms linear background-color;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.row:hover .playButton {
+    display: flex;
+}
+
+.row:hover .number {
+    visibility: hidden;
+}
+
+.title {
+    opacity: 0.5;
+    flex: 1;
+    min-width: 0;
+}
+
+.right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.duration {
+    opacity: 0.5;
+    min-width: 40px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-muted);
+}
+
+.row:hover .duration {
+    display: none;
+}
+
+.downloadButton {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    /* the box of the three-dots icon of a song row: 24px with 3px around the 18px glyph */
+    width: 24px;
+    height: 24px;
+    padding: 3px;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 100%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.row:hover .downloadButton {
+    display: flex;
+}
+
+/* Queued or downloading: the percent takes the place of the duration and the button; same look as the
+   percentages of a downloading album (artist-albums.module.css). */
+.percent {
+    min-width: 48px;
+    text-align: right;
+    font-size: var(--font-md, 14px);
+    font-weight: 600;
+}
+
+.percentCompleted {
+    color: var(--color-primary);
+}
+
+.percentActive {
+    color: var(--color-text, #ffffff);
+}
+
+.percentPending {
+    color: var(--color-muted, #888888);
+}
+
+/* Placeholder of a song that was just removed: dimmed, nothing to click. */
+.ghost {
+    pointer-events: none;
+}
+
+.ghost .downloadButton,
+.ghost .playButton {
+    display: none !important;
+}

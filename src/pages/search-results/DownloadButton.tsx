@@ -9,7 +9,8 @@ import {
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
-import { downloadPercent, isDownloadBusy } from "./searchResultsFormat.ts";
+import { remoteRefOf, useAlbumStatus, useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
+import { downloadPercent, isDownloadBusy, searchItemDownloadParams } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";
 
 interface DownloadButtonProps {
@@ -28,21 +29,18 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
   const startDownload = useLibraryStore((s) => s.startDownload);
   const busy = isDownloadBusy(progress);
   const overlay = variant === "overlay";
+  // Items already in the library show a check instead of a button that would only download them again.
+  const isAlbum = item.item_type === ItemType.Album;
+  const ref = remoteRefOf(item);
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  const inLibrary = (isAlbum ? albumState : trackState) === "downloaded";
 
   const onDownload = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     flyToLibrary(rect, item.img);
-    startDownload({
-      platform: item.platform,
-      downloadType: item.item_type,
-      url: item.item_url_path,
-      artistName:
-        item.band_name ||
-        (item.item_type === ItemType.Album ? item.name : "Unknown Artist"),
-      title: item.name,
-      coverUrl: item.img,
-    }).catch((err) => console.error("Download failed", err));
+    startDownload(searchItemDownloadParams(item)).catch((err) => console.error("Download failed", err));
   };
 
   let control: ReactNode;
@@ -70,6 +68,16 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
           {downloadPercent(progress)}%
         </span>
       );
+  } else if (inLibrary) {
+    control = (
+      <span
+        className={clsx(overlay ? [styles.progressText, styles.progressBadge] : styles.libraryMark)}
+        title="Already in your library"
+        aria-label="Already in your library"
+      >
+        <FaCheckCircle size={18} />
+      </span>
+    );
   } else {
     control = (
       <button
