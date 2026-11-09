@@ -655,8 +655,6 @@ pub fn run() {
             let media_controls = MediaControls::new(&window, app_handle.clone());
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
             app.manage(Mutex::new(audio_player));
-            app.manage(preview::commands::PreviewManager::default());
-            preview::commands::spawn_watcher(app_handle.clone());
 
             let app_dir = app
                 .path()
@@ -721,13 +719,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(generate_handler![
-            // Streaming preview
-            preview::commands::preview_play,
-            preview::commands::preview_prefetch,
-            preview::commands::preview_toggle,
-            preview::commands::preview_seek,
-            preview::commands::preview_stop,
-            preview::commands::preview_get_state,
+            // Streaming
+            preview::commands::stream_play,
+            preview::commands::stream_prefetch,
             // Player Commands
             start_playback,
             pause,

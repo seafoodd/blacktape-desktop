@@ -2,3 +2,4 @@
 pub mod http_source;
 pub mod resolve;
 pub mod commands;
+pub mod segmented_source;

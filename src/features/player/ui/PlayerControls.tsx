@@ -4,6 +4,7 @@ import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
+  MdCloudQueue,
   MdPause,
   MdPlayArrow,
   MdRepeat,
@@ -22,6 +23,7 @@ import { RepeatMode } from "@/shared/types.ts";
 export const PlayerControls = () => {
   const {
     currentSong,
+    isStreaming,
     progress,
     volume,
     setVolume,
@@ -148,6 +150,15 @@ export const PlayerControls = () => {
                   {currentSong.title}
                 </div>
                 <div className={clsx(styles.currentSongArtist, "truncate")}>
+                  {isStreaming && (
+                    <span
+                      className={styles.streamBadge}
+                      title="Streaming from the internet, not saved to your library"
+                    >
+                      <MdCloudQueue size={14} />
+                      Streaming
+                    </span>
+                  )}
                   {[
                     currentSong.album_artist,
                     currentSong.album,

@@ -843,17 +843,33 @@
     height: 36px;
 }
 
-/* preview button over a track cover */
+/* stream button over a track cover: like the queue, the cover dims and the play button shows on row hover */
 .trackCoverBox {
     position: relative;
     flex-shrink: 0;
     display: flex;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
 }
 
-.trackPreview {
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 28px;
-    height: 28px;
+.trackCoverBox .trackCover {
+    transition:
+        filter 0.15s ease,
+        transform 0.15s ease;
+}
+
+.trackRow:hover .trackCoverBox .trackCover {
+    filter: brightness(0.5) blur(1.5px);
+    transform: scale(1.05);
+}
+
+.trackRow:hover .trackPreview {
+    display: flex;
+}
+
+.profile .trackCoverBox {
+    width: 36px;
+    height: 36px;
 }

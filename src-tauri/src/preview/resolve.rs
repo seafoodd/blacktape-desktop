@@ -8,6 +8,7 @@
 //! Resolved urls are cached per (platform, url) for a platform specific time; concurrent requests for the
 //! same track wait for one lookup instead of running it twice.
 
+use crate::preview::segmented_source::{parse_hls_playlist, HlsPlaylist};
 use crate::soundcloud::{self, availability, Availability, ScResource, ScTrack, ScTranscoding};
 use crate::types::Platform;
 use serde::Deserialize;
@@ -24,6 +25,8 @@ pub struct StreamInfo {
     pub duration_ms: Option<u64>,
     /// Request headers the media server expects (YouTube ties urls to the client that produced them).
     pub headers: Vec<(String, String)>,
+    /// Set for HLS streams (SoundCloud): `url` is then the playlist and the parts are played concatenated.
+    pub hls: Option<HlsPlaylist>,
 }
 
 const SOUNDCLOUD_TTL: Duration = Duration::from_secs(4 * 60);
@@ -98,6 +101,34 @@ pub async fn forget(platform: Platform, url: &str) {
 
 /// The plain HTTP (progressive) full-length stream of a track, if it has one. Preview (snipped) and
 /// HLS / encrypted streams are not usable for the streaming source.
+/// The HLS stream that can be played by concatenating its fragments: unencrypted fragmented-mp4 AAC
+/// (`audio/mp4`), highest bitrate first. Adaptive master playlists, opus and encrypted streams are skipped.
+pub fn hls_transcoding(track: &ScTrack) -> Option<&ScTranscoding> {
+    track
+        .media
+        .as_ref()?
+        .transcodings
+        .iter()
+        .filter(|t| {
+            t.format.protocol == "hls"
+                && t.format.mime_type.contains("audio/mp4")
+                && !t.snipped
+                && !t.url.is_empty()
+                && !t.url.contains("/preview/")
+        })
+        .max_by_key(|t| hls_bitrate(&t.preset))
+}
+
+/// `"aac_160k"` -> 160.
+fn hls_bitrate(preset: &str) -> u32 {
+    preset
+        .rsplit('_')
+        .next()
+        .and_then(|part| part.strip_suffix('k'))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
 pub fn progressive_transcoding(track: &ScTrack) -> Option<&ScTranscoding> {
     track
         .media
@@ -131,18 +162,43 @@ pub(crate) async fn resolve_soundcloud(url: &str) -> Result<StreamInfo, String> 
                 .unwrap_or_else(|| "track can't be streamed".to_string()))
         }
     }
-    let transcoding = progressive_transcoding(&track).ok_or_else(|| {
-        "this SoundCloud track has no direct audio stream (HLS only)".to_string()
-    })?;
     let mut params: Vec<(&str, String)> = Vec::new();
     if let Some(token) = track.track_authorization.as_deref().filter(|t| !t.is_empty()) {
         params.push(("track_authorization", token.to_string()));
     }
+    let duration_ms = track.full_duration.or(track.duration);
+    if let Some(transcoding) = progressive_transcoding(&track) {
+        let location: MediaLocation = soundcloud::api_get(&transcoding.url, &params).await?;
+        return Ok(StreamInfo {
+            url: location.url,
+            duration_ms,
+            headers: Vec::new(),
+            hls: None,
+        });
+    }
+    // Most tracks are HLS only: fetch the playlist so the fragments can be played back to back.
+    let transcoding = hls_transcoding(&track)
+        .ok_or_else(|| "this SoundCloud track has no stream that can be played".to_string())?;
     let location: MediaLocation = soundcloud::api_get(&transcoding.url, &params).await?;
+    let text = http_client()
+        .get(&location.url)
+        .send()
+        .await
+        .map_err(|e| format!("SoundCloud playlist request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("SoundCloud playlist request failed: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("SoundCloud playlist could not be read: {e}"))?;
+    let playlist = parse_hls_playlist(&text, &location.url)?;
+    if playlist.encrypted {
+        return Err("this SoundCloud stream is encrypted".to_string());
+    }
     Ok(StreamInfo {
         url: location.url,
-        duration_ms: track.full_duration.or(track.duration),
+        duration_ms,
         headers: Vec::new(),
+        hls: Some(playlist),
     })
 }
 
@@ -198,6 +254,7 @@ pub(crate) async fn resolve_bandcamp(url: &str) -> Result<StreamInfo, String> {
         url,
         duration_ms,
         headers: Vec::new(),
+        hls: None,
     })
 }
 
@@ -266,6 +323,7 @@ pub fn parse_youtube_output(output: &str) -> Option<StreamInfo> {
         url: url?,
         duration_ms: duration.map(|secs| (secs * 1000.0).round() as u64),
         headers,
+        hls: None,
     })
 }
 

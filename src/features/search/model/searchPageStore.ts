@@ -38,7 +38,7 @@ import {
   type LatestGuard,
 } from "@/shared/lib/searchGuard.ts";
 import type { Platform } from "@/shared/types.ts";
-import { usePreviewStore } from "@/features/preview/model/previewStore.ts";
+import { useStreamStore } from "@/features/preview/model/streamStore.ts";
 import {
   DEFAULT_FILTERS,
   DEFAULT_SORT,
@@ -114,10 +114,10 @@ const loadMoreGuards: Record<SearchKind, LatestGuard> = {
 };
 
 /** YouTube stream urls take seconds to resolve: warm the first few so their preview starts right away. */
-const WARM_YOUTUBE_TRACKS = 2;
+const WARM_YOUTUBE_TRACKS = 4;
 
 function warmPreviewStreams(tracks: SearchSuggestion[]): void {
-  const { prefetch } = usePreviewStore.getState();
+  const { prefetch } = useStreamStore.getState();
   tracks
     .filter((t) => t.platform === "youtube")
     .slice(0, WARM_YOUTUBE_TRACKS)
@@ -186,6 +186,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       (data) => {
         if (!profileGuard.isLatest(token)) return;
         set({ profile: { artist, status: "ready", data } });
+        warmPreviewStreams(data.top_songs ?? []);
       },
       () => {
         if (!profileGuard.isLatest(token)) return;

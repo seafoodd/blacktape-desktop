@@ -6,7 +6,7 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
 import { DownloadButton } from "./DownloadButton.tsx";
-import { PreviewButton } from "@/features/preview/ui/PreviewButton.tsx";
+import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
   formatDurationSecs,
@@ -52,7 +52,7 @@ export const TrackRow = ({ item, progress, compact = false }: TrackRowProps) => 
     <div className={styles.trackRow}>
       <div className={styles.trackCoverBox}>
         <Cover src={item.img} alt={item.name} className={styles.trackCover} />
-        <PreviewButton item={item} className={styles.trackPreview} />
+        <StreamButton item={item} className={styles.trackPreview} />
       </div>
       <div className={styles.trackInfo}>
         <p className={styles.ellipsis} title={item.name}>

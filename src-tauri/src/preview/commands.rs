@@ -1,33 +1,22 @@
-//! Tauri commands and state of the streaming preview.
-//!
-//! Flow of `preview_play`: resolve the track page to a direct audio url (cached, see `resolve`) ->
-//! open an `HttpSource` (starts downloading, returns with the first bytes) -> build the decoder ->
-//! hand the source to the audio player. Every step checks a generation counter so a newer click
-//! cancels an older one that is still resolving. State changes are pushed as `preview-state` events.
+//! Streaming playback: `stream_play` resolves a track page to a direct audio url, opens it (HTTP or HLS) and
+//! plays it through the normal audio player (`AudioPlayer::play_stream`), so the existing player controls,
+//! queue handling, media keys and volume all apply. `stream_prefetch` warms the url cache.
 
 use crate::audio::player::{AudioPlayer, BoxedSource};
 use crate::preview::http_source::HttpSource;
 use crate::preview::resolve::{self, StreamInfo};
-use crate::types::Platform;
+use crate::preview::segmented_source::SegmentedSource;
+use crate::types::{Platform, QualityTier, Song};
 use rodio::{Decoder, Source};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{command, AppHandle, Emitter, Manager, State};
+use tauri::{command, AppHandle, State};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PreviewStatus {
-    Idle,
-    Loading,
-    Playing,
-    Paused,
-    Error,
-}
-
-/// What the frontend sends to start a preview (metadata is echoed back in the state for the preview bar).
+/// What the frontend sends to start a stream (the metadata becomes the "current song" of the player).
 #[derive(Debug, Clone, Deserialize)]
-pub struct PreviewRequest {
+pub struct StreamRequest {
     pub platform: Platform,
     pub url: String,
     pub title: String,
@@ -39,107 +28,41 @@ pub struct PreviewRequest {
     pub duration_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PreviewState {
-    pub status: PreviewStatus,
-    pub platform: Option<Platform>,
-    pub url: Option<String>,
-    pub title: String,
-    pub artist: String,
-    pub cover: Option<String>,
-    pub position_ms: u64,
-    pub duration_ms: Option<u64>,
-    pub error: Option<String>,
-    /// Milliseconds it took from the click to the first sound (set once playing).
-    pub startup_ms: Option<u64>,
+/// Newest `stream_play` call wins: older ones that are still resolving give up silently.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Warm-ups run at most this many at a time (each one spawns yt-dlp for YouTube).
+const PREFETCH_CONCURRENCY: usize = 2;
+
+fn prefetch_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(PREFETCH_CONCURRENCY))
 }
 
-impl PreviewState {
-    fn idle() -> Self {
-        Self {
-            status: PreviewStatus::Idle,
-            platform: None,
-            url: None,
-            title: String::new(),
-            artist: String::new(),
-            cover: None,
-            position_ms: 0,
-            duration_ms: None,
-            error: None,
-            startup_ms: None,
-        }
+/// The pseudo song shown by the player while streaming (`id` None: it is not in the library).
+pub fn stream_song(request: &StreamRequest, duration_ms: Option<u64>) -> Song {
+    Song {
+        id: None,
+        path: String::new(),
+        title: request.title.clone(),
+        artists: vec![request.artist.clone()],
+        album_artist: request.artist.clone(),
+        album: String::new(),
+        duration_ms: duration_ms.unwrap_or(0),
+        track_number: None,
+        genre: None,
+        release_year: None,
+        cover_url: request.cover.clone().filter(|c| !c.is_empty()),
+        external_cover_url: None,
+        lyrics: None,
+        lyrics_source: None,
+        source: request.platform,
+        source_url: Some(request.url.clone()),
+        source_item_id: None,
+        canonical_track_slug: String::new(),
+        canonical_album_slug: String::new(),
+        quality_tier: QualityTier::Standard,
     }
-}
-
-struct Inner {
-    state: PreviewState,
-    generation: u64,
-}
-
-pub struct PreviewManager(Mutex<Inner>);
-
-impl Default for PreviewManager {
-    fn default() -> Self {
-        Self(Mutex::new(Inner {
-            state: PreviewState::idle(),
-            generation: 0,
-        }))
-    }
-}
-
-impl PreviewManager {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Starts a new generation and returns its number.
-    fn begin(&self, req: &PreviewRequest) -> u64 {
-        let mut inner = self.lock();
-        inner.generation += 1;
-        inner.state = PreviewState {
-            status: PreviewStatus::Loading,
-            platform: Some(req.platform),
-            url: Some(req.url.clone()),
-            title: req.title.clone(),
-            artist: req.artist.clone(),
-            cover: req.cover.clone(),
-            position_ms: 0,
-            duration_ms: req.duration_ms,
-            error: None,
-            startup_ms: None,
-        };
-        inner.generation
-    }
-
-    fn is_current(&self, generation: u64) -> bool {
-        self.lock().generation == generation
-    }
-
-    /// Applies `f` to the state when `generation` is still current; returns the new state to emit.
-    fn update(&self, generation: u64, f: impl FnOnce(&mut PreviewState)) -> Option<PreviewState> {
-        let mut inner = self.lock();
-        if inner.generation != generation {
-            return None;
-        }
-        f(&mut inner.state);
-        Some(inner.state.clone())
-    }
-
-    fn snapshot(&self) -> PreviewState {
-        self.lock().state.clone()
-    }
-
-    /// Cancels everything in flight and goes idle.
-    fn reset(&self) -> PreviewState {
-        let mut inner = self.lock();
-        inner.generation += 1;
-        inner.state = PreviewState::idle();
-        inner.state.clone()
-    }
-}
-
-fn emit(app: &AppHandle, state: &PreviewState) {
-    let _ = app.emit("preview-state", state);
 }
 
 fn blocking_client() -> &'static reqwest::blocking::Client {
@@ -198,15 +121,28 @@ fn format_hint(url: &str, content_type: Option<&str>) -> Option<&'static str> {
 }
 
 /// Opens the stream and builds the decoder. Blocking (runs the first network round trip).
-fn open_decoder(
-    url: &str,
-    headers: &[(String, String)],
-) -> Result<(BoxedSource, Option<Duration>), String> {
-    let client = if headers.is_empty() {
+fn open_decoder(info: &StreamInfo) -> Result<(BoxedSource, Option<Duration>), String> {
+    let url = info.url.as_str();
+    let client = if info.headers.is_empty() {
         blocking_client().clone()
     } else {
-        client_with_headers(headers)?
+        client_with_headers(&info.headers)?
     };
+    if let Some(playlist) = &info.hls {
+        // HLS (SoundCloud): fragmented mp4, played as the concatenation of init + fragments.
+        let source = SegmentedSource::open(client, playlist.init.clone(), playlist.segments.clone())
+            .map_err(|e| e.to_string())?;
+        let len = source.content_length();
+        let decoder = Decoder::builder()
+            .with_data(source)
+            .with_seekable(true)
+            .with_byte_len(len)
+            .with_hint("m4a")
+            .build()
+            .map_err(|e| e.to_string())?;
+        let total = decoder.total_duration();
+        return Ok((Box::new(decoder), total));
+    }
     // googlevideo rejects open-ended ranges: go straight to bounded chunks and save the failing round trip.
     let source = if url.contains(".googlevideo.com/") {
         HttpSource::open_chunked(client, url)
@@ -230,12 +166,11 @@ fn open_decoder(
 
 async fn open_with_retry(
     app: &AppHandle,
-    req: &PreviewRequest,
+    req: &StreamRequest,
     info: StreamInfo,
 ) -> Result<(BoxedSource, Option<Duration>, StreamInfo), String> {
-    let first_url = info.url.clone();
-    let first_headers = info.headers.clone();
-    match tokio::task::spawn_blocking(move || open_decoder(&first_url, &first_headers))
+    let first = info.clone();
+    match tokio::task::spawn_blocking(move || open_decoder(&first))
         .await
         .map_err(|e| e.to_string())?
     {
@@ -245,9 +180,8 @@ async fn open_with_retry(
             eprintln!("[preview] open failed ({first_error}), re-resolving");
             resolve::forget(req.platform, &req.url).await;
             let fresh = resolve::resolve(app, req.platform, &req.url).await?;
-            let retry_url = fresh.url.clone();
-            let retry_headers = fresh.headers.clone();
-            let (source, total) = tokio::task::spawn_blocking(move || open_decoder(&retry_url, &retry_headers))
+            let retry = fresh.clone();
+            let (source, total) = tokio::task::spawn_blocking(move || open_decoder(&retry))
                 .await
                 .map_err(|e| e.to_string())??;
             Ok((source, total, fresh))
@@ -256,233 +190,94 @@ async fn open_with_retry(
 }
 
 #[command]
-pub async fn preview_play(
+pub async fn stream_play(
     app: AppHandle,
-    manager: State<'_, PreviewManager>,
     player: State<'_, Mutex<AudioPlayer>>,
-    request: PreviewRequest,
+    request: StreamRequest,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let generation = manager.begin(&request);
-    emit(&app, &manager.snapshot());
-    // Silence whatever preview is currently audible while the new one loads.
-    if let Ok(mut p) = player.lock() {
-        p.preview_stop();
-    }
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let is_current = || GENERATION.load(Ordering::SeqCst) == generation;
 
-    let result = async {
-        let info = resolve::resolve(&app, request.platform, &request.url).await?;
-        if !manager.is_current(generation) {
-            return Ok(false);
-        }
-        let (source, total, info) = open_with_retry(&app, &request, info).await?;
-        if !manager.is_current(generation) {
-            return Ok(false);
-        }
-        let duration_ms = total
-            .map(|d| d.as_millis() as u64)
-            .or(info.duration_ms)
-            .or(request.duration_ms);
-        {
-            let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
-            // Re-check under the lock: a newer preview must not be overridden.
-            if !manager.is_current(generation) {
-                return Ok(false);
-            }
-            p.preview_start(source);
-        }
-        if let Some(state) = manager.update(generation, |s| {
-            s.status = PreviewStatus::Playing;
-            s.duration_ms = duration_ms;
-            s.startup_ms = Some(started.elapsed().as_millis() as u64);
-        }) {
-            println!(
-                "[preview] {:?} started in {} ms",
-                request.platform,
-                started.elapsed().as_millis()
-            );
-            emit(&app, &state);
-        }
-        Ok::<bool, String>(true)
+    let info = resolve::resolve(&app, request.platform, &request.url).await?;
+    if !is_current() {
+        return Ok(());
     }
-    .await;
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(message) => {
-            if let Some(state) = manager.update(generation, |s| {
-                s.status = PreviewStatus::Error;
-                s.error = Some(message.clone());
-            }) {
-                emit(&app, &state);
-            }
-            Err(message)
-        }
+    let (source, total, info) = open_with_retry(&app, &request, info).await?;
+    if !is_current() {
+        return Ok(());
     }
-}
-
-/// Warms the url cache (resolve only) so a following `preview_play` starts faster. Errors are ignored.
-#[command]
-pub async fn preview_prefetch(app: AppHandle, platform: Platform, url: String) {
-    let _ = resolve::resolve(&app, platform, &url).await;
-}
-
-#[command]
-pub fn preview_toggle(
-    app: AppHandle,
-    manager: State<'_, PreviewManager>,
-    player: State<'_, Mutex<AudioPlayer>>,
-) {
-    let Ok(mut p) = player.lock() else { return };
-    if !p.preview_is_active() {
-        return;
+    let duration_ms = total
+        .map(|d| d.as_millis() as u64)
+        .or(info.duration_ms)
+        .or(request.duration_ms);
+    let song = stream_song(&request, duration_ms);
+    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    // A newer click must not be overridden.
+    if !is_current() {
+        return Ok(());
     }
-    p.preview_toggle();
-    let paused = p.preview_is_paused();
-    drop(p);
-    let generation = manager.lock().generation;
-    if let Some(state) = manager.update(generation, |s| {
-        s.status = if paused {
-            PreviewStatus::Paused
-        } else {
-            PreviewStatus::Playing
-        }
-    }) {
-        emit(&app, &state);
-    }
-}
-
-/// Seeks to `fraction` (0..1) of the preview.
-#[command]
-pub fn preview_seek(
-    app: AppHandle,
-    manager: State<'_, PreviewManager>,
-    player: State<'_, Mutex<AudioPlayer>>,
-    fraction: f32,
-) -> Result<(), String> {
-    let snapshot = manager.snapshot();
-    let duration_ms = snapshot.duration_ms.ok_or("duration unknown")?;
-    let target = (duration_ms as f64 * f64::from(fraction.clamp(0.0, 1.0))) as u64;
-    {
-        let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
-        p.preview_seek(Duration::from_millis(target))?;
-    }
-    let generation = manager.lock().generation;
-    if let Some(state) = manager.update(generation, |s| s.position_ms = target) {
-        emit(&app, &state);
-    }
+    p.play_stream(song, source, duration_ms.map(Duration::from_millis));
+    println!(
+        "[stream] {:?} started in {} ms",
+        request.platform,
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 
+/// Warms the url cache (resolve only) so a following `stream_play` starts faster. Errors are ignored.
 #[command]
-pub fn preview_stop(
-    app: AppHandle,
-    manager: State<'_, PreviewManager>,
-    player: State<'_, Mutex<AudioPlayer>>,
-) {
-    if let Ok(mut p) = player.lock() {
-        p.preview_stop();
-    }
-    emit(&app, &manager.reset());
-}
-
-#[command]
-pub fn preview_get_state(manager: State<'_, PreviewManager>) -> PreviewState {
-    manager.snapshot()
-}
-
-/// Background loop: pushes the playback position while a preview plays and ends it when the audio ran out.
-pub fn spawn_watcher(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            let manager = app.state::<PreviewManager>();
-            let snapshot = manager.snapshot();
-            if !matches!(snapshot.status, PreviewStatus::Playing | PreviewStatus::Paused) {
-                continue;
-            }
-            let player = app.state::<Mutex<AudioPlayer>>();
-            let (active, finished, position) = match player.lock() {
-                Ok(p) => (p.preview_is_active(), p.preview_finished(), p.preview_position()),
-                Err(_) => continue,
-            };
-            let generation = manager.lock().generation;
-            if !active || finished {
-                if let Ok(mut p) = player.lock() {
-                    p.preview_stop();
-                }
-                emit(&app, &manager.reset());
-                continue;
-            }
-            if snapshot.status == PreviewStatus::Playing {
-                if let Some(state) = manager.update(generation, |s| {
-                    s.position_ms = position.as_millis() as u64;
-                }) {
-                    emit(&app, &state);
-                }
-            }
-        }
-    });
+pub async fn stream_prefetch(app: AppHandle, platform: Platform, url: String) {
+    let Ok(_permit) = prefetch_slots().acquire().await else {
+        return;
+    };
+    let _ = resolve::resolve(&app, platform, &url).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn request(url: &str) -> PreviewRequest {
-        PreviewRequest {
-            platform: Platform::Bandcamp,
-            url: url.to_string(),
-            title: "t".into(),
-            artist: "a".into(),
-            cover: None,
-            duration_ms: Some(1000),
-        }
+    #[test]
+    fn stream_song_carries_the_request_metadata() {
+        let request = StreamRequest {
+            platform: Platform::Soundcloud,
+            url: "https://soundcloud.com/a/b".into(),
+            title: "T".into(),
+            artist: "A".into(),
+            cover: Some("https://img/x.jpg".into()),
+            duration_ms: Some(1234),
+        };
+        let song = stream_song(&request, Some(5000));
+        assert_eq!(song.id, None);
+        assert!(song.path.is_empty());
+        assert_eq!(song.title, "T");
+        assert_eq!(song.artists, vec!["A".to_string()]);
+        assert_eq!(song.duration_ms, 5000);
+        assert_eq!(song.source, Platform::Soundcloud);
+        assert_eq!(song.source_url.as_deref(), Some("https://soundcloud.com/a/b"));
+        assert_eq!(song.cover_url.as_deref(), Some("https://img/x.jpg"));
     }
 
     #[test]
-    fn begin_goes_loading_and_newer_generation_wins() {
-        let manager = PreviewManager::default();
-        let first = manager.begin(&request("u1"));
-        assert_eq!(manager.snapshot().status, PreviewStatus::Loading);
-        let second = manager.begin(&request("u2"));
-        assert!(second > first);
-        assert!(!manager.is_current(first));
-        assert!(manager.is_current(second));
-        assert_eq!(manager.snapshot().url.as_deref(), Some("u2"));
-    }
-
-    #[test]
-    fn stale_generation_cannot_update_state() {
-        let manager = PreviewManager::default();
-        let first = manager.begin(&request("u1"));
-        let second = manager.begin(&request("u2"));
-        assert!(manager.update(first, |s| s.status = PreviewStatus::Playing).is_none());
-        assert_eq!(manager.snapshot().status, PreviewStatus::Loading);
-        assert!(manager.update(second, |s| s.status = PreviewStatus::Playing).is_some());
-        assert_eq!(manager.snapshot().status, PreviewStatus::Playing);
-    }
-
-    #[test]
-    fn reset_invalidates_in_flight_work_and_goes_idle() {
-        let manager = PreviewManager::default();
-        let generation = manager.begin(&request("u1"));
-        let state = manager.reset();
-        assert_eq!(state.status, PreviewStatus::Idle);
-        assert!(!manager.is_current(generation));
-        assert!(state.url.is_none());
-    }
-
-    #[test]
-    fn state_serializes_lowercase_status() {
-        let json = serde_json::to_value(PreviewState::idle()).unwrap();
-        assert_eq!(json["status"], "idle");
-        assert!(json.get("position_ms").is_some());
+    fn stream_song_empty_cover_is_none_and_unknown_duration_is_zero() {
+        let request = StreamRequest {
+            platform: Platform::Youtube,
+            url: "u".into(),
+            title: "T".into(),
+            artist: "A".into(),
+            cover: Some(String::new()),
+            duration_ms: None,
+        };
+        let song = stream_song(&request, None);
+        assert_eq!(song.cover_url, None);
+        assert_eq!(song.duration_ms, 0);
     }
 
     #[test]
     fn request_deserializes_with_optional_fields_missing() {
-        let r: PreviewRequest = serde_json::from_str(
+        let r: StreamRequest = serde_json::from_str(
             r#"{"platform":"youtube","url":"https://y","title":"t","artist":"a"}"#,
         )
         .unwrap();
@@ -512,7 +307,7 @@ mod tests {
         let url = info.url.clone();
         let (resolved_ms, open_ms, first_ms, seek_ms, total) = tokio::task::spawn_blocking(move || {
             let t1 = Instant::now();
-            let (mut source, total) = open_decoder(&url, &[]).expect("open");
+            let (mut source, total) = open_decoder(&info).expect("open");
             let open = t1.elapsed();
             let first = source.next().expect("first sample");
             assert!(first.is_finite());
@@ -543,7 +338,7 @@ mod tests {
         let info = resolve::parse_youtube_output(&String::from_utf8_lossy(&out.stdout)).expect("parse");
         let resolved = t0.elapsed();
         let t1 = Instant::now();
-        let (mut source, total) = open_decoder(&info.url, &info.headers).expect("open");
+        let (mut source, total) = open_decoder(&info).expect("open");
         let first = source.next().expect("first sample");
         assert!(first.is_finite());
         let first_ms = t1.elapsed().as_millis();
@@ -553,6 +348,36 @@ mod tests {
         println!(
             "yt-dlp {} ms, open+first sample {} ms, seek {} ms, duration {:?}",
             resolved.as_millis(), first_ms, t2.elapsed().as_millis(), total
+        );
+    }
+
+    /// Live check (network): SoundCloud track -> (progressive or HLS) stream -> decoder -> first sample -> seek.
+    #[tokio::test]
+    #[ignore]
+    async fn live_soundcloud_stream_starts_and_seeks() {
+        let t0 = Instant::now();
+        let info = resolve::resolve_soundcloud("https://soundcloud.com/forss/flickermood")
+            .await
+            .expect("resolve");
+        let resolved = t0.elapsed();
+        let hls = info.hls.is_some();
+        let (open_ms, first_ms, seek_ms, total) = tokio::task::spawn_blocking(move || {
+            let t1 = Instant::now();
+            let (mut source, total) = open_decoder(&info).expect("open");
+            let open = t1.elapsed();
+            let first = source.next().expect("first sample");
+            assert!(first.is_finite());
+            let first_at = t1.elapsed();
+            let t2 = Instant::now();
+            source.try_seek(Duration::from_secs(60)).expect("seek");
+            assert!(source.next().is_some());
+            (open.as_millis(), first_at.as_millis(), t2.elapsed().as_millis(), total)
+        })
+        .await
+        .unwrap();
+        println!(
+            "soundcloud hls={hls}: resolve {} ms, open {open_ms} ms, first sample {first_ms} ms, seek {seek_ms} ms, duration {total:?}",
+            resolved.as_millis()
         );
     }
 }
