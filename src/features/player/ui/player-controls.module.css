@@ -207,3 +207,21 @@
     text-transform: uppercase;
     vertical-align: middle;
 }
+
+/* shown instead of the play/pause icon while a stream song is being opened (same spinner as the stream button) */
+.loadingSpinner {
+    display: block;
+    width: 20px;
+    height: 20px;
+    margin: auto;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: playerSpin 700ms linear infinite;
+}
+
+@keyframes playerSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}

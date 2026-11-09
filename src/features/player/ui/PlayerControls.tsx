@@ -24,6 +24,7 @@ export const PlayerControls = () => {
   const {
     currentSong,
     isStreaming,
+    streamLoading,
     progress,
     volume,
     setVolume,
@@ -112,7 +113,17 @@ export const PlayerControls = () => {
             onClick={togglePlay}
             disabled={!currentSong}
           >
-            {isPlaying ? <MdPause /> : <MdPlayArrow />}
+            {streamLoading ? (
+              <span
+                className={styles.loadingSpinner}
+                role="status"
+                aria-label="Loading stream"
+              />
+            ) : isPlaying ? (
+              <MdPause />
+            ) : (
+              <MdPlayArrow />
+            )}
           </button>
           <button
             onClick={() => next()}
