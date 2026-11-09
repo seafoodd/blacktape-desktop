@@ -28,7 +28,6 @@
     overflow-y: auto;
     scrollbar-width: thin;
     scroll-behavior: smooth;
-    scrollbar-color: var(--color-primary) var(--color-surface);
     padding: 0;
     min-width: calc(100vw / 2);
 }

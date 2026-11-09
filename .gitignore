@@ -29,3 +29,5 @@ src-tauri/gen/
 .env
 .env.*
 /rustypipe_cache.json
+
+.cache
