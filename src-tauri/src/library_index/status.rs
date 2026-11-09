@@ -5,6 +5,7 @@ use crate::db::album_sources::SongSourceRef;
 use crate::library_index::normalize::{item_id_key, normalize_url_key};
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
+use crate::utils::make_canonical_slug;
 use std::collections::HashSet;
 
 /// A remote item the frontend asks about.
@@ -13,6 +14,12 @@ pub struct RemoteRef {
     pub platform: Platform,
     /// Page url of the track or album, exactly as shown in the UI (also the key of the answer map).
     pub url: String,
+    /// Artist and title of a TRACK. Songs downloaded before the library stored page urls cannot be matched by
+    /// url, so a track also counts as downloaded when the library has a song with the same artist + title slug.
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -34,6 +41,8 @@ pub struct AlbumStatus {
 #[derive(Debug, Default)]
 pub struct LibraryIndex {
     pub keys: HashSet<String>,
+    /// `canonical_track_slug` of every library song (artist + title), also songs without a remote reference.
+    pub slugs: HashSet<String>,
 }
 
 impl LibraryIndex {
@@ -51,7 +60,26 @@ impl LibraryIndex {
                 }
             }
         }
-        Self { keys }
+        Self { keys, slugs: HashSet::new() }
+    }
+
+    /// Adds the track slugs of the library (see `contains_by_meta`).
+    pub fn with_slugs(mut self, slugs: impl IntoIterator<Item = String>) -> Self {
+        self.slugs.extend(slugs.into_iter().filter(|s| !s.is_empty()));
+        self
+    }
+
+    /// True when the library has a song with this artist and title (slug of `artist title`). A track credited to
+    /// several artists ("A, B") is also tried with its first artist, which is how the library files it.
+    pub fn contains_by_meta(&self, artist: &str, title: &str) -> bool {
+        if self.slugs.is_empty() || title.trim().is_empty() {
+            return false;
+        }
+        let first = artist.split(',').next().unwrap_or(artist);
+        [artist, first]
+            .iter()
+            .filter(|a| !a.trim().is_empty())
+            .any(|a| self.slugs.contains(&make_canonical_slug(a, title)))
     }
 
     /// True when the remote track is in the library (by url key, else by youtube item id).
@@ -131,6 +159,16 @@ mod tests {
         let index = LibraryIndex::from_rows(&[row("bandcamp", Some("https://a.bandcamp.com/track/x/"), None)]);
         assert!(index.contains_track(Platform::Bandcamp, "https://a.bandcamp.com/track/x?from=embed"));
         assert!(!index.contains_track(Platform::Bandcamp, "https://a.bandcamp.com/track/y"));
+    }
+
+    #[test]
+    fn meta_match_uses_the_artist_title_slug() {
+        let index = LibraryIndex::default().with_slugs(["aphex-twin-produk-29-101".to_string(), String::new()]);
+        assert!(index.contains_by_meta("Aphex Twin", "produk 29 [101]"));
+        assert!(index.contains_by_meta("Aphex Twin, Someone", "produk 29 [101]"), "first artist is tried");
+        assert!(!index.contains_by_meta("Other Artist", "produk 29 [101]"));
+        assert!(!index.contains_by_meta("Aphex Twin", ""));
+        assert!(!LibraryIndex::default().contains_by_meta("Aphex Twin", "x"));
     }
 
     #[test]

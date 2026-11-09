@@ -113,8 +113,13 @@ export function trackAsStreamItem(
 }
 
 /** Library-index refs of the selectable tracks (what the status hooks are asked about). */
-export function trackRefs(preview: Pick<AlbumPreview, "platform" | "tracks">): RemoteRef[] {
-  return selectableTracks(preview).map((t) => ({ platform: preview.platform, url: t.url }));
+export function trackRefs(preview: Pick<AlbumPreview, "platform" | "artist" | "tracks">): RemoteRef[] {
+  return selectableTracks(preview).map((t) => ({
+    platform: preview.platform,
+    url: t.url,
+    artist: t.artists[0] || preview.artist,
+    title: t.title,
+  }));
 }
 
 /**

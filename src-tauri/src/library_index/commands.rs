@@ -45,7 +45,11 @@ pub fn track_states(items: &[RemoteRef], index: &LibraryIndex) -> HashMap<String
     items
         .iter()
         .map(|item| {
-            let state = if index.contains_track(item.platform, &item.url) {
+            let by_meta = match (item.artist.as_deref(), item.title.as_deref()) {
+                (Some(artist), Some(title)) => index.contains_by_meta(artist, title),
+                _ => false,
+            };
+            let state = if index.contains_track(item.platform, &item.url) || by_meta {
                 DownloadState::Downloaded
             } else {
                 DownloadState::None
@@ -87,11 +91,13 @@ pub async fn get_download_status(
     db: State<'_, tokio::sync::Mutex<Database>>,
     items: Vec<RemoteRef>,
 ) -> Result<HashMap<String, DownloadState>, String> {
-    let refs = {
+    let (refs, slugs) = {
         let guard = db.lock().await;
-        guard.list_song_source_refs().await.map_err(db_error)?
+        let refs = guard.list_song_source_refs().await.map_err(db_error)?;
+        let slugs = guard.list_track_slugs().await.map_err(db_error)?;
+        (refs, slugs)
     };
-    Ok(track_states(&items, &LibraryIndex::from_rows(&refs)))
+    Ok(track_states(&items, &LibraryIndex::from_rows(&refs).with_slugs(slugs)))
 }
 
 /// Library state of remote ALBUM urls, from `album_sources` (albums the app never downloaded are `none`).
@@ -309,7 +315,7 @@ mod tests {
     use crate::library_index::status::platform_to_str;
 
     fn remote(platform: Platform, url: &str) -> RemoteRef {
-        RemoteRef { platform, url: url.to_string() }
+        RemoteRef { platform, url: url.to_string(), artist: None, title: None }
     }
 
     fn song(source: &str, url: Option<&str>, item_id: Option<&str>) -> SongSourceRef {

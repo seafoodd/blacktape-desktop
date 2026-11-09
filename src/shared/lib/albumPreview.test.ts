@@ -240,10 +240,15 @@ describe("trackRefs", () => {
       track(2, { url: "" }),
       track(3),
     ]);
-    expect(trackRefs(p)).toEqual([
-      { platform: "bandcamp", url: "https://example.test/track/0" },
-      { platform: "bandcamp", url: "https://example.test/track/3" },
+    expect(trackRefs(p).map((r) => [r.platform, r.url])).toEqual([
+      ["bandcamp", "https://example.test/track/0"],
+      ["bandcamp", "https://example.test/track/3"],
     ]);
+  });
+
+  it("carries artist and title so songs without a stored url can be recognised", () => {
+    const p = preview([track(0, { title: "Song", artists: ["Band"] })]);
+    expect(trackRefs(p)[0]).toMatchObject({ title: "Song", artist: "Band" });
   });
 });
 

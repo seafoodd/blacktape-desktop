@@ -121,6 +121,15 @@ impl Database {
         .await
     }
 
+    /// `canonical_track_slug` of every library song (the fallback for songs without a source url).
+    pub async fn list_track_slugs(&self) -> Result<Vec<String>, sqlx::Error> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT canonical_track_slug FROM songs WHERE canonical_track_slug != ''")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     /// Source refs of ALL library songs that have a source_url or a source_item_id (the library index).
     pub async fn list_song_source_refs(&self) -> Result<Vec<SongSourceRef>, sqlx::Error> {
         sqlx::query_as::<_, SongSourceRef>(concat!(

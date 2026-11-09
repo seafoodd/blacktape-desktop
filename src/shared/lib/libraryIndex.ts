@@ -13,6 +13,9 @@ export type DownloadState = "none" | "partial" | "downloaded";
 export interface RemoteRef {
   platform: Platform;
   url: string;
+  /** Artist and title of a track: lets the backend recognise songs downloaded before the library kept page urls. */
+  artist?: string;
+  title?: string;
 }
 
 export interface AlbumStatus {

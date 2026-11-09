@@ -20,7 +20,14 @@ const NO_ALBUM: AlbumStatus = { state: "none", owned: 0, total: 0 };
 export const remoteRefOf = (item: {
   platform: Platform;
   item_url_path: string;
-}): RemoteRef => ({ platform: item.platform, url: item.item_url_path });
+  name?: string;
+  band_name?: string;
+}): RemoteRef => ({
+  platform: item.platform,
+  url: item.item_url_path,
+  artist: item.band_name,
+  title: item.name,
+});
 
 /** Identity of a ref list by its urls: the same urls in the same order give the same string. */
 export const refsKey = (refs: readonly RemoteRef[]): string => refs.map(refKey).join("\n");

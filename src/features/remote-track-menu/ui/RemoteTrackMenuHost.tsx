@@ -51,7 +51,12 @@ interface OpenMenuProps {
 /** Mounted only while a menu is open, so the library status of the track is requested for that track only. */
 const OpenMenu = ({ track, options, position, onClose }: OpenMenuProps) => {
   // Callers that already know the state (album rows) pass it; the rest get it from the library index.
-  const libraryState = useTrackStatus({ platform: track.platform, url: track.url });
+  const libraryState = useTrackStatus({
+    platform: track.platform,
+    url: track.url,
+    artist: track.artist,
+    title: track.title,
+  });
   const downloadState = options.downloadState ?? libraryState;
   return (
     <ContextMenu
