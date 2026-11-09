@@ -39,6 +39,9 @@ pub struct ScUser {
     pub permalink_url: Option<String>,
     pub avatar_url: Option<String>,
     pub followers_count: Option<u64>,
+    pub description: Option<String>,
+    pub city: Option<String>,
+    pub country_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

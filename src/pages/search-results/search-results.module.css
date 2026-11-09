@@ -1,24 +1,30 @@
+/* ---------- page ---------- */
+
 .container {
-    padding: 24px 32px;
+    padding: 0 32px 24px;
     height: 100%;
     overflow-y: auto;
     color: var(--color-text);
+    scrollbar-width: thin;
+    scroll-behavior: smooth;
 }
 
-.emptyContainer {
+.hint {
     display: flex;
     align-items: center;
     justify-content: center;
     height: 100%;
     color: var(--color-muted);
     font-size: var(--font-lg);
+    text-align: center;
 }
 
 .header {
-    margin-bottom: 32px;
+    margin-bottom: 16px;
 }
 
 .header h2 {
+    margin-top: 24px;
     font-size: var(--font-2xl);
     font-weight: 700;
 }
@@ -27,104 +33,425 @@
     color: var(--color-primaryLight);
 }
 
+.notices {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.notice {
+    font-size: var(--font-sm);
+    color: var(--color-warning);
+    padding: 6px 10px;
+    border-left: 2px solid var(--color-warning);
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-xs);
+}
+
 .content {
     display: flex;
     flex-direction: column;
-    gap: 48px;
+    gap: 40px;
 }
 
-.section h3 {
-    font-size: var(--font-xl);
-    margin-bottom: 16px;
-    font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    padding-bottom: 8px;
+.ellipsis {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* Grids for Albums and Artists */
-.grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 24px;
-}
+/* ---------- filter bar (sticky under the header) ---------- */
 
-.card {
-    position: relative;
-    background-color: rgba(255, 255, 255, 0.03);
-    padding: 12px;
-    border-radius: 8px;
-    transition: background-color 0.2s ease;
+.filterBar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    margin: 0 -32px 24px;
+    padding: 12px 32px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
+    background-color: var(--color-background);
+    border-bottom: 1px solid var(--color-border);
 }
 
-.card:hover {
-    background-color: rgba(255, 255, 255, 0.08);
-}
-
-.cover {
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    object-fit: cover;
-    border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.artistCover {
-    border-radius: 50%; /* Make artist images circular */
-}
-
-.cardInfo {
+.filterRow {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.filterGroupEnd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.tabs {
+    display: flex;
+    flex-wrap: wrap;
     gap: 4px;
 }
 
-.title {
-    font-size: var(--font-lg);
+.tab,
+.pill {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 4px 12px;
+    font-size: var(--font-md);
     font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all 100ms ease;
+}
+
+.tab:hover,
+.pill:hover {
+    background-color: rgba(255, 255, 255, 0.1);
     color: white;
 }
 
-.subtitle {
-    font-size: var(--font-md);
+.tabActive,
+.pillActive,
+.tabActive:hover,
+.pillActive:hover {
+    background-color: white;
+    border-color: white;
+    color: black;
+}
+
+.count {
+    margin-left: 6px;
+    font-size: var(--font-sm);
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+}
+
+.group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.groupLabel {
+    font-size: var(--font-sm);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
     color: var(--color-muted);
 }
 
-/* Card Hover overlay for downloading albums */
-.cardOverlay {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
+.dash {
+    color: var(--color-muted);
 }
 
-.card:hover .cardOverlay {
-    opacity: 1;
+.input {
+    height: 30px;
+    box-sizing: border-box;
+    min-width: 0;
+    padding: 4px 8px;
+    background-color: var(--color-surface);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    font-size: var(--font-sm);
 }
 
-.downloadBtn {
-    background-color: var(--color-primary);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 36px;
-    height: 36px;
+.input:focus {
+    outline: none;
+    border-color: var(--color-primaryLight);
+}
+
+.input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.inputInvalid,
+.inputInvalid:focus {
+    border-color: var(--color-error);
+}
+
+.rangeInput {
+    width: 72px;
+}
+
+.textInput {
+    flex: 1 1 180px;
+    max-width: 280px;
+}
+
+.selectInput {
+    cursor: pointer;
+}
+
+.iconBtn,
+.resetBtn {
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 4px;
+    height: 30px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md);
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+    transition: all 100ms ease;
 }
 
-.downloadBtn:hover {
-    transform: scale(1.05);
-    background-color: var(--color-primaryLight);
+.iconBtn {
+    width: 30px;
 }
 
-/* Tracks List layout */
+.resetBtn {
+    padding: 0 10px;
+    font-size: var(--font-sm);
+    font-weight: 600;
+}
+
+.iconBtn:hover,
+.resetBtn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+/* ---------- artist profile ---------- */
+
+.profile {
+    container: profile / inline-size;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.profileBanner {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.22;
+    pointer-events: none;
+    mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.9), transparent);
+}
+
+.profileHead {
+    position: relative;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 12px 16px;
+}
+
+.profileHead > :not(.profileBanner) {
+    position: relative;
+}
+
+.profileAvatar {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.profileAvatarOverlap {
+    border: 0;
+}
+
+.coverPlaceholder {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.profileInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.profileTitleRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.profileName {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    min-width: 0;
+}
+
+.profileMeta {
+    color: var(--color-muted);
+    font-size: var(--font-md);
+}
+
+.profileDesc {
+    max-width: 760px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: var(--font-sm);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.profileBody {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 8px 24px;
+    padding: 0 16px 14px;
+    margin-top: 16px;
+}
+
+.profileBody:has(> :only-child) {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.profileCol {
+    min-width: 0;
+}
+
+@container profile (max-width: 760px) {
+    .profileBody {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.profileSkeleton {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 14px 16px;
+}
+
+.subhead {
+    font-size: var(--font-md);
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.discoRow {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    scrollbar-width: thin;
+}
+
+.discoItem {
+    flex: 0 0 104px;
+    min-width: 0;
+}
+
+/* ---------- sections ---------- */
+
+.section {
+    min-width: 0;
+}
+
+.sectionHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sectionTitle {
+    font-size: var(--font-xl);
+    font-weight: 600;
+}
+
+.sectionCount {
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.moreRow {
+    display: flex;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+.inlineError {
+    margin: 12px 0 0;
+    color: var(--color-error);
+    font-size: var(--font-sm);
+    text-align: center;
+}
+
+.stateBox {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 24px 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    text-align: center;
+}
+
+.actionBtn {
+    padding: 6px 16px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 100ms ease;
+}
+
+.actionBtn:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.actionBtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.linkBtn {
+    background: none;
+    border: none;
+    padding: 6px 0;
+    color: var(--color-primaryLight);
+    font-size: var(--font-md);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.linkBtn:hover {
+    text-decoration: underline;
+}
+
+/* tracks: rows */
+
 .trackList {
     display: flex;
     flex-direction: column;
@@ -133,10 +460,10 @@
 .trackRow {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 8px 12px;
-    border-radius: 4px;
-    transition: background-color 0.1s ease;
+    gap: 14px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    transition: background-color 100ms ease;
 }
 
 .trackRow:hover {
@@ -144,60 +471,374 @@
 }
 
 .trackCover {
-    width: 48px;
-    height: 48px;
-    border-radius: 4px;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
     object-fit: cover;
 }
 
 .trackInfo {
     display: flex;
     flex-direction: column;
-    flex-grow: 1;
-    min-width: 0; /* allows truncation to work */
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
 }
 
-.trackTitle {
+.trackInfo > p:first-child {
     font-size: var(--font-lg);
     font-weight: 500;
     color: white;
 }
 
-.trackArtist {
-    font-size: var(--font-md);
+.subline {
     color: var(--color-muted);
+    font-size: var(--font-md);
 }
 
-.trackDownloadBtn {
-    background: none;
-    border: none;
-    color: rgba(255, 255, 255, 0.4);
+.trackDuration,
+.trackPlays {
+    flex-shrink: 0;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.trackDuration {
+    width: 52px;
+}
+
+.trackPlays {
+    width: 96px;
+}
+
+.badge {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: var(--radius-xs);
+}
+
+/* brand tints, kept muted so badges do not steal attention */
+.badgeYoutube {
+    background-color: rgba(255, 70, 60, 0.14);
+    color: rgba(255, 120, 110, 0.75);
+}
+
+.badgeBandcamp {
+    background-color: rgba(29, 160, 195, 0.15);
+    color: rgba(90, 190, 215, 0.8);
+}
+
+.badgeSoundcloud {
+    background-color: rgba(255, 110, 20, 0.15);
+    color: rgba(255, 150, 80, 0.8);
+}
+
+.filtersToggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
-    padding: 8px;
-    transition: color 0.2s ease;
 }
 
-.trackRow:hover .trackDownloadBtn {
+.filtersToggle:hover,
+.filtersToggleOpen {
+    background-color: rgba(255, 255, 255, 0.12);
     color: white;
 }
 
-.trackDownloadBtn:hover {
-    color: var(--color-primaryLight) !important;
-}
-
-.platformBadge {
-    background-color: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
-    font-size: var(--font-xs);
-    padding: 2px 6px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    font-weight: 700;
+.filtersDot {
     position: absolute;
-    top: 16px;
-    left: 16px;
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    padding: 0 4px;
+    font-size: var(--font-xs);
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    color: black;
+    background-color: white;
+    border-radius: 8px;
 }
 
-.trackRow .platformBadge {
-    position: static;
+/* albums and artists: cards */
+
+.albumGrid,
+.artistGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 20px;
+}
+
+.card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    transition: background-color 150ms ease;
+}
+
+.card:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.coverWrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.coverRound {
+    border-radius: 50%;
+}
+
+.cover {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+}
+
+.coverOverlay {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.card:hover .coverOverlay,
+.card:focus-within .coverOverlay,
+.coverOverlayPinned {
+    opacity: 1;
+}
+
+.cardText {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.centered {
+    align-items: center;
+    text-align: center;
+}
+
+.cardTitle {
+    font-size: var(--font-md);
+    font-weight: 600;
+    color: white;
+    max-width: 100%;
+}
+
+.cardSub {
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    max-width: 100%;
+}
+
+.cardMetaRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.artistCard {
+    align-items: center;
+}
+
+/* download controls */
+
+.downloadBtn {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    transition: transform 100ms ease, background-color 100ms ease;
+}
+
+.downloadBtn:hover {
+    transform: scale(1.05);
+    background-color: var(--color-primaryLight);
+}
+
+.rowDownloadBtn {
+    flex-shrink: 0;
+    display: flex;
+    padding: 6px;
+    background: none;
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    transition: color 150ms ease;
+}
+
+.trackRow:hover .rowDownloadBtn,
+.rowDownloadBtn:focus-visible {
+    color: white;
+}
+
+.rowDownloadBtn:hover {
+    color: var(--color-primaryLight);
+}
+
+.progressText {
+    flex-shrink: 0;
+    min-width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-info);
+    font-size: var(--font-sm);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.progressBadge {
+    width: 34px;
+    height: 34px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
+}
+
+/* ---------- skeleton shimmer ---------- */
+
+.skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-xs);
+}
+
+.skeleton::after {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0) 100%
+    );
+    animation: shimmer 1.4s infinite;
+    content: "";
+}
+
+.skeletonRow {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 12px;
+}
+
+.skeletonCover {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+}
+
+.skeletonTextCol {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.skeletonLine {
+    height: 12px;
+    border-radius: var(--radius-xs);
+}
+
+.skeletonLineLong {
+    width: 70%;
+}
+
+.skeletonLineShort {
+    width: 40%;
+}
+
+.skeletonAvatarLarge {
+    width: 104px;
+    height: 104px;
+    flex-shrink: 0;
+    border-radius: 50%;
+}
+
+@keyframes shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 720px) {
+    .container {
+        padding: 16px;
+    }
+
+    .filterBar {
+        margin: 0 -16px 20px;
+        padding: 10px 16px;
+    }
+
+    .trackPlays {
+        display: none;
+    }
+
+    .profileHead {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .profileAvatarOverlap {
+        margin-top: -52px;
+    }
+}
+
+/* tighter rows inside the artist card */
+.profile .trackRow {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+
+.profile .trackCover {
+    width: 36px;
+    height: 36px;
 }

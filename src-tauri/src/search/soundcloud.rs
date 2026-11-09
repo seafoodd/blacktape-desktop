@@ -4,6 +4,7 @@
 //! page (`search_kind`).
 
 use crate::search::bandcamp::ItemType;
+use crate::search::full::ArtistProfile;
 use crate::search::SearchSuggestion;
 use crate::soundcloud::{
     self, availability, next_offset_from_href, playlist_artwork, track_artwork, year_from_dates,
@@ -134,6 +135,7 @@ pub fn track_suggestion(track: &ScTrack) -> Option<SearchSuggestion> {
         item_url_path: url,
         img: track_artwork(track).unwrap_or_default(),
         subscriber_count: None,
+        audience_kind: None,
         view_count: track.playback_count,
         year: year_from_dates(&[track.release_date.as_deref()]),
         duration: track
@@ -161,6 +163,7 @@ pub fn playlist_suggestion(playlist: &ScPlaylist) -> Option<SearchSuggestion> {
         item_url_path: url,
         img: playlist_artwork(playlist).unwrap_or_default(),
         subscriber_count: None,
+        audience_kind: None,
         view_count: None,
         year: year_from_dates(&[
             playlist.release_date.as_deref(),
@@ -186,9 +189,144 @@ pub fn user_suggestion(user: &ScUser) -> Option<SearchSuggestion> {
             .map(soundcloud::upgrade_artwork_url)
             .unwrap_or_default(),
         subscriber_count: user.followers_count,
+        audience_kind: Some("followers"),
         view_count: None,
         year: None,
         duration: None,
         platform: Platform::Soundcloud,
     })
+}
+
+const PROFILE_TRACKS_FETCH: u32 = 50;
+const PROFILE_TOP_SONGS: usize = 5;
+const PROFILE_SETS_FETCH: u32 = 30;
+
+/// Artist profile of a SoundCloud user url: followers, bio, location, most played tracks and albums / sets.
+/// The tracks and sets requests are best effort: the card is still shown without them.
+pub async fn artist_profile(url: &str) -> Result<ArtistProfile, String> {
+    if !soundcloud::is_soundcloud_url(url) {
+        return Err("not a SoundCloud url".to_string());
+    }
+    let user = match soundcloud::resolve(url).await? {
+        soundcloud::ScResource::User(user) => user,
+        _ => return Err("not a SoundCloud user".to_string()),
+    };
+    let tracks_path = format!("/users/{}/tracks", user.id);
+    let albums_path = format!("/users/{}/albums", user.id);
+    let sets_path = format!("/users/{}/playlists_without_albums", user.id);
+    let tracks_params = [("limit", PROFILE_TRACKS_FETCH.to_string())];
+    let sets_params = [("limit", PROFILE_SETS_FETCH.to_string())];
+    let (tracks, albums, sets) = tokio::join!(
+        soundcloud::api_get::<ScCollection>(&tracks_path, &tracks_params),
+        soundcloud::api_get::<ScCollection>(&albums_path, &sets_params),
+        soundcloud::api_get::<ScCollection>(&sets_path, &sets_params),
+    );
+    Ok(build_profile(
+        &user,
+        tracks.ok().map(|c| c.items::<ScTrack>()).unwrap_or_default(),
+        albums.ok().map(|c| c.items::<ScPlaylist>()).unwrap_or_default(),
+        sets.ok().map(|c| c.items::<ScPlaylist>()).unwrap_or_default(),
+    ))
+}
+
+/// Pure profile assembly: top songs = the most played downloadable tracks, albums = albums,
+/// singles = the user's other sets (EPs / playlists), both as `Album` items.
+pub fn build_profile(
+    user: &ScUser,
+    tracks: Vec<ScTrack>,
+    albums: Vec<ScPlaylist>,
+    sets: Vec<ScPlaylist>,
+) -> ArtistProfile {
+    let name = user
+        .full_name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| user.username.clone());
+    let mut top_songs: Vec<SearchSuggestion> = tracks
+        .iter()
+        .filter_map(track_suggestion)
+        .collect();
+    top_songs.sort_by_key(|t| std::cmp::Reverse(t.view_count.unwrap_or(0)));
+    top_songs.truncate(PROFILE_TOP_SONGS);
+    let location = [user.city.as_deref(), user.country_code.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    ArtistProfile {
+        platform: Some(Platform::Soundcloud),
+        name,
+        url: user.permalink_url.clone().unwrap_or_default(),
+        avatar: user
+            .avatar_url
+            .as_deref()
+            .map(soundcloud::upgrade_artwork_url),
+        banner: None,
+        subscribers: None,
+        followers: user.followers_count,
+        monthly_audience: None,
+        description: user
+            .description
+            .clone()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty()),
+        location: (!location.is_empty()).then_some(location),
+        top_songs,
+        albums: albums.iter().filter_map(playlist_suggestion).collect(),
+        singles: sets.iter().filter_map(playlist_suggestion).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user() -> ScUser {
+        serde_json::from_str(include_str!("../../fixtures/soundcloud/user_forss.json")).unwrap()
+    }
+
+    /// The fixture track is fully downloadable; clones get their own play count and url.
+    fn track_with_plays(i: usize, plays: u64) -> ScTrack {
+        let mut track: ScTrack =
+            serde_json::from_str(include_str!("../../fixtures/soundcloud/track_flickermood.json"))
+                .unwrap();
+        track.id += i as u64;
+        track.playback_count = Some(plays);
+        track.permalink_url = Some(format!("https://soundcloud.com/forss/track-{i}"));
+        track
+    }
+
+    #[test]
+    fn build_profile_maps_the_user_and_sorts_top_songs_by_plays() {
+        let user = user();
+        let tracks = vec![
+            track_with_plays(0, 5_000),
+            track_with_plays(1, 300),
+            track_with_plays(2, 90_000),
+        ];
+
+        let profile = build_profile(&user, tracks, vec![], vec![]);
+
+        assert_eq!(profile.platform, Some(Platform::Soundcloud));
+        assert!(!profile.name.is_empty());
+        assert_eq!(profile.name, user.full_name.clone().unwrap());
+        assert_eq!(profile.followers, user.followers_count);
+        assert!(profile.top_songs.len() <= PROFILE_TOP_SONGS);
+        assert_eq!(profile.top_songs.len(), 3);
+        let plays: Vec<Option<u64>> = profile.top_songs.iter().map(|t| t.view_count).collect();
+        assert_eq!(plays, vec![Some(90_000), Some(5_000), Some(300)]);
+    }
+
+    #[test]
+    fn build_profile_keeps_only_the_most_played_top_songs() {
+        let tracks = (0..7).map(|i| track_with_plays(i, (i as u64 + 1) * 100)).collect();
+
+        let profile = build_profile(&user(), tracks, vec![], vec![]);
+
+        assert_eq!(profile.top_songs.len(), PROFILE_TOP_SONGS);
+        let plays: Vec<Option<u64>> = profile.top_songs.iter().map(|t| t.view_count).collect();
+        assert_eq!(plays, vec![Some(700), Some(600), Some(500), Some(400), Some(300)]);
+    }
 }

@@ -145,7 +145,7 @@
 
 .albumTitleRow .albumTitle {
     flex: 0 1 auto;
-    min-width: 4ch;
+    min-width: 0;
 }
 
 .albumMeta {

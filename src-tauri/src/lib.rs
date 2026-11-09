@@ -31,7 +31,8 @@ use crate::playlists::commands::{
     get_playlist_songs, move_playlist_songs, remove_songs_from_playlist, reorder_playlist_song,
     update_playlist_details,
 };
-use crate::search::{process_raw_results, SearchSuggestion};
+use crate::search::full::{ArtistProfile, FullSearchPage, SearchCursor, SearchKind};
+use crate::search::SearchSuggestion;
 use crate::types::{Album, ArtistSummary, DownloadType, Platform};
 use audio::player::AudioPlayer;
 use std::error::Error;
@@ -119,7 +120,7 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
         tasks.spawn(async move {
             match platform {
                 Platform::Bandcamp => search::bandcamp::search(&q).await,
-                Platform::Youtube => search::youtube::search(&q).await,
+                Platform::Youtube => search::search_youtube_with_fallback(&q).await,
                 Platform::Soundcloud => search::soundcloud::search(&q).await,
                 _ => Ok(Vec::new()),
             }
@@ -135,7 +136,22 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
         }
     }
 
-    process_raw_results(raw_suggestions, &query)
+    search::ranking::rank(raw_suggestions, &query)
+}
+
+#[command]
+async fn search_full(
+    query: String,
+    kind: SearchKind,
+    platforms: Vec<Platform>,
+    cursor: Option<SearchCursor>,
+) -> Result<FullSearchPage, String> {
+    search::full::search_full(&query, kind, &platforms, cursor).await
+}
+
+#[command]
+async fn get_artist_profile(platform: Platform, url: String) -> Result<ArtistProfile, String> {
+    search::full::artist_profile(platform, &url).await
 }
 
 #[command]
@@ -737,6 +753,8 @@ pub fn run() {
             update_song_info,
             // Search
             get_search_suggestions,
+            search_full,
+            get_artist_profile,
             // Download
             download,
             cancel_download,
