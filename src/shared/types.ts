@@ -1,6 +1,6 @@
 export type QualityTier = "low" | "standard" | "high" | "lossless";
 
-export type Platform = "youtube" | "bandcamp" | "local";
+export type Platform = "youtube" | "bandcamp" | "soundcloud" | "local";
 
 export type Song = {
   id: number;

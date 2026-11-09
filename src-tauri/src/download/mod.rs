@@ -4,6 +4,7 @@ pub mod opus_source;
 pub mod orchestrator;
 pub mod post_processor;
 pub mod queue;
+pub mod soundcloud;
 pub mod track;
 pub mod types;
 pub mod youtube;

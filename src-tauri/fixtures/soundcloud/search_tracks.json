@@ -1,0 +1,314 @@
+{
+  "collection": [
+    {
+      "artwork_url": "https://i1.sndcdn.com/artworks-000067273316-smsiqx-large.jpg",
+      "commentable": true,
+      "comment_count": 400,
+      "created_at": "2007-09-22T14:45:46Z",
+      "downloadable": true,
+      "download_count": 22334,
+      "duration": 213886,
+      "full_duration": 213890,
+      "embeddable_by": "all",
+      "genre": "Electronic",
+      "has_downloads_left": true,
+      "id": 293,
+      "kind": "track",
+      "label_name": "sonarkollektiv",
+      "last_modified": "2022-07-11T10:55:58Z",
+      "license": "all-rights-reserved",
+      "likes_count": 2620,
+      "permalink": "flickermood",
+      "permalink_url": "https://soundcloud.com/forss/flickermood",
+      "playback_count": 973324,
+      "public": true,
+      "publisher_metadata": {
+        "id": 293,
+        "urn": "soundcloud:tracks:293",
+        "artist": "Forss",
+        "contains_music": true,
+        "publisher": "Universal Music Publishing",
+        "isrc": "DEP960300042",
+        "writer_composer": "Eric Wahlforss"
+      },
+      "purchase_title": null,
+      "purchase_url": "http://sonarkollektiv.com/tracks/DE-P96-03-00042",
+      "release_date": "2003-06-02T00:00:00Z",
+      "reposts_count": 413,
+      "secret_token": null,
+      "sharing": "public",
+      "state": "finished",
+      "streamable": true,
+      "tag_list": "downtempo",
+      "title": "Flickermood",
+      "uri": "https://api.soundcloud.com/tracks/soundcloud%3Atracks%3A293",
+      "urn": "soundcloud:tracks:293",
+      "user_id": 183,
+      "display_date": "2007-09-22T14:45:46Z",
+      "media": {
+        "transcodings": [
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:293/fa250033-f3ae-45f5-a97d-5f743bced495/stream/hls",
+            "preset": "aac_160k",
+            "duration": 213886,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": false
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:293/f5da7ef8-a128-4514-8fa8-e178ceea2814/stream/hls",
+            "preset": "aac_96k",
+            "duration": 213886,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+            },
+            "quality": "lq",
+            "is_legacy_transcoding": false
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:293/302dc7fe-8690-4478-81b7-af8456d0fd6f/stream/hls",
+            "preset": "abr_sq",
+            "duration": 213886,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mpegurl"
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": false
+          }
+        ]
+      },
+      "monetization_model": "NOT_APPLICABLE",
+      "policy": "ALLOW",
+      "user": {
+        "avatar_url": "https://i1.sndcdn.com/avatars-000012778523-59quu3-large.jpg",
+        "city": null,
+        "country_code": null,
+        "first_name": "Eric",
+        "followers_count": 132108,
+        "full_name": "Eric Quidenus-Wahlforss",
+        "id": 183,
+        "kind": "user",
+        "last_name": "Quidenus-Wahlforss",
+        "permalink": "forss",
+        "permalink_url": "https://soundcloud.com/forss",
+        "track_count": 26,
+        "uri": "https://api.soundcloud.com/users/soundcloud%3Ausers%3A183",
+        "urn": "soundcloud:users:183",
+        "username": "Forss",
+        "verified": true
+      }
+    },
+    {
+      "artwork_url": "https://i1.sndcdn.com/artworks-000043574502-266jbv-large.jpg",
+      "commentable": true,
+      "comment_count": 65,
+      "created_at": "2012-05-21T21:20:07Z",
+      "downloadable": true,
+      "download_count": 13322,
+      "duration": 205193,
+      "full_duration": 205348,
+      "embeddable_by": "all",
+      "genre": "Alternative Pop",
+      "has_downloads_left": false,
+      "id": 47127625,
+      "kind": "track",
+      "label_name": "Universal Republic / Lava Records",
+      "last_modified": "2022-04-19T07:15:50Z",
+      "license": "all-rights-reserved",
+      "likes_count": 4731,
+      "permalink": "gimme-twice-mastered",
+      "permalink_url": "https://soundcloud.com/the-concept-band/gimme-twice-mastered",
+      "playback_count": 1019942,
+      "public": true,
+      "publisher_metadata": {
+        "id": 47127625,
+        "urn": "soundcloud:tracks:47127625",
+        "contains_music": true,
+        "isrc": "USUM71206202"
+      },
+      "purchase_title": "Buy on iTunes",
+      "purchase_url": "https://itunes.apple.com/us/album/gimme-twice/id710577472?i=710577540",
+      "release_date": null,
+      "reposts_count": 732,
+      "secret_token": null,
+      "sharing": "public",
+      "state": "finished",
+      "streamable": true,
+      "tag_list": "\"indie pop\" \"indie rock\" alternative sweden \"the royal concept\"",
+      "title": "The Royal Concept - Gimme Twice",
+      "uri": "https://api.soundcloud.com/tracks/soundcloud%3Atracks%3A47127625",
+      "urn": "soundcloud:tracks:47127625",
+      "user_id": 9615865,
+      "display_date": "2012-05-21T21:20:07Z",
+      "media": {
+        "transcodings": [
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:47127625/19837246-8b46-4eea-a8d5-d672ba97410f/stream/hls",
+            "preset": "aac_160k",
+            "duration": 205193,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": false
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:47127625/8c7e66df-755d-4d85-9338-02f5375dca65/stream/hls",
+            "preset": "aac_96k",
+            "duration": 205193,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+            },
+            "quality": "lq",
+            "is_legacy_transcoding": false
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:47127625/f2f647e3-e012-4432-860c-0436028b81bb/stream/hls",
+            "preset": "abr_sq",
+            "duration": 205193,
+            "snipped": false,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mpegurl"
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": false
+          }
+        ]
+      },
+      "monetization_model": "NOT_APPLICABLE",
+      "policy": "ALLOW",
+      "user": {
+        "avatar_url": "https://i1.sndcdn.com/avatars-000473822721-ujh21l-large.jpg",
+        "city": null,
+        "country_code": null,
+        "first_name": "The Royal Concept",
+        "followers_count": 15188,
+        "full_name": "The Royal Concept",
+        "id": 9615865,
+        "kind": "user",
+        "last_name": "",
+        "permalink": "the-concept-band",
+        "permalink_url": "https://soundcloud.com/the-concept-band",
+        "uri": "https://api.soundcloud.com/users/soundcloud%3Ausers%3A9615865",
+        "urn": "soundcloud:users:9615865",
+        "username": "The Royal Concept",
+        "verified": true
+      }
+    },
+    {
+      "artwork_url": "https://i1.sndcdn.com/artworks-acRKqXJcJGVN-0-large.jpg",
+      "commentable": true,
+      "comment_count": 126,
+      "created_at": "2013-01-16T19:50:33Z",
+      "downloadable": false,
+      "download_count": 22665,
+      "duration": 30000,
+      "full_duration": 199959,
+      "embeddable_by": "all",
+      "genre": "Alternative",
+      "has_downloads_left": false,
+      "id": 75206121,
+      "kind": "track",
+      "label_name": "Lava Music/Republic Records",
+      "last_modified": "2026-04-23T09:37:49Z",
+      "license": "all-rights-reserved",
+      "likes_count": 4855,
+      "permalink": "world-on-fire-1",
+      "permalink_url": "https://soundcloud.com/the-concept-band/world-on-fire-1",
+      "playback_count": 731755,
+      "public": true,
+      "publisher_metadata": {
+        "id": 75206121,
+        "urn": "soundcloud:tracks:75206121",
+        "artist": "The Royal Concept",
+        "album_title": "Royal",
+        "contains_music": true,
+        "upc_or_ean": "00602537571253",
+        "isrc": "USUM71312279",
+        "explicit": true,
+        "p_line": "℗ 2013 Universal Republic Records",
+        "p_line_for_display": "℗ 2013 Universal Republic Records",
+        "c_line": "© 2013 Universal Republic Records a division of UMG Recordings Inc & Lava Music LLC",
+        "c_line_for_display": "© 2013 Universal Republic Records a division of UMG Recordings Inc & Lava Music LLC",
+        "release_title": "World On Fire (Re-Mastered)"
+      },
+      "purchase_title": null,
+      "purchase_url": "http://smarturl.it/worldonfire",
+      "release_date": "2013-09-24T00:00:00Z",
+      "reposts_count": 830,
+      "secret_token": null,
+      "sharing": "public",
+      "state": "finished",
+      "streamable": true,
+      "tag_list": "",
+      "title": "World On Fire (Re-Mastered)",
+      "uri": "https://api.soundcloud.com/tracks/soundcloud%3Atracks%3A75206121",
+      "urn": "soundcloud:tracks:75206121",
+      "user_id": 9615865,
+      "display_date": "2013-09-24T00:00:00Z",
+      "media": {
+        "transcodings": [
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:75206121/08de820f-47f0-4237-868f-9e13cd0320a2/preview/hls",
+            "preset": "mp3_0_0",
+            "duration": 30000,
+            "snipped": true,
+            "format": {
+              "protocol": "hls",
+              "mime_type": "audio/mpeg"
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": true
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:75206121/08de820f-47f0-4237-868f-9e13cd0320a2/preview/progressive",
+            "preset": "mp3_0_0",
+            "duration": 30000,
+            "snipped": true,
+            "format": {
+              "protocol": "progressive",
+              "mime_type": "audio/mpeg"
+            },
+            "quality": "sq",
+            "is_legacy_transcoding": true
+          }
+        ]
+      },
+      "monetization_model": "NOT_APPLICABLE",
+      "policy": "SNIP",
+      "user": {
+        "avatar_url": "https://i1.sndcdn.com/avatars-000473822721-ujh21l-large.jpg",
+        "city": null,
+        "country_code": null,
+        "first_name": "The Royal Concept",
+        "followers_count": 15188,
+        "full_name": "The Royal Concept",
+        "id": 9615865,
+        "kind": "user",
+        "last_name": "",
+        "permalink": "the-concept-band",
+        "permalink_url": "https://soundcloud.com/the-concept-band",
+        "uri": "https://api.soundcloud.com/users/soundcloud%3Ausers%3A9615865",
+        "urn": "soundcloud:users:9615865",
+        "username": "The Royal Concept",
+        "verified": true
+      }
+    }
+  ],
+  "total_results": 1234,
+  "next_href": "https://api-v2.soundcloud.com/search/tracks?query_urn=soundcloud%3Asearch%3Aabc&offset=20&q=flickermood&limit=20",
+  "query_urn": "soundcloud:search:abc"
+}

@@ -4,6 +4,11 @@ import { formatCompactNumber } from "@/shared/lib/number.ts";
 import { BiDownload, BiPlayCircle } from "react-icons/bi";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import clsx from "clsx";
+import {
+  matchesPlatformFilter,
+  PLATFORM_FILTERS,
+  platformFilterLabel,
+} from "@/shared/lib/platforms.ts";
 
 const SearchResults = () => {
   const {
@@ -19,10 +24,9 @@ const SearchResults = () => {
   const filteredResults = committedResults.filter((item) => {
     const matchesCategory =
       activeCategory === "All" || item.item_type === activeCategory;
-    const matchesPlatform =
-      activePlatform === "All" ||
-      item.platform?.toLowerCase() === activePlatform.toLowerCase();
-    return matchesCategory && matchesPlatform;
+    return (
+      matchesCategory && matchesPlatformFilter(item.platform, activePlatform)
+    );
   });
 
   const artists = filteredResults.filter(
@@ -91,33 +95,18 @@ const SearchResults = () => {
 
           <div className={styles.divider} />
 
-          <button
-            className={clsx(
-              styles.pill,
-              activePlatform === "All" && styles.pillActive,
-            )}
-            onClick={() => setActivePlatform("All")}
-          >
-            All Platforms
-          </button>
-          <button
-            className={clsx(
-              styles.pill,
-              activePlatform === "Youtube" && styles.pillActive,
-            )}
-            onClick={() => setActivePlatform("Youtube")}
-          >
-            YouTube
-          </button>
-          <button
-            className={clsx(
-              styles.pill,
-              activePlatform === "Bandcamp" && styles.pillActive,
-            )}
-            onClick={() => setActivePlatform("Bandcamp")}
-          >
-            Bandcamp
-          </button>
+          {PLATFORM_FILTERS.map((plat) => (
+            <button
+              key={plat}
+              className={clsx(
+                styles.pill,
+                activePlatform === plat && styles.pillActive,
+              )}
+              onClick={() => setActivePlatform(plat)}
+            >
+              {platformFilterLabel(plat)}
+            </button>
+          ))}
         </div>
       </header>
 

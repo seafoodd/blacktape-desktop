@@ -20,6 +20,7 @@ pub struct SearchSuggestion {
 }
 
 pub mod bandcamp;
+pub mod soundcloud;
 pub mod youtube;
 
 /// Processes raw suggestions gathered from all platforms into a single, cohesive, sorted feed.

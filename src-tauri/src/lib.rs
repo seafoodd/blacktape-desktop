@@ -8,6 +8,7 @@ mod playlists;
 pub mod scan;
 pub mod song_edit;
 mod search;
+pub mod soundcloud;
 pub mod tags;
 mod thumbs;
 pub mod trash;
@@ -119,6 +120,7 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
             match platform {
                 Platform::Bandcamp => search::bandcamp::search(&q).await,
                 Platform::Youtube => search::youtube::search(&q).await,
+                Platform::Soundcloud => search::soundcloud::search(&q).await,
                 _ => Ok(Vec::new()),
             }
         });

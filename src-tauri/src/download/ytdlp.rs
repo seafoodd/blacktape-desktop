@@ -272,6 +272,7 @@ async fn download_track_internal(
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
     let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
     let is_bandcamp = track.url.contains("bandcamp.com");
+    let is_soundcloud = crate::soundcloud::is_soundcloud_url(&track.url);
 
     let mut args = vec![
         "--ignore-errors".to_string(),
@@ -312,6 +313,18 @@ async fn download_track_internal(
             "0".to_string(),
             "--cookies-from-browser".to_string(),
             ctx.cookie_arg.clone(),
+        ]);
+    } else if is_soundcloud {
+        // Progressive MP3 when SoundCloud still offers it, else the best HLS stream
+        // (usually AAC 160k). Go+ previews are filtered out before a track gets here.
+        args.extend(vec![
+            "-f".to_string(),
+            "bestaudio[protocol^=http]/bestaudio/best".to_string(),
+            "--extract-audio".to_string(),
+            "--audio-format".to_string(),
+            "best".to_string(),
+            "--audio-quality".to_string(),
+            "0".to_string(),
         ]);
     } else {
         args.extend(vec!["-f".to_string(), "bestaudio/best".to_string()]);

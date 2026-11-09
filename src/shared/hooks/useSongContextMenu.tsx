@@ -7,6 +7,7 @@ import { useModalStore } from "@/shared/store/modalStore.ts";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
+import { canRedownload as canRedownloadSong } from "@/shared/lib/platforms.ts";
 import { EditLyricsModal } from "@/features/player/ui/EditLyricsModal.tsx";
 import EditSongInfoModal from "@/features/library/ui/EditSongInfoModal.tsx";
 import FetchLyricsModal from "@/features/library/ui/FetchLyricsModal.tsx";
@@ -112,9 +113,7 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
       navigator.clipboard
         .writeText(text)
         .catch((e) => console.error("clipboard error: ", e));
-    const canRedownload =
-      !!song.source_url &&
-      (song.source === "youtube" || song.source === "bandcamp");
+    const canRedownload = canRedownloadSong(song.source, song.source_url);
 
     items.push(
       { separator: true, label: "" },

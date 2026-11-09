@@ -1,6 +1,6 @@
 use super::youtube;
-use super::{bandcamp, ytdlp};
-use crate::download::types::{AlbumMetaEvent, DownloadResult, TrackMetaItem};
+use super::{bandcamp, soundcloud, ytdlp};
+use crate::download::types::{AlbumMetaEvent, DownloadResult, ProgressEvent, TrackMetaItem};
 use crate::types::Platform;
 use crate::utils::{remove_empty_parents_up_to, sanitize_fs};
 use std::fs;
@@ -16,9 +16,17 @@ pub async fn process_album_url(
 ) -> Result<DownloadResult, String> {
     let root_library_dir = PathBuf::from(output_dir);
 
+    let mut skipped_note = None;
     let album_info = match platform {
         Platform::Bandcamp => bandcamp::parse_album(url).await?,
         Platform::Youtube => youtube::parse_album(url).await?,
+        Platform::Soundcloud => {
+            let (album, skipped) = soundcloud::parse_album_with_skipped(url).await?;
+            if !skipped.is_empty() {
+                skipped_note = Some(soundcloud::describe_skipped(&skipped));
+            }
+            album
+        }
         Platform::Local => {
             return Err("Local files cannot be processed via remote URL pipelines.".into());
         }
@@ -71,6 +79,23 @@ pub async fn process_album_url(
                 root_library_dir.clone(),
             )
             .await;
+        if let Some(note) = &skipped_note {
+            registry
+                .update_task_progress(task_id, 0, tracks.len(), note)
+                .await;
+        }
+    }
+
+    if let Some(note) = skipped_note {
+        let _ = app_handle.emit(
+            "download-task-progress",
+            ProgressEvent {
+                task_id: task_id.to_string(),
+                current: 0,
+                total: tracks.len(),
+                track_title: note,
+            },
+        );
     }
 
     let folder_created = target_library_dir != root_library_dir;
