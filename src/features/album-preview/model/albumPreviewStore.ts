@@ -3,8 +3,10 @@ import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
 import {
   getAlbumPreview,
   selectableIndexes,
+  selectableTracks,
   selectedUrls,
   type AlbumPreview,
+  type AlbumTrackInfo,
 } from "@/shared/lib/albumPreview.ts";
 import {
   EMPTY_SELECTION,
@@ -25,6 +27,11 @@ export interface AlbumPreviewStore {
   error: string | null;
   /** Selected track indexes (positions in the album). */
   selection: SelectionState;
+  /**
+   * Album downloads started from this page: library task id -> the track urls whose rows show its progress.
+   * Entries are dropped when the library drops the task (see `startAlbumDownload`).
+   */
+  trackTasks: Record<string, string[]>;
 
   /** Opens the page for an album/set search item and loads its tracks. */
   open: (item: SearchSuggestion) => Promise<void>;
@@ -38,9 +45,48 @@ export interface AlbumPreviewStore {
   clearSelection: () => void;
   /** Downloads the selected tracks, or the whole album when nothing (or everything) is selected. */
   download: () => Promise<void>;
+  /** Downloads one track into the album folder (album pipeline, so the album keeps its source row). */
+  downloadTrack: (track: AlbumTrackInfo) => Promise<void>;
 }
 
 const guard = createLatestGuard();
+
+/** Keeps the entries whose task the library still knows (finished tasks leave `activeDownloads`). */
+function pruneTasks(
+  tasks: Record<string, string[]>,
+  active: Record<string, unknown>,
+): Record<string, string[]> {
+  return Object.fromEntries(Object.entries(tasks).filter(([id]) => active[id] !== undefined));
+}
+
+/**
+ * Starts an album-pipeline download (D13) and remembers which rows it serves. `startDownload` registers the task
+ * in `activeDownloads` before its first await, so the one id that appears during the call belongs to this download.
+ */
+async function startAlbumDownload(
+  preview: AlbumPreview,
+  request: { trackUrls?: string[]; rows: string[] },
+): Promise<void> {
+  const library = useLibraryStore.getState();
+  const before = new Set(Object.keys(library.activeDownloads));
+  const started = library.startDownload({
+    platform: preview.platform,
+    downloadType: ItemType.Album,
+    url: preview.url,
+    artistName: preview.artist,
+    title: preview.title,
+    coverUrl: preview.cover_url ?? undefined,
+    trackUrls: request.trackUrls,
+  });
+  const active = useLibraryStore.getState().activeDownloads;
+  const taskId = Object.keys(active).find((id) => !before.has(id));
+  if (taskId !== undefined) {
+    useAlbumPreviewStore.setState((s) => ({
+      trackTasks: { ...pruneTasks(s.trackTasks, active), [taskId]: request.rows },
+    }));
+  }
+  await started;
+}
 
 export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
   item: null,
@@ -48,6 +94,7 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
   preview: null,
   error: null,
   selection: EMPTY_SELECTION,
+  trackTasks: {},
 
   open: async (item) => {
     const token = guard.begin();
@@ -96,14 +143,13 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
     const urls = selectedUrls(preview, selection.selected);
     // Nothing selected, or everything: the plain album download (same folder and metadata).
     const wholeAlbum = urls.length === 0 || urls.length >= available.length;
-    await useLibraryStore.getState().startDownload({
-      platform: preview.platform,
-      downloadType: ItemType.Album,
-      url: preview.url,
-      artistName: preview.artist,
-      title: preview.title,
-      coverUrl: preview.cover_url ?? undefined,
-      trackUrls: wholeAlbum ? undefined : urls,
-    });
+    const rows = wholeAlbum ? selectableTracks(preview).map((t) => t.url) : urls;
+    await startAlbumDownload(preview, { trackUrls: wholeAlbum ? undefined : urls, rows });
+  },
+
+  downloadTrack: async (track) => {
+    const { preview } = get();
+    if (!preview || !track.available || track.url === "") return;
+    await startAlbumDownload(preview, { trackUrls: [track.url], rows: [track.url] });
   },
 }));

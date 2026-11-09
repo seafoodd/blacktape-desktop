@@ -7,10 +7,18 @@ import {
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
 import { DownloadButton } from "./DownloadButton.tsx";
 import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
+import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
+import { searchItemToRemoteTrack } from "@/shared/lib/remoteTrack.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
+import {
+  remoteRefOf,
+  useAlbumStatus,
+  useTrackStatus,
+} from "@/shared/hooks/useDownloadStatus.ts";
+import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
-  formatDurationSecs,
+  formatDurationCell,
   formatPlays,
   formatAudience,
   trackSubline,
@@ -49,27 +57,39 @@ interface TrackRowProps {
 }
 
 export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProps) => {
-  const plays = compact ? null : formatPlays(item.view_count);
   const subline = trackSubline(item.band_name, item.album_name);
+  const { openMenu } = useRemoteTrackMenu();
+  const status = useTrackStatus(remoteRefOf(item));
   return (
-    <div className={styles.trackRow}>
+    <div
+      className={styles.trackRow}
+      onContextMenu={(e) =>
+        openMenu(e, searchItemToRemoteTrack(item), { list: list?.map(searchItemToRemoteTrack) })
+      }
+    >
       <div className={styles.trackCoverBox}>
         <Cover src={item.img} alt={item.name} className={styles.trackCover} />
         <StreamButton item={item} list={list} className={styles.trackPreview} />
       </div>
       <div className={styles.trackInfo}>
-        <p className={styles.ellipsis} title={item.name}>
-          {item.name}
-        </p>
+        <div className={styles.titleRow}>
+          <p className={clsx(styles.trackTitle, styles.ellipsis)} title={item.name}>
+            {item.name}
+          </p>
+          <DownloadStatusBadge state={status} />
+        </div>
         <p className={clsx(styles.subline, styles.ellipsis)} title={subline}>
           {subline}
         </p>
       </div>
-      {typeof item.duration === "number" && (
-        <span className={styles.trackDuration}>{formatDurationSecs(item.duration)}</span>
+      {/* Columns keep their width when the value is missing, so the rows line up. */}
+      <span className={styles.trackDuration}>{formatDurationCell(item.duration)}</span>
+      {!compact && <span className={styles.trackPlays}>{formatPlays(item.view_count) ?? ""}</span>}
+      {!compact && (
+        <span className={styles.badgeColumn}>
+          <PlatformBadge platform={item.platform} />
+        </span>
       )}
-      {plays && <span className={styles.trackPlays}>{plays}</span>}
-      {!compact && <PlatformBadge platform={item.platform} />}
       <DownloadButton item={item} progress={progress} variant="row" />
     </div>
   );
@@ -82,41 +102,45 @@ interface AlbumCardProps {
   compact?: boolean;
 }
 
-export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) => (
-  <article
-    className={clsx(styles.card, styles.cardClickable)}
-    role="button"
-    tabIndex={0}
-    aria-label={`Open album ${item.name}`}
-    onClick={() => void useAlbumPreviewStore.getState().open(item)}
-    onKeyDown={(e) => {
-      if (e.key === "Enter" && e.target === e.currentTarget) {
-        void useAlbumPreviewStore.getState().open(item);
-      }
-    }}
-  >
-    <div className={styles.coverWrap}>
-      <Cover src={item.img} alt={item.name} className={styles.cover} />
-      <DownloadButton item={item} progress={progress} variant="overlay" />
-    </div>
-    <div className={styles.cardText}>
-      <p className={clsx(styles.cardTitle, styles.ellipsis)} title={item.name}>
-        {item.name}
-      </p>
-      {!compact && (
-        <p className={clsx(styles.cardSub, styles.ellipsis)} title={item.band_name}>
-          {item.band_name}
-        </p>
-      )}
-      <div className={styles.cardMetaRow}>
-        {typeof item.year === "number" && (
-          <span className={styles.cardSub}>{item.year}</span>
-        )}
-        {!compact && <PlatformBadge platform={item.platform} />}
+export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) => {
+  const albumState = useAlbumStatus(remoteRefOf(item)).state;
+  return (
+    <article
+      className={clsx(styles.card, styles.cardClickable)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open album ${item.name}`}
+      onClick={() => void useAlbumPreviewStore.getState().open(item)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target === e.currentTarget) {
+          void useAlbumPreviewStore.getState().open(item);
+        }
+      }}
+    >
+      <div className={styles.coverWrap}>
+        <Cover src={item.img} alt={item.name} className={styles.cover} />
+        <DownloadStatusBadge state={albumState} size={20} className={styles.coverBadge} />
+        <DownloadButton item={item} progress={progress} variant="overlay" />
       </div>
-    </div>
-  </article>
-);
+      <div className={styles.cardText}>
+        <p className={clsx(styles.cardTitle, styles.ellipsis)} title={item.name}>
+          {item.name}
+        </p>
+        {!compact && (
+          <p className={clsx(styles.cardSub, styles.ellipsis)} title={item.band_name}>
+            {item.band_name}
+          </p>
+        )}
+        <div className={styles.cardMetaRow}>
+          {typeof item.year === "number" && (
+            <span className={styles.cardSub}>{item.year}</span>
+          )}
+          {!compact && <PlatformBadge platform={item.platform} />}
+        </div>
+      </div>
+    </article>
+  );
+};
 
 export const ArtistCard = ({ item }: { item: SearchSuggestion }) => {
   const audience = formatAudience(item.subscriber_count, item.audience_kind);

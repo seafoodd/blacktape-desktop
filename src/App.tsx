@@ -10,6 +10,7 @@ import { Settings } from "@/pages/settings/Settings";
 import Playlist from "@/pages/playlist/Playlist.tsx";
 import Trash from "@/pages/trash/Trash.tsx";
 import AlbumPreview from "@/pages/album-preview/AlbumPreview.tsx";
+import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrackMenuHost.tsx";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
@@ -20,6 +21,7 @@ function PlayerView() {
   }, [initDownloadListeners]);
 
   return (
+    <>
     <MainLayout
       header={<Header />}
       leftSidebar={<LeftSidebar />}
@@ -32,6 +34,8 @@ function PlayerView() {
       {activeView === "PLAYLIST" && <Playlist />}
       {activeView === "TRASH" && <Trash />}
     </MainLayout>
+    <RemoteTrackMenuHost />
+    </>
   );
 }
 

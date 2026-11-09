@@ -51,6 +51,8 @@ pub struct TrackDownload {
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
     pub source_item_id: Option<String>,
+    /// Length in milliseconds when the platform page/API provides it (parsers fill it; None otherwise).
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

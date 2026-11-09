@@ -1,0 +1,133 @@
+/* Same grid as the song rows of the artist page (SongListItem), dimmed: the song is not in the library. */
+.row {
+    display: flex;
+    width: 100%;
+    max-width: 600px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 12px;
+    height: 32px;
+    list-style: none;
+    font-size: var(--font-md);
+    cursor: default;
+    user-select: none;
+    opacity: 0.5;
+    transition: 100ms ease-out background-color;
+
+    &:nth-child(even) {
+        background-color: var(--color-surface);
+    }
+}
+
+.left {
+    display: flex;
+    padding-left: 8px;
+    gap: 16px;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    text-align: start;
+}
+
+/* Number slot; the hover play button is centred on it. */
+.numSlot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    flex-shrink: 0;
+}
+
+.number {
+    width: 18px;
+    text-align: center;
+}
+
+.playButton {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 100%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: 100ms linear background-color;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.row:hover .playButton {
+    display: flex;
+}
+
+.row:hover .number {
+    visibility: hidden;
+}
+
+.title {
+    flex: 1;
+    min-width: 0;
+}
+
+.right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.duration {
+    min-width: 40px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-muted);
+}
+
+.row:hover .duration {
+    display: none;
+}
+
+.downloadButton {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 100%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.row:hover .downloadButton {
+    display: flex;
+}
+
+/* Queued or downloading: stays visible, no hover feedback, not clickable. */
+.downloadButton.busy {
+    display: flex;
+    color: var(--color-primary);
+    cursor: default;
+
+    &:hover {
+        background-color: transparent;
+        color: var(--color-primary);
+    }
+}

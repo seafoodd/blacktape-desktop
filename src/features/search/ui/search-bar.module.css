@@ -207,6 +207,18 @@
     color: white;
 }
 
+/* title and library badge on one line; the title still ellipsizes */
+.titleRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.titleRow > .title {
+    min-width: 0;
+}
+
 .artist {
     color: rgba(255, 255, 255, 0.6);
     font-size: var(--font-md);

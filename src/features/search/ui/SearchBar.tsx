@@ -7,6 +7,7 @@ import { formatCompactNumber } from "@/shared/lib/number.ts";
 import {
   ItemType,
   PlatformFilter,
+  type SearchSuggestion,
   useLibraryStore,
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
@@ -15,6 +16,12 @@ import {
   matchesPlatformFilter,
   PLATFORM_FILTERS,
 } from "@/shared/lib/platforms.ts";
+import {
+  remoteRefOf,
+  useAlbumStatus,
+  useTrackStatus,
+} from "@/shared/hooks/useDownloadStatus.ts";
+import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
@@ -28,6 +35,15 @@ const formatSuggestionType = (type: ItemType): string => {
     default:
       return "UNKNOWN";
   }
+};
+
+/** Library badge of a suggestion row: tracks are looked up in the library index, albums in the album sources. */
+const SuggestionStatus = ({ item }: { item: SearchSuggestion }) => {
+  const ref = remoteRefOf(item);
+  const isAlbum = item.item_type === ItemType.Album;
+  const trackState = useTrackStatus(isAlbum ? null : ref);
+  const albumState = useAlbumStatus(isAlbum ? ref : null).state;
+  return <DownloadStatusBadge state={isAlbum ? albumState : trackState} />;
 };
 
 interface SearchBarProps {
@@ -248,9 +264,14 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                       alt="cover"
                     />
                     <div className={clsx(styles.rightBlock, "truncate")}>
-                      <p className={clsx(styles.title, "truncate")}>
-                        {suggestion.name}
-                      </p>
+                      <div className={styles.titleRow}>
+                        <p className={clsx(styles.title, "truncate")}>
+                          {suggestion.name}
+                        </p>
+                        {suggestion.item_type !== ItemType.Artist && (
+                          <SuggestionStatus item={suggestion} />
+                        )}
+                      </div>
                       <p className={clsx(styles.artist, "truncate")}>
                         {suggestion.item_type === ItemType.Artist ? (
                           <span className={styles.followers}>

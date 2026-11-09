@@ -48,6 +48,11 @@ pub fn extract_video_id(url: &str) -> Result<String, String> {
     Err("Invalid YouTube track URL or video ID format.".to_string())
 }
 
+/// YouTube Music reports track lengths in whole seconds; 0 or missing means unknown.
+fn secs_to_ms(secs: Option<u32>) -> Option<u64> {
+    secs.filter(|s| *s > 0).map(|s| u64::from(s) * 1000)
+}
+
 fn maximize_cover_url(url: &str) -> String {
     if url.contains("googleusercontent.com") || url.contains("ggpht.com") {
         // Strip existing size/quality modifiers after '=' and request 1600x1600 JPEG at quality 90
@@ -116,6 +121,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
                 url: format!("https://music.youtube.com/watch?v={}", track.id),
                 file_name: format!("{}.mp3", sanitized_name),
                 source_item_id: Some(track.id.clone()),
+                duration_ms: secs_to_ms(track.duration),
             }
         })
         .collect();
@@ -144,6 +150,7 @@ pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), S
     // 1. Attempt YouTube Music details fetch (richest metadata: album, artist list, release year)
     if let Ok(details) = rp.query().music_details(&video_id).await {
         let track_item = details.track;
+        let duration_ms = secs_to_ms(track_item.duration);
         let title = track_item.name.clone();
         let artists: Vec<String> = track_item.artists.iter().map(|a| a.name.clone()).collect();
         let album_artist = artists
@@ -182,6 +189,7 @@ pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), S
             url: format!("https://music.youtube.com/watch?v={}", video_id),
             file_name: format!("{}.mp3", sanitized_name),
             source_item_id: Some(video_id),
+            duration_ms,
         };
 
         return Ok((track, external_cover_url));
@@ -212,6 +220,7 @@ pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), S
         url: format!("https://youtube.com/watch?v={}", video_id),
         file_name: format!("{}.mp3", sanitized_name),
         source_item_id: Some(video_id),
+        duration_ms: None,
     };
 
     Ok((track, external_cover_url))
@@ -236,6 +245,15 @@ fn extract_browse_id(browse_url: &str) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secs_to_ms_converts_seconds_and_treats_zero_as_unknown() {
+        assert_eq!(secs_to_ms(Some(185)), Some(185_000));
+        assert_eq!(secs_to_ms(Some(1)), Some(1_000));
+        assert_eq!(secs_to_ms(Some(u32::MAX)), Some(u64::from(u32::MAX) * 1000));
+        assert_eq!(secs_to_ms(Some(0)), None);
+        assert_eq!(secs_to_ms(None), None);
+    }
 
     #[test]
     fn test_extract_browse_id_pure_id() {

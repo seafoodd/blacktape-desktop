@@ -3,6 +3,7 @@ pub mod auth;
 pub mod db;
 mod discord_presence;
 pub mod download;
+pub mod library_index;
 mod lyrics;
 mod playlists;
 pub mod scan;
@@ -772,6 +773,12 @@ pub fn run() {
             // Streaming
             preview::commands::stream_queue,
             preview::commands::stream_prefetch,
+            preview::commands::stream_add_to_queue,
+            // Library index (status of remote items, missing tracks)
+            library_index::commands::get_download_status,
+            library_index::commands::get_album_status,
+            library_index::commands::get_artist_album_sources,
+            library_index::commands::get_missing_tracks,
             get_stream_lyrics,
             get_album_preview,
             // Player Commands

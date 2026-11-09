@@ -64,6 +64,7 @@ pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<Strin
     let meta = parse_track_meta(&html);
     let sanitized_name = sanitize_fs(&meta.title);
     let source_item_id = extract_track_id_from_html(&html, Some(track_url));
+    let duration_ms = extract_single_track_duration_ms(&html, track_url);
 
     let track = TrackDownload {
         title: meta.title,
@@ -80,6 +81,7 @@ pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<Strin
         url: track_url.to_string(),
         file_name: format!("{}.mp3", sanitized_name),
         source_item_id,
+        duration_ms,
     };
 
     Ok((track, meta.external_cover_url))
@@ -305,6 +307,7 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
     });
 
     let track_id_map = extract_album_track_ids(html);
+    let duration_map = extract_album_track_durations_ms(html);
 
     let mut tracks = Vec::new();
     let mut track_count = 1;
@@ -335,6 +338,7 @@ fn parse_tracks_from_html(html: &str, base_url: &str) -> Result<Vec<TrackDownloa
             genres: None,
             release_year: None,
             source_item_id,
+            duration_ms: duration_map.get(relative_path).copied(),
         });
 
         track_count += 1;
@@ -431,6 +435,102 @@ fn extract_album_track_ids(html: &str) -> HashMap<String, String> {
     }
 
     map
+}
+
+/// Seconds (Bandcamp sends floats like `273.5`) to whole ms. Zero, negative and non-finite values are "unknown".
+fn secs_to_ms(secs: f64) -> Option<u64> {
+    if secs.is_finite() && secs > 0.0 {
+        Some((secs * 1000.0).round() as u64)
+    } else {
+        None
+    }
+}
+
+/// The album/track data sits in a `data-tralbum="{&quot;...}"` attribute, HTML-escaped. Returns the page with
+/// the quotes unescaped so the JSON-ish regexes below can read it (older pages carry it unescaped already).
+fn unescape_tralbum(html: &str) -> std::borrow::Cow<'_, str> {
+    if html.contains("&quot;") {
+        std::borrow::Cow::Owned(html.replace("&quot;", "\"").replace("&amp;", "&"))
+    } else {
+        std::borrow::Cow::Borrowed(html)
+    }
+}
+
+/// `/track/slug` -> duration in ms for every `trackinfo` entry that has both a `title_link` and a `duration`.
+fn extract_album_track_durations_ms(html: &str) -> HashMap<String, u64> {
+    static LINK_FIRST: OnceLock<Regex> = OnceLock::new();
+    static DURATION_FIRST: OnceLock<Regex> = OnceLock::new();
+    // `[^{}]*?` keeps a match inside one trackinfo object (the nested `file` object comes before both fields).
+    let link_first = LINK_FIRST.get_or_init(|| {
+        Regex::new(r#""title_link"\s*:\s*"(/track/[^"\s]+)"[^{}]*?"duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#)
+            .unwrap()
+    });
+    let duration_first = DURATION_FIRST.get_or_init(|| {
+        Regex::new(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)[^{}]*?"title_link"\s*:\s*"(/track/[^"\s]+)""#)
+            .unwrap()
+    });
+
+    let text = unescape_tralbum(html);
+    let mut map = HashMap::new();
+    for caps in link_first.captures_iter(&text) {
+        if let Some(ms) = caps[2].parse::<f64>().ok().and_then(secs_to_ms) {
+            map.insert(caps[1].to_string(), ms);
+        }
+    }
+    for caps in duration_first.captures_iter(&text) {
+        if let Some(ms) = caps[1].parse::<f64>().ok().and_then(secs_to_ms) {
+            map.entry(caps[2].to_string()).or_insert(ms);
+        }
+    }
+    map
+}
+
+/// ISO-8601 duration as Bandcamp writes it in its JSON-LD (`P00H04M33S`) -> ms.
+fn parse_iso_duration_ms(iso: &str) -> Option<u64> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"^P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$").unwrap()
+    });
+    let caps = re.captures(iso.trim())?;
+    let part = |i: usize| -> f64 {
+        caps.get(i)
+            .and_then(|m| m.as_str().parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    secs_to_ms(part(1) * 3600.0 + part(2) * 60.0 + part(3))
+}
+
+/// Duration of the track a track page is about: its `trackinfo` entry (matched by url when possible, else the
+/// first one), falling back to the JSON-LD ISO duration.
+fn extract_single_track_duration_ms(html: &str, track_url: &str) -> Option<u64> {
+    let by_url = extract_album_track_durations_ms(html);
+    if let Some(idx) = track_url.find("/track/") {
+        let path = track_url[idx..].split(['?', '#']).next().unwrap_or("");
+        if let Some(ms) = by_url.get(path.trim_end_matches('/')) {
+            return Some(*ms);
+        }
+    }
+
+    static NUMERIC_RE: OnceLock<Regex> = OnceLock::new();
+    let numeric_re =
+        NUMERIC_RE.get_or_init(|| Regex::new(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#).unwrap());
+    let text = unescape_tralbum(html);
+    let from_trackinfo = text
+        .find("\"trackinfo\"")
+        .map(|start| &text[start..])
+        .and_then(|rest| numeric_re.captures(rest))
+        .and_then(|caps| caps[1].parse::<f64>().ok())
+        .and_then(secs_to_ms);
+    if from_trackinfo.is_some() {
+        return from_trackinfo;
+    }
+
+    static ISO_RE: OnceLock<Regex> = OnceLock::new();
+    let iso_re = ISO_RE.get_or_init(|| Regex::new(r#""duration"\s*:\s*"(P[^"]+)""#).unwrap());
+    let json_ld = extract_json_ld_block(html)?;
+    iso_re
+        .captures(&json_ld)
+        .and_then(|caps| parse_iso_duration_ms(&caps[1]))
 }
 
 #[cfg(test)]
@@ -550,5 +650,102 @@ mod tests {
         let map = extract_album_track_ids(html);
         assert_eq!(map.get("/track/first-song"), Some(&"111".to_string()));
         assert_eq!(map.get("/track/second-song"), Some(&"222".to_string()));
+    }
+
+    /// Shape of a real album page: escaped `data-tralbum` JSON with the nested `file` object before the
+    /// fields we read.
+    const ALBUM_HTML: &str = r#"
+        <div id="pagedata" data-tralbum="{&quot;trackinfo&quot;:[
+          {&quot;id&quot;:111,&quot;file&quot;:{&quot;mp3-128&quot;:&quot;https://t4.bcbits.com/stream/a&quot;},&quot;title&quot;:&quot;First Song&quot;,&quot;track_num&quot;:1,&quot;title_link&quot;:&quot;/track/first-song&quot;,&quot;has_lyrics&quot;:false,&quot;duration&quot;:273.5,&quot;lyrics&quot;:null},
+          {&quot;id&quot;:222,&quot;file&quot;:{&quot;mp3-128&quot;:&quot;https://t4.bcbits.com/stream/b&quot;},&quot;title&quot;:&quot;Second Song&quot;,&quot;track_num&quot;:2,&quot;title_link&quot;:&quot;/track/second-song&quot;,&quot;duration&quot;:61.2345,&quot;lyrics&quot;:null},
+          {&quot;id&quot;:333,&quot;file&quot;:null,&quot;title&quot;:&quot;Hidden&quot;,&quot;track_num&quot;:3,&quot;title_link&quot;:&quot;/track/hidden-song&quot;,&quot;duration&quot;:0,&quot;lyrics&quot;:null}
+        ]}"></div>
+        <a href="/track/first-song"><span class="track-title">First Song</span></a>
+        <a href="/track/second-song"><span class="track-title">Second Song</span></a>
+        <a href="/track/hidden-song"><span class="track-title">Hidden</span></a>
+        <a href="/track/no-data"><span class="track-title">No Data</span></a>
+    "#;
+
+    #[test]
+    fn secs_to_ms_rounds_and_rejects_unknown_values() {
+        assert_eq!(secs_to_ms(273.5), Some(273_500));
+        assert_eq!(secs_to_ms(61.2345), Some(61_235));
+        assert_eq!(secs_to_ms(0.0), None, "zero means unknown, never 0");
+        assert_eq!(secs_to_ms(-3.0), None);
+        assert_eq!(secs_to_ms(f64::NAN), None);
+        assert_eq!(secs_to_ms(f64::INFINITY), None);
+    }
+
+    #[test]
+    fn album_durations_are_read_from_the_escaped_tralbum_data() {
+        let map = extract_album_track_durations_ms(ALBUM_HTML);
+        assert_eq!(map.get("/track/first-song"), Some(&273_500));
+        assert_eq!(map.get("/track/second-song"), Some(&61_235));
+        assert_eq!(map.get("/track/hidden-song"), None, "duration 0 is unknown");
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn album_durations_also_work_on_unescaped_trackinfo() {
+        let html = r#"var TralbumData = { trackinfo: [
+            { "id": 1, "title_link": "/track/a", "duration": 10.5 },
+            { "duration": 20, "id": 2, "title_link": "/track/b" } ] };"#;
+        let map = extract_album_track_durations_ms(html);
+        assert_eq!(map.get("/track/a"), Some(&10_500));
+        assert_eq!(map.get("/track/b"), Some(&20_000));
+    }
+
+    #[test]
+    fn album_without_durations_gives_an_empty_map() {
+        assert!(extract_album_track_durations_ms("<html></html>").is_empty());
+    }
+
+    #[test]
+    fn parse_tracks_fills_durations_and_leaves_unknown_ones_none() {
+        let tracks = parse_tracks_from_html(ALBUM_HTML, "https://test.bandcamp.com").unwrap();
+        assert_eq!(tracks.len(), 4);
+        assert_eq!(tracks[0].duration_ms, Some(273_500));
+        assert_eq!(tracks[1].duration_ms, Some(61_235));
+        assert_eq!(tracks[2].duration_ms, None);
+        assert_eq!(tracks[3].duration_ms, None);
+    }
+
+    #[test]
+    fn iso_durations_parse() {
+        assert_eq!(parse_iso_duration_ms("P00H04M33S"), Some(273_000));
+        assert_eq!(parse_iso_duration_ms("PT1H02M03S"), Some(3_723_000));
+        assert_eq!(parse_iso_duration_ms("P00H00M45.5S"), Some(45_500));
+        assert_eq!(parse_iso_duration_ms("P00H00M00S"), None);
+        assert_eq!(parse_iso_duration_ms("garbage"), None);
+        assert_eq!(parse_iso_duration_ms(""), None);
+    }
+
+    #[test]
+    fn single_track_duration_prefers_the_entry_of_that_url() {
+        let ms = extract_single_track_duration_ms(ALBUM_HTML, "https://test.bandcamp.com/track/second-song?from=embed");
+        assert_eq!(ms, Some(61_235));
+    }
+
+    #[test]
+    fn single_track_duration_falls_back_to_the_first_trackinfo_entry() {
+        let html = r#"<div data-tralbum="{&quot;trackinfo&quot;:[{&quot;title_link&quot;:null,&quot;duration&quot;:200.25}]}"></div>"#;
+        assert_eq!(
+            extract_single_track_duration_ms(html, "https://a.bandcamp.com/track/x"),
+            Some(200_250)
+        );
+    }
+
+    #[test]
+    fn single_track_duration_falls_back_to_json_ld() {
+        let html = r#"<script type="application/ld+json">{"@type":"MusicRecording","duration":"P00H03M05S"}</script>"#;
+        assert_eq!(
+            extract_single_track_duration_ms(html, "https://a.bandcamp.com/track/x"),
+            Some(185_000)
+        );
+    }
+
+    #[test]
+    fn single_track_without_any_duration_is_none() {
+        assert_eq!(extract_single_track_duration_ms("<html></html>", "https://a.bandcamp.com/track/x"), None);
     }
 }

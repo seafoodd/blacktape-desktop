@@ -2,14 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import {
   ERROR_VISIBLE_MS,
+  dedupeByUrl,
   isStreamingUrl,
   queueFrom,
   toStreamRequest,
   useStreamStore,
 } from "./streamStore.ts";
 
-const { streamQueueMock, streamPrefetchMock, audioState } = vi.hoisted(() => ({
+const { streamQueueMock, streamAddToQueueMock, streamPrefetchMock, audioState } = vi.hoisted(() => ({
   streamQueueMock: vi.fn(),
+  streamAddToQueueMock: vi.fn(),
   streamPrefetchMock: vi.fn(),
   audioState: {
     currentSong: null as { source_url?: string | null } | null,
@@ -20,6 +22,7 @@ const { streamQueueMock, streamPrefetchMock, audioState } = vi.hoisted(() => ({
 
 vi.mock("@/shared/lib/stream.ts", () => ({
   streamQueue: streamQueueMock,
+  streamAddToQueue: streamAddToQueueMock,
   streamPrefetch: streamPrefetchMock,
 }));
 vi.mock("@/shared/store/audioStore.ts", () => ({
@@ -54,6 +57,7 @@ const store = () => useStreamStore.getState();
 
 beforeEach(() => {
   streamQueueMock.mockReset();
+  streamAddToQueueMock.mockReset();
   streamPrefetchMock.mockReset();
   streamPrefetchMock.mockResolvedValue(undefined);
   audioState.currentSong = null;
@@ -265,5 +269,144 @@ describe("prefetch", () => {
     store().prefetch(fixture());
 
     expect(streamPrefetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("dedupeByUrl", () => {
+  it("keeps the first of repeated urls and the order of the rest", () => {
+    const a = fixture();
+    const b = fixture();
+    const aDup = fixture({ item_url_path: a.item_url_path, name: "dup" });
+    expect(dedupeByUrl([a, b, aDup])).toEqual([a, b]);
+  });
+
+  it("returns an empty list for an empty list", () => {
+    expect(dedupeByUrl([])).toEqual([]);
+  });
+});
+
+describe("playAll", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    streamAddToQueueMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("replaces the queue with the deduplicated items from index 0, shuffle off by default", async () => {
+    streamQueueMock.mockResolvedValue(undefined);
+    const a = fixture();
+    const b = fixture();
+    const bDup = fixture({ item_url_path: b.item_url_path, name: "dup" });
+
+    await store().playAll([a, b, bDup]);
+
+    expect(streamQueueMock).toHaveBeenCalledTimes(1);
+    expect(streamQueueMock).toHaveBeenCalledWith([toStreamRequest(a), toStreamRequest(b)], 0, false);
+  });
+
+  it("passes shuffle: true through and starts the queue shuffled", async () => {
+    streamQueueMock.mockResolvedValue(undefined);
+    const a = fixture();
+
+    await store().playAll([a], { shuffle: true });
+
+    expect(streamQueueMock).toHaveBeenCalledWith([toStreamRequest(a)], 0, true);
+  });
+
+  it("does nothing for an empty list", async () => {
+    await store().playAll([]);
+
+    expect(streamQueueMock).not.toHaveBeenCalled();
+    expect(store().pendingUrl).toBeNull();
+  });
+
+  it("sets pendingUrl to the first url while the queue starts, then clears it", async () => {
+    let resolveQueue!: () => void;
+    streamQueueMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveQueue = resolve;
+      }),
+    );
+    const a = fixture();
+    const b = fixture();
+
+    const pending = store().playAll([a, b]);
+    expect(store().pendingUrl).toBe(a.item_url_path);
+
+    resolveQueue();
+    await pending;
+    expect(store().pendingUrl).toBeNull();
+  });
+
+  it("records a rejection as an error of the first url", async () => {
+    streamQueueMock.mockRejectedValue("boom");
+    const a = fixture();
+    const b = fixture();
+
+    await store().playAll([a, b]);
+
+    expect(store().error).toEqual({ url: a.item_url_path, message: "boom" });
+    expect(store().pendingUrl).toBeNull();
+  });
+});
+
+describe("enqueue", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    streamAddToQueueMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("appends the deduplicated items without replacing the queue, playNext off by default", async () => {
+    streamAddToQueueMock.mockResolvedValue(undefined);
+    const a = fixture();
+    const b = fixture();
+    const aDup = fixture({ item_url_path: a.item_url_path, name: "dup" });
+
+    await store().enqueue([a, b, aDup]);
+
+    expect(streamAddToQueueMock).toHaveBeenCalledTimes(1);
+    expect(streamAddToQueueMock).toHaveBeenCalledWith([toStreamRequest(a), toStreamRequest(b)], false);
+    expect(streamQueueMock).not.toHaveBeenCalled();
+  });
+
+  it("passes playNext: true through", async () => {
+    streamAddToQueueMock.mockResolvedValue(undefined);
+    const a = fixture();
+
+    await store().enqueue([a], { playNext: true });
+
+    expect(streamAddToQueueMock).toHaveBeenCalledWith([toStreamRequest(a)], true);
+  });
+
+  it("does nothing for an empty list", async () => {
+    await store().enqueue([]);
+
+    expect(streamAddToQueueMock).not.toHaveBeenCalled();
+  });
+
+  it("does not touch pendingUrl", async () => {
+    streamAddToQueueMock.mockResolvedValue(undefined);
+
+    await store().enqueue([fixture()]);
+
+    expect(store().pendingUrl).toBeNull();
+  });
+
+  it("records a rejection as an error of the first url", async () => {
+    streamAddToQueueMock.mockRejectedValue(new Error("full"));
+    const a = fixture();
+
+    await store().enqueue([a]);
+
+    expect(store().error).toEqual({ url: a.item_url_path, message: "Error: full" });
   });
 });

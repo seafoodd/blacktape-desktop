@@ -383,6 +383,12 @@
     font-weight: 600;
 }
 
+.sectionActions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .sectionCount {
     color: var(--color-muted);
     font-size: var(--font-sm);
@@ -486,10 +492,21 @@
     min-width: 0;
 }
 
-.trackInfo > p:first-child {
+.titleRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.trackTitle {
     font-size: var(--font-lg);
     font-weight: 500;
     color: white;
+}
+
+.titleRow > .trackTitle {
+    min-width: 0;
 }
 
 .subline {
@@ -506,12 +523,20 @@
     text-align: right;
 }
 
+/* fixed widths: the columns stay aligned across rows, empty placeholders keep their width */
 .trackDuration {
-    width: 52px;
+    width: 60px;
 }
 
 .trackPlays {
     width: 96px;
+}
+
+/* platform label column of a track row: fixed width so the columns to its left line up across rows */
+.badgeColumn {
+    flex-shrink: 0;
+    width: 96px;
+    text-align: center;
 }
 
 .badge {
@@ -877,4 +902,13 @@
 /* album cards open the album preview */
 .cardClickable {
     cursor: pointer;
+}
+
+/* library badge of an album cover: top-left, on a dark disc so it reads over any artwork */
+.coverBadge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
 }

@@ -23,6 +23,16 @@ export function formatDurationSecs(secs: number): string {
   return `${minutes}:${ss}`;
 }
 
+/**
+ * Duration column of a track row: "3:05", or "" when unknown. The column keeps its width either way, so rows
+ * with and without a duration line up.
+ */
+export function formatDurationCell(secs: number | null | undefined): string {
+  return typeof secs === "number" && Number.isFinite(secs) && secs >= 0
+    ? formatDurationSecs(secs)
+    : "";
+}
+
 /** Text shown in a duration input for a stored value (seconds). */
 export function formatDurationField(secs: number | undefined): string {
   return secs === undefined ? "" : formatDurationSecs(secs);

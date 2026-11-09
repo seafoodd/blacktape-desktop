@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import {
+  streamAddToQueue,
   streamPrefetch,
   streamQueue,
   type StreamError,
@@ -25,6 +26,13 @@ export interface StreamStore {
    * Pressing the item that is already playing toggles pause.
    */
   play: (item: SearchSuggestion, list?: readonly SearchSuggestion[]) => Promise<void>;
+  /**
+   * "Play album" / "Shuffle": replaces the queue with `items` (deduplicated by url). `shuffle` starts at a random
+   * item with shuffle mode on. No-op for an empty list. Failures go to `fail` (keyed by the first url).
+   */
+  playAll: (items: readonly SearchSuggestion[], options?: { shuffle?: boolean }) => Promise<void>;
+  /** "Add to queue" / "Play next": adds `items` to the queue without replacing it. No-op for an empty list. */
+  enqueue: (items: readonly SearchSuggestion[], options?: { playNext?: boolean }) => Promise<void>;
   /** Warms the url cache of `item` (fire and forget). */
   prefetch: (item: SearchSuggestion) => void;
   /** Applies a `stream-error` event. */
@@ -68,6 +76,16 @@ export function queueFrom(
   return out;
 }
 
+/** `items` without repeated urls, order kept. */
+export function dedupeByUrl(items: readonly SearchSuggestion[]): SearchSuggestion[] {
+  const seen = new Set<string>();
+  return items.filter((i) => {
+    if (seen.has(i.item_url_path)) return false;
+    seen.add(i.item_url_path);
+    return true;
+  });
+}
+
 const prefetched = new Set<string>();
 let errorTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -90,6 +108,34 @@ export const useStreamStore = create<StreamStore>((set, get) => ({
       get().fail({ url, message: typeof error === "string" ? error : String(error) });
     } finally {
       if (get().pendingUrl === url) set({ pendingUrl: null });
+    }
+  },
+
+  playAll: async (items, options) => {
+    const list = dedupeByUrl(items);
+    if (list.length === 0) return;
+    const url = list[0].item_url_path;
+    clearTimeout(errorTimer);
+    set({ pendingUrl: url, error: null });
+    try {
+      await streamQueue(list.map(toStreamRequest), 0, options?.shuffle === true);
+    } catch (error) {
+      get().fail({ url, message: typeof error === "string" ? error : String(error) });
+    } finally {
+      if (get().pendingUrl === url) set({ pendingUrl: null });
+    }
+  },
+
+  enqueue: async (items, options) => {
+    const list = dedupeByUrl(items);
+    if (list.length === 0) return;
+    try {
+      await streamAddToQueue(list.map(toStreamRequest), options?.playNext === true);
+    } catch (error) {
+      get().fail({
+        url: list[0].item_url_path,
+        message: typeof error === "string" ? error : String(error),
+      });
     }
   },
 

@@ -4,6 +4,7 @@ import {
   CLEARED_FILTERS,
   downloadPercent,
   formatCountLabel,
+  formatDurationCell,
   formatDurationField,
   formatDurationSecs,
   formatAudience,
@@ -43,6 +44,21 @@ describe("formatDurationSecs", () => {
     expect(formatDurationSecs(NaN)).toBe("0:00");
     expect(formatDurationSecs(Infinity)).toBe("0:00");
     expect(formatDurationSecs(-5)).toBe("0:00");
+  });
+});
+
+describe("formatDurationCell", () => {
+  it("formats a known duration like formatDurationSecs", () => {
+    expect(formatDurationCell(185)).toBe("3:05");
+    expect(formatDurationCell(0)).toBe("0:00");
+    expect(formatDurationCell(3723)).toBe("1:02:03");
+  });
+
+  it("is an empty placeholder when the duration is unknown or invalid", () => {
+    expect(formatDurationCell(undefined)).toBe("");
+    expect(formatDurationCell(null)).toBe("");
+    expect(formatDurationCell(NaN)).toBe("");
+    expect(formatDurationCell(-1)).toBe("");
   });
 });
 

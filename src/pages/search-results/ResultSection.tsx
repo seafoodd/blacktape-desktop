@@ -4,6 +4,7 @@ import {
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
+import { StreamActionRow } from "@/features/preview/ui/StreamActionRow.tsx";
 import type { SectionState } from "@/features/search/model/searchPageStore.ts";
 import styles from "./search-results.module.css";
 import {
@@ -162,7 +163,10 @@ export const ResultSection = ({
         <h3 id={headingId} className={styles.sectionTitle}>
           {title}
         </h3>
-        {countText !== null && <span className={styles.sectionCount}>{countText}</span>}
+        <div className={styles.sectionActions}>
+          {kind === ItemType.Track && !loading && visible.length > 0 && <StreamActionRow items={visible} />}
+          {countText !== null && <span className={styles.sectionCount}>{countText}</span>}
+        </div>
       </div>
       {body}
     </section>

@@ -18,9 +18,17 @@ export interface StreamRequest {
 /**
  * Replaces the queue with stream songs and starts `index`. Returns at once: the player opens the song in the
  * background (`stream_loading` in the player state) and emits `stream-error` when it cannot be played.
+ * `shuffle: true` starts at a random song with shuffle mode on (`index` is ignored).
  */
-export const streamQueue = (requests: StreamRequest[], index: number): Promise<void> =>
-  invoke("stream_queue", { requests, index });
+export const streamQueue = (requests: StreamRequest[], index: number, shuffle = false): Promise<void> =>
+  invoke("stream_queue", { requests, index, shuffle });
+
+/**
+ * Adds stream songs to the queue without replacing it: right after the current song when `playNext`, at the
+ * end otherwise. Starts playing them when nothing is queued.
+ */
+export const streamAddToQueue = (requests: StreamRequest[], playNext = false): Promise<void> =>
+  invoke("stream_add_to_queue", { requests, playNext });
 
 export interface StreamError {
   url: string;

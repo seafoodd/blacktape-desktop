@@ -1,8 +1,11 @@
 use super::youtube;
 use super::{bandcamp, soundcloud, ytdlp};
+use crate::db::db::Database;
+use crate::download::soundcloud::SkippedTrack;
 use crate::download::types::{
-    AlbumMetaEvent, DownloadResult, ProgressEvent, TrackDownload, TrackMetaItem,
+    AlbumDownload, AlbumMetaEvent, DownloadResult, ProgressEvent, TrackDownload, TrackMetaItem,
 };
+use crate::library_index::sources::build_album_source;
 use crate::types::Platform;
 use crate::utils::{remove_empty_parents_up_to, sanitize_fs};
 use std::fs;
@@ -15,6 +18,47 @@ pub fn select_tracks(tracks: Vec<TrackDownload>, selected: &[String]) -> Vec<Tra
         .into_iter()
         .filter(|t| selected.iter().any(|url| *url == t.url))
         .collect()
+}
+
+/// Stores the whole track list of the album in `album_sources` (library-sync D5) so the library can tell
+/// partial from complete albums and list the missing songs. Returns whether a row was written. The key and the
+/// stored `album` / `album_artist` are what `post_processor` writes into `songs.album` / `songs.album_artist`.
+pub async fn write_album_source(
+    db: &Database,
+    platform: Platform,
+    url: &str,
+    album: &AlbumDownload,
+    skipped: &[SkippedTrack],
+    now: i64,
+) -> Result<bool, sqlx::Error> {
+    match build_album_source(platform, url, album, skipped, now) {
+        Some(source) => {
+            db.upsert_album_source(&source).await?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+/// Best effort: a failure here is only logged, the download must not depend on the bookkeeping.
+async fn record_album_source(
+    app_handle: &AppHandle,
+    platform: Platform,
+    url: &str,
+    album: &AlbumDownload,
+    skipped: &[SkippedTrack],
+) {
+    let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let db = db_state.lock().await;
+    if let Err(e) = write_album_source(&db, platform, url, album, skipped, now).await {
+        eprintln!("[album_sources] could not store the source of {url}: {e}");
+    }
 }
 
 /// Downloads the album at `url`; with `selected` only the tracks whose page url is listed (the album
@@ -30,7 +74,8 @@ pub async fn process_album_url(
     let root_library_dir = PathBuf::from(output_dir);
 
     let mut skipped_note = None;
-    let album_info = match platform {
+    let mut skipped_tracks: Vec<SkippedTrack> = Vec::new();
+    let mut album_info = match platform {
         Platform::Bandcamp => bandcamp::parse_album(url).await?,
         Platform::Youtube => youtube::parse_album(url).await?,
         Platform::Soundcloud => {
@@ -38,6 +83,7 @@ pub async fn process_album_url(
             if !skipped.is_empty() {
                 skipped_note = Some(soundcloud::describe_skipped(&skipped));
             }
+            skipped_tracks = skipped;
             album
         }
         Platform::Local => {
@@ -45,10 +91,14 @@ pub async fn process_album_url(
         }
     };
 
-    let mut tracks = album_info.tracks;
-    for track in &mut tracks {
-        track.album_artist = album_info.album_artist.clone();
+    let album_artist = album_info.album_artist.clone();
+    for track in &mut album_info.tracks {
+        track.album_artist = album_artist.clone();
     }
+    // Before the selection: the source holds the whole album, also when only some tracks are downloaded.
+    record_album_source(app_handle, platform, url, &album_info, &skipped_tracks).await;
+
+    let mut tracks = album_info.tracks;
     if let Some(selected) = selected {
         tracks = select_tracks(tracks, selected);
         if tracks.is_empty() {
@@ -164,6 +214,87 @@ pub async fn download_album_cover(url: &str, output_dir: &Path) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::db::tests::setup_test_db;
+    use crate::library_index::normalize::normalize_url_key;
+
+    fn album_of(urls: &[&str]) -> AlbumDownload {
+        AlbumDownload {
+            title: "The Album".to_string(),
+            artists: vec!["Artist".to_string()],
+            album_artist: "Artist".to_string(),
+            tracks: urls.iter().enumerate().map(|(i, u)| track(u, i as i32 + 1)).collect(),
+            genres: None,
+            release_year: Some(2020),
+            external_cover_url: Some("https://img/c.jpg".to_string()),
+        }
+    }
+
+    async fn db_with_schema() -> Database {
+        let db = setup_test_db().await;
+        db.ensure_album_sources_schema().await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn write_album_source_stores_the_whole_album() {
+        let db = db_with_schema().await;
+        let url = "https://a.bandcamp.com/album/the-album";
+        let album = album_of(&["https://a.bandcamp.com/track/1", "https://a.bandcamp.com/track/2"]);
+        assert!(write_album_source(&db, Platform::Bandcamp, url, &album, &[], 42).await.unwrap());
+
+        let row = db
+            .get_album_source_by_key(&normalize_url_key(url).unwrap())
+            .await
+            .unwrap()
+            .expect("row");
+        assert_eq!(row.platform, "bandcamp");
+        assert_eq!(row.album, "The Album");
+        assert_eq!(row.album_artist, "Artist");
+        assert_eq!(row.fetched_at, 42);
+        assert_eq!(
+            row.track_urls,
+            r#"["https://a.bandcamp.com/track/1","https://a.bandcamp.com/track/2"]"#
+        );
+    }
+
+    #[tokio::test]
+    async fn write_album_source_updates_the_row_on_a_second_download() {
+        let db = db_with_schema().await;
+        let url = "https://a.bandcamp.com/album/the-album";
+        write_album_source(&db, Platform::Bandcamp, url, &album_of(&["https://u/1"]), &[], 1).await.unwrap();
+        write_album_source(&db, Platform::Bandcamp, url, &album_of(&["https://u/1", "https://u/2"]), &[], 2)
+            .await
+            .unwrap();
+        let rows = db.list_album_sources_for_artist("Artist").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].fetched_at, 2);
+        assert_eq!(rows[0].track_urls, r#"["https://u/1","https://u/2"]"#);
+    }
+
+    #[tokio::test]
+    async fn write_album_source_skips_albums_without_a_usable_key_or_tracks() {
+        let db = db_with_schema().await;
+        assert!(!write_album_source(&db, Platform::Bandcamp, "", &album_of(&["https://u/1"]), &[], 1).await.unwrap());
+        assert!(!write_album_source(&db, Platform::Bandcamp, "https://a.bandcamp.com/album/x", &album_of(&[]), &[], 1)
+            .await
+            .unwrap());
+        assert!(db.list_album_sources_for_artist("Artist").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_album_source_reports_a_missing_table_instead_of_panicking() {
+        let db = setup_test_db().await; // no album_sources table
+        let result = write_album_source(
+            &db,
+            Platform::Bandcamp,
+            "https://a.bandcamp.com/album/x",
+            &album_of(&["https://u/1"]),
+            &[],
+            1,
+        )
+        .await;
+        assert!(result.is_err());
+    }
 
     fn track(url: &str, number: i32) -> TrackDownload {
         TrackDownload {

@@ -7,6 +7,7 @@ use crate::preview::http_source::HttpSource;
 use crate::preview::resolve::{self, StreamInfo};
 use crate::preview::segmented_source::SegmentedSource;
 use crate::types::{Platform, QualityTier, Song};
+use rand::RngExt;
 use rodio::{Decoder, Source};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
@@ -215,22 +216,84 @@ pub async fn open_stream(
     Ok((source, duration))
 }
 
+/// Which song `stream_queue` starts: the requested `index` (clamped to the list), or a random one when
+/// `shuffle` is on. `roll(n)` returns a number in `0..n` (injected so the choice is testable). `len` > 0.
+fn start_index(len: usize, index: usize, shuffle: bool, roll: impl FnOnce(usize) -> usize) -> usize {
+    if shuffle {
+        roll(len).min(len - 1)
+    } else {
+        index.min(len - 1)
+    }
+}
+
+/// How `stream_add_to_queue` puts new songs into the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueueAdd {
+    /// Nothing is queued: play the songs from the first one.
+    StartPlayback,
+    /// Right after the current song, keeping the given order.
+    PlayNext,
+    /// At the end of the queue, keeping the given order.
+    Append,
+}
+
+fn queue_add_mode(queue_len: usize, play_next: bool) -> QueueAdd {
+    if queue_len == 0 {
+        QueueAdd::StartPlayback
+    } else if play_next {
+        QueueAdd::PlayNext
+    } else {
+        QueueAdd::Append
+    }
+}
+
 /// Replaces the queue with stream songs (e.g. the clicked search result and the tracks after it) and
 /// starts `index`. The player opens the songs in the background (`stream_loading` in the player state)
 /// and keeps the next one prepared for a gapless transition.
+///
+/// `shuffle = Some(true)` (the "Shuffle" button): starts at a random song and turns shuffle mode on (part B;
+/// `index` is ignored then). `None`/`Some(false)`: unchanged behaviour.
 #[command]
 pub fn stream_queue(
     player: State<'_, Mutex<AudioPlayer>>,
     requests: Vec<StreamRequest>,
     index: usize,
+    shuffle: Option<bool>,
 ) -> Result<(), String> {
     if requests.is_empty() {
         return Err("nothing to play".to_string());
     }
+    let shuffle = shuffle == Some(true);
     let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
-    let index = index.min(songs.len() - 1);
+    let index = start_index(songs.len(), index, shuffle, |n| rand::rng().random_range(0..n));
     let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    if shuffle && !p.is_shuffle() {
+        // Turned on BEFORE the playback starts: `start_playback` then shuffles the new queue with the chosen
+        // song first, and the next stream to prepare is picked from the final order.
+        p.toggle_shuffle();
+    }
     p.start_playback(songs, index);
+    Ok(())
+}
+
+/// Adds stream songs to the queue WITHOUT replacing it: right after the current song (in the given order)
+/// when `play_next` is true, at the end otherwise. When nothing is queued it starts playing them (part B).
+#[command]
+pub fn stream_add_to_queue(
+    player: State<'_, Mutex<AudioPlayer>>,
+    requests: Vec<StreamRequest>,
+    play_next: Option<bool>,
+) -> Result<(), String> {
+    if requests.is_empty() {
+        return Ok(());
+    }
+    let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
+    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    match queue_add_mode(p.queue_len(), play_next == Some(true)) {
+        QueueAdd::StartPlayback => p.start_playback(songs, 0),
+        QueueAdd::PlayNext => p.add_songs_to_queue(songs, true),
+        QueueAdd::Append => p.add_songs_to_queue(songs, false),
+    }
     Ok(())
 }
 
@@ -291,6 +354,47 @@ mod tests {
         .unwrap();
         assert_eq!(r.platform, Platform::Youtube);
         assert!(r.cover.is_none() && r.duration_ms.is_none());
+    }
+
+    #[test]
+    fn start_index_without_shuffle_uses_the_requested_index_clamped() {
+        let never = |_: usize| -> usize { panic!("no roll without shuffle") };
+        assert_eq!(start_index(5, 2, false, never), 2);
+        assert_eq!(start_index(5, 99, false, never), 4);
+        assert_eq!(start_index(1, 0, false, never), 0);
+    }
+
+    #[test]
+    fn start_index_with_shuffle_ignores_the_index_and_uses_the_roll() {
+        assert_eq!(start_index(5, 2, true, |n| { assert_eq!(n, 5); 3 }), 3);
+        assert_eq!(start_index(5, 4, true, |_| 0), 0);
+    }
+
+    #[test]
+    fn start_index_with_shuffle_never_leaves_the_list() {
+        assert_eq!(start_index(3, 0, true, |_| 10), 2);
+        assert_eq!(start_index(1, 0, true, |n| n), 0);
+    }
+
+    #[test]
+    fn real_roll_stays_in_range() {
+        for _ in 0..200 {
+            let i = start_index(4, 0, true, |n| rand::rng().random_range(0..n));
+            assert!(i < 4);
+        }
+    }
+
+    #[test]
+    fn queue_add_mode_starts_playback_only_on_an_empty_queue() {
+        assert_eq!(queue_add_mode(0, false), QueueAdd::StartPlayback);
+        assert_eq!(queue_add_mode(0, true), QueueAdd::StartPlayback);
+    }
+
+    #[test]
+    fn queue_add_mode_never_replaces_a_filled_queue() {
+        assert_eq!(queue_add_mode(3, true), QueueAdd::PlayNext);
+        assert_eq!(queue_add_mode(3, false), QueueAdd::Append);
+        assert_eq!(queue_add_mode(1, false), QueueAdd::Append);
     }
 
     #[test]

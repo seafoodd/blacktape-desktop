@@ -3,11 +3,17 @@ import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts"
 import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
 import { useAlbumPreviewStore } from "./albumPreviewStore.ts";
 
-const { getAlbumPreviewMock, setActiveViewMock, startDownloadMock } = vi.hoisted(() => ({
-  getAlbumPreviewMock: vi.fn(),
-  setActiveViewMock: vi.fn(),
-  startDownloadMock: vi.fn(),
-}));
+type ActiveTask = { status: string; overallPercent: number };
+
+const { getAlbumPreviewMock, setActiveViewMock, startDownloadMock, activeDownloadsMock } = vi.hoisted(
+  () => ({
+    getAlbumPreviewMock: vi.fn(),
+    setActiveViewMock: vi.fn(),
+    startDownloadMock: vi.fn(),
+    // Stands in for the library's `activeDownloads`: the startDownload mock registers tasks here.
+    activeDownloadsMock: {} as Record<string, ActiveTask>,
+  }),
+);
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -20,7 +26,11 @@ vi.mock("@/shared/lib/albumPreview.ts", async () => ({
 vi.mock("@/shared/store/libraryStore.ts", () => ({
   ItemType: { Track: "Track", Album: "Album", Artist: "Artist" },
   useLibraryStore: {
-    getState: () => ({ setActiveView: setActiveViewMock, startDownload: startDownloadMock }),
+    getState: () => ({
+      setActiveView: setActiveViewMock,
+      startDownload: startDownloadMock,
+      activeDownloads: activeDownloadsMock,
+    }),
   },
 }));
 
@@ -93,11 +103,19 @@ async function openReady(preview: AlbumPreview = makePreview()) {
   return preview;
 }
 
+let taskSeq = 0;
+
 beforeEach(() => {
   getAlbumPreviewMock.mockReset();
   setActiveViewMock.mockReset();
   startDownloadMock.mockReset();
-  startDownloadMock.mockResolvedValue(undefined);
+  // Like the real startDownload: registers the task synchronously, before anything awaits.
+  startDownloadMock.mockImplementation(async () => {
+    taskSeq += 1;
+    activeDownloadsMock[`task-${taskSeq}`] = { status: "downloading", overallPercent: 0 };
+  });
+  taskSeq = 0;
+  for (const id of Object.keys(activeDownloadsMock)) delete activeDownloadsMock[id];
   useAlbumPreviewStore.setState(initialState, true);
 });
 
@@ -309,5 +327,99 @@ describe("download", () => {
   it("does nothing without a loaded preview", async () => {
     await store().download();
     expect(startDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it("the selected rows are the ones the task serves", async () => {
+    await openReady();
+    store().selectTrack(4, { ctrl: false, shift: false });
+    store().selectTrack(0, { ctrl: true, shift: false });
+
+    await store().download();
+
+    expect(store().trackTasks).toEqual({
+      "task-1": ["https://example.test/track/0", "https://example.test/track/4"],
+    });
+  });
+
+  it("the whole album serves every selectable row, not the unavailable one", async () => {
+    await openReady();
+
+    await store().download();
+
+    expect(store().trackTasks).toEqual({
+      "task-1": [
+        "https://example.test/track/0",
+        "https://example.test/track/1",
+        "https://example.test/track/3",
+        "https://example.test/track/4",
+      ],
+    });
+  });
+});
+
+describe("downloadTrack", () => {
+  it("downloads the one track through the album pipeline", async () => {
+    await openReady();
+
+    await store().downloadTrack(track(3));
+
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock).toHaveBeenCalledWith({
+      platform: "bandcamp",
+      downloadType: "Album",
+      url: ALBUM_URL,
+      artistName: "Album Artist",
+      title: "Album Title",
+      coverUrl: COVER_URL,
+      trackUrls: ["https://example.test/track/3"],
+    });
+  });
+
+  it("registers the task against that track's row only", async () => {
+    await openReady();
+
+    await store().downloadTrack(track(3));
+
+    expect(store().trackTasks).toEqual({ "task-1": ["https://example.test/track/3"] });
+  });
+
+  it("does nothing for an unavailable track", async () => {
+    await openReady();
+
+    await store().downloadTrack(track(2, { available: false, url: "" }));
+
+    expect(startDownloadMock).not.toHaveBeenCalled();
+    expect(store().trackTasks).toEqual({});
+  });
+
+  it("does nothing without a loaded preview", async () => {
+    await store().downloadTrack(track(0));
+    expect(startDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it("forgets tasks the library no longer knows when a new download starts", async () => {
+    await openReady();
+    useAlbumPreviewStore.setState({
+      trackTasks: { finishedLongAgo: ["https://example.test/track/0"] },
+    });
+
+    await store().downloadTrack(track(3));
+
+    expect(Object.keys(store().trackTasks)).toEqual(["task-1"]);
+  });
+
+  it("keeps the tasks the library still knows", async () => {
+    await openReady();
+    activeDownloadsMock.stillRunning = { status: "processing", overallPercent: 10 };
+    useAlbumPreviewStore.setState({
+      trackTasks: { stillRunning: ["https://example.test/track/0"] },
+    });
+
+    await store().downloadTrack(track(3));
+
+    expect(store().trackTasks).toEqual({
+      stillRunning: ["https://example.test/track/0"],
+      "task-1": ["https://example.test/track/3"],
+    });
   });
 });

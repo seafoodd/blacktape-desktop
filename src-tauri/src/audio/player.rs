@@ -25,6 +25,34 @@ pub fn is_stream_song(song: &Song) -> bool {
     song.path.is_empty() && song.source_url.as_deref().is_some_and(|u| !u.is_empty())
 }
 
+/// Appends queue index `new_idx` at the end of the play order. An empty player starts at cursor 0.
+fn order_push(order: &mut Option<Vec<usize>>, cursor: &mut Option<usize>, new_idx: usize) {
+    if let Some(order) = order {
+        order.push(new_idx);
+    } else {
+        *order = Some(vec![new_idx]);
+        *cursor = Some(0);
+    }
+}
+
+/// Inserts queue index `new_idx` right after the cursor ("play next").
+fn order_insert_next(order: &mut Option<Vec<usize>>, cursor: &mut Option<usize>, new_idx: usize) {
+    match (order.as_mut(), *cursor) {
+        (Some(order), Some(cursor_pos)) => {
+            let insert_pos = (cursor_pos + 1).min(order.len());
+            order.insert(insert_pos, new_idx);
+        }
+        (Some(order), None) => {
+            order.push(new_idx);
+            *cursor = Some(0);
+        }
+        (None, _) => {
+            *order = Some(vec![new_idx]);
+            *cursor = Some(0);
+        }
+    }
+}
+
 /// Index in the original queue of the song at `cursor` in the play order.
 pub fn source_index_at(play_order: Option<&[usize]>, cursor: Option<usize>) -> Option<usize> {
     play_order?.get(cursor?).copied()
@@ -362,39 +390,49 @@ impl AudioPlayer {
     }
 
     pub fn add_to_queue(&mut self, song: Song) {
-        self.queue.push(song);
-        let new_idx = self.queue.len() - 1;
-
-        if let Some(ref mut order) = self.play_order {
-            order.push(new_idx);
-        } else {
-            self.play_order = Some(vec![new_idx]);
-            self.cursor = Some(0);
-        }
-
-        self.emit_state();
+        self.add_songs_to_queue(vec![song], false);
     }
 
     pub fn add_next_to_queue(&mut self, song: Song) {
-        self.queue.push(song);
-        let new_idx = self.queue.len() - 1;
+        self.add_songs_to_queue(vec![song], true);
+    }
 
-        match (&mut self.play_order, self.cursor) {
-            (Some(order), Some(cursor_pos)) => {
-                let insert_pos = (cursor_pos + 1).min(order.len());
-                order.insert(insert_pos, new_idx);
+    /// Adds `songs` without replacing the queue: right after the current song (keeping the given order)
+    /// when `play_next`, at the end otherwise. One state emit and one `prepare_next` for the whole batch.
+    pub fn add_songs_to_queue(&mut self, songs: Vec<Song>, play_next: bool) {
+        if songs.is_empty() {
+            return;
+        }
+        if play_next {
+            // Every insert lands at cursor + 1, so going backwards leaves the songs in the given order.
+            for song in songs.into_iter().rev() {
+                self.queue.push(song);
+                let new_idx = self.queue.len() - 1;
+                order_insert_next(&mut self.play_order, &mut self.cursor, new_idx);
             }
-            (Some(order), None) => {
-                order.push(new_idx);
-                self.cursor = Some(0);
-            }
-            (None, _) => {
-                self.play_order = Some(vec![new_idx]);
-                self.cursor = Some(0);
+        } else {
+            for song in songs {
+                self.queue.push(song);
+                let new_idx = self.queue.len() - 1;
+                order_push(&mut self.play_order, &mut self.cursor, new_idx);
             }
         }
-
+        // The song after the current one may have changed (or just appeared): a stream that was prepared for
+        // the old next song is stale, so re-evaluate. No-op when the next song is a file or already prepared.
+        if self.current_song.is_some() {
+            self.prepare_next();
+        }
         self.emit_state();
+    }
+
+    /// Number of songs in the queue.
+    pub fn queue_len(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Whether shuffle mode is on.
+    pub fn is_shuffle(&self) -> bool {
+        self.shuffle_mode
     }
 
     /// Removes the songs at `positions` (positions in the play order). Removing the
@@ -1227,7 +1265,9 @@ impl AudioPlayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_song_edit, is_stream_song, source_index_at, AudioPlayer};
+    use super::{
+        apply_song_edit, is_stream_song, order_insert_next, order_push, source_index_at, AudioPlayer,
+    };
     use crate::types::{Platform, QualityTier, Song};
     use rodio::Source;
     use std::time::Duration;
@@ -1394,6 +1434,65 @@ mod tests {
         file.path = "C:/music/a.mp3".into();
         file.source_url = Some("https://youtube.com/watch?v=x".into());
         assert!(!is_stream_song(&file), "downloaded songs keep their source url but play from the file");
+    }
+
+    #[test]
+    fn order_push_on_an_empty_player_starts_at_cursor_zero() {
+        let (mut order, mut cursor) = (None, None);
+        order_push(&mut order, &mut cursor, 0);
+        assert_eq!(order, Some(vec![0]));
+        assert_eq!(cursor, Some(0));
+    }
+
+    #[test]
+    fn order_push_appends_and_keeps_the_cursor() {
+        let mut order = Some(vec![0, 1, 2]);
+        let mut cursor = Some(1);
+        order_push(&mut order, &mut cursor, 3);
+        assert_eq!(order, Some(vec![0, 1, 2, 3]));
+        assert_eq!(cursor, Some(1));
+    }
+
+    #[test]
+    fn order_insert_next_goes_right_after_the_cursor() {
+        let mut order = Some(vec![0, 1, 2]);
+        let mut cursor = Some(0);
+        order_insert_next(&mut order, &mut cursor, 3);
+        assert_eq!(order, Some(vec![0, 3, 1, 2]));
+        assert_eq!(cursor, Some(0));
+    }
+
+    #[test]
+    fn order_insert_next_at_the_last_position_appends() {
+        let mut order = Some(vec![0, 1]);
+        let mut cursor = Some(1);
+        order_insert_next(&mut order, &mut cursor, 2);
+        assert_eq!(order, Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn order_insert_next_without_cursor_or_order() {
+        let mut order = Some(vec![0, 1]);
+        let mut cursor = None;
+        order_insert_next(&mut order, &mut cursor, 2);
+        assert_eq!(order, Some(vec![0, 1, 2]));
+        assert_eq!(cursor, Some(0));
+
+        let (mut order, mut cursor) = (None, None);
+        order_insert_next(&mut order, &mut cursor, 0);
+        assert_eq!(order, Some(vec![0]));
+        assert_eq!(cursor, Some(0));
+    }
+
+    #[test]
+    fn inserting_a_batch_backwards_after_the_cursor_keeps_the_given_order() {
+        // queue indices 0..3 are queued; indices 3, 4, 5 are the new songs A, B, C (in that order).
+        let mut order = Some(vec![0, 1, 2]);
+        let mut cursor = Some(0);
+        for idx in [5usize, 4, 3] {
+            order_insert_next(&mut order, &mut cursor, idx);
+        }
+        assert_eq!(order, Some(vec![0, 3, 4, 5, 1, 2]), "A B C play right after the current song");
     }
 
     #[test]

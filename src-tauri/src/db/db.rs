@@ -1,4 +1,4 @@
-use crate::db::schema::TRASH_SCHEMA_SQL;
+use crate::db::schema::{ALBUM_SOURCES_SCHEMA_SQL, TRASH_SCHEMA_SQL};
 use crate::lyrics::LyricsSource;
 use crate::types::{Album, ArtistSummary, Playlist, Song};
 use sqlx::sqlite::{SqliteConnection, SqlitePool};
@@ -18,6 +18,9 @@ impl Database {
         db.ensure_trash_schema()
             .await
             .expect("Failed to create trash tables");
+        db.ensure_album_sources_schema()
+            .await
+            .expect("Failed to create album sources table");
         db
     }
 
@@ -946,6 +949,12 @@ impl Database {
     /// Creates the trash tables if they are missing (D10). Safe to run repeatedly.
     pub async fn ensure_trash_schema(&self) -> Result<(), sqlx::Error> {
         sqlx::query(TRASH_SCHEMA_SQL).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Creates the `album_sources` table if it is missing (migration 7 does the same). Safe to run repeatedly.
+    pub async fn ensure_album_sources_schema(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(ALBUM_SOURCES_SCHEMA_SQL).execute(&self.pool).await?;
         Ok(())
     }
 

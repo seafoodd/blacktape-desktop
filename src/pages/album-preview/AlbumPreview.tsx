@@ -2,120 +2,41 @@ import { useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { BiArrowBack, BiDownload } from "react-icons/bi";
 import { FaCheckCircle } from "react-icons/fa";
-import { MdPause, MdPlayArrow } from "react-icons/md";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import artistStyles from "@/pages/artist-albums/artist-albums.module.css";
-import rowStyles from "@/features/library/ui/song-list-item/song-list-item.module.css";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
-import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
-import { useAudioStore } from "@/shared/store/audioStore.ts";
+import { StreamActionRow } from "@/features/preview/ui/StreamActionRow.tsx";
+import { useStreamStore } from "@/features/preview/model/streamStore.ts";
+import { useTrackStatuses } from "@/shared/hooks/useDownloadStatus.ts";
+import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
+import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import {
   albumInfoLine,
+  albumLibraryState,
   downloadLabel,
   selectableIndexes,
+  selectableTracks,
   trackAsStreamItem,
   trackCountLabel,
+  trackRefs,
+  trackTaskStates,
   type AlbumTrackInfo,
 } from "@/shared/lib/albumPreview.ts";
+import { albumTrackToRemoteTrack, type RemoteTrack } from "@/shared/lib/remoteTrack.ts";
 import { EMPTY_SELECTION } from "@/shared/lib/selection.ts";
 import { decodeHtmlEntities } from "@/shared/lib/html.ts";
 import { isDownloadBusy } from "@/pages/search-results/searchResultsFormat.ts";
+import { AlbumTrackRow } from "./AlbumTrackRow.tsx";
 import styles from "./album-preview.module.css";
 
-const TrackRow = ({
-  track,
-  position,
-  selected,
-  selectedAbove,
-  selectedBelow,
-  onSelect,
-  onPlay,
-}: {
-  track: AlbumTrackInfo;
-  position: number;
-  selected: boolean;
-  selectedAbove: boolean;
-  selectedBelow: boolean;
-  onSelect: (e: React.MouseEvent) => void;
-  onPlay: () => void;
-}) => {
-  const currentSong = useAudioStore((s) => s.currentSong);
-  const isStreaming = useAudioStore((s) => s.isStreaming);
-  const isPlaying = useAudioStore((s) => s.isPlaying);
-  const streamLoading = useAudioStore((s) => s.streamLoading);
-  const loadingUrl = useStreamStore((s) => s.pendingUrl);
-  const active = track.available && isStreamingUrl(currentSong, isStreaming, track.url);
-  const playing = active && isPlaying && !streamLoading;
-  const loading = track.available && (loadingUrl === track.url || (active && streamLoading));
-
-  return (
-    <div
-      className={clsx(rowStyles.song, {
-        [rowStyles.selected]: selected,
-        [rowStyles.selectedTop]: selected && !selectedAbove,
-        [rowStyles.selectedBottom]: selected && !selectedBelow,
-        [styles.unavailable]: !track.available,
-      })}
-      data-song-row
-      aria-selected={selected}
-      aria-disabled={!track.available}
-      title={track.available ? undefined : (track.note ?? "Not available")}
-      role="button"
-      tabIndex={0}
-      onClick={(e) => track.available && onSelect(e)}
-      onDoubleClick={() => track.available && onPlay()}
-    >
-      <div className={rowStyles.songLeft}>
-        <div className={rowStyles.numSlot}>
-          <div className={clsx(rowStyles.numContent, (active || loading) && styles.numHidden)}>
-            <div className={rowStyles.songTrackNumber}>
-              {String(track.track_number ?? position + 1).padStart(2, "0")}
-            </div>
-          </div>
-          {track.available && (
-            <button
-              className={clsx(rowStyles.rowPlayButton, (active || loading) && styles.alwaysShown)}
-              title={playing ? "Pause" : "Play preview"}
-              aria-label={playing ? "Pause" : "Play preview"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPlay();
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              {loading ? (
-                <span className={styles.spinner} aria-hidden="true" />
-              ) : playing ? (
-                <MdPause size={22} />
-              ) : (
-                <MdPlayArrow size={22} className={rowStyles.playIcon} />
-              )}
-            </button>
-          )}
-        </div>
-        <div className={clsx(rowStyles.songTitle, "truncate")}>
-          {decodeHtmlEntities(track.title)}
-          {track.artists.length > 0 && (
-            <span className={styles.trackArtist}> · {track.artists.join(", ")}</span>
-          )}
-        </div>
-      </div>
-      <div className={rowStyles.songRight}>
-        {!track.available && track.note && (
-          <div className={clsx(styles.note, "truncate")}>{track.note}</div>
-        )}
-      </div>
-    </div>
-  );
-};
-
 const AlbumPreview = () => {
-  const { item, status, preview, error, selection } = useAlbumPreviewStore();
-  const { close, reload, selectTrack, selectAll, clearSelection, download } =
+  const { item, status, preview, error, selection, trackTasks } = useAlbumPreviewStore();
+  const { close, reload, selectTrack, selectAll, clearSelection, download, downloadTrack } =
     useAlbumPreviewStore.getState();
   const activeDownloads = useLibraryStore((s) => s.activeDownloads);
   const playStream = useStreamStore((s) => s.play);
+  const { openMenu } = useRemoteTrackMenu();
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -127,6 +48,28 @@ const AlbumPreview = () => {
 
   const selectable = useMemo(() => (preview ? selectableIndexes(preview) : []), [preview]);
   const selectedCount = selection.selected.size;
+
+  // Library state of every selectable track, and the download tasks that serve rows of this page.
+  const refs = useMemo(() => (preview ? trackRefs(preview) : []), [preview]);
+  const libraryStates = useTrackStatuses(refs);
+  const taskStates = useMemo(
+    () => trackTaskStates(trackTasks, activeDownloads),
+    [trackTasks, activeDownloads],
+  );
+  const albumState = useMemo(
+    () => (preview ? albumLibraryState(preview, libraryStates) : "none"),
+    [preview, libraryStates],
+  );
+
+  // Stream and menu lists: the downloadable tracks in album order.
+  const streamItems = useMemo(
+    () => (preview ? selectableTracks(preview).map((t) => trackAsStreamItem(preview, t)) : []),
+    [preview],
+  );
+  const remoteList: RemoteTrack[] = useMemo(
+    () => (preview ? selectableTracks(preview).map((t) => albumTrackToRemoteTrack(preview, t)) : []),
+    [preview],
+  );
 
   // The album download that is running for this page (any selection of it).
   const running = useMemo(
@@ -154,8 +97,7 @@ const AlbumPreview = () => {
 
   const playTrack = (track: AlbumTrackInfo) => {
     if (!preview) return;
-    const list = preview.tracks.filter((t) => t.available).map((t) => trackAsStreamItem(preview, t));
-    void playStream(trackAsStreamItem(preview, track), list);
+    void playStream(trackAsStreamItem(preview, track), streamItems);
   };
 
   return (
@@ -193,6 +135,7 @@ const AlbumPreview = () => {
         <div className={artistStyles.albumBlockRight}>
           <div className={artistStyles.albumTitleRow}>
             <h2 className={clsx(artistStyles.albumTitle, "truncate")}>{decodeHtmlEntities(title)}</h2>
+            {preview && <DownloadStatusBadge state={albumState} size={18} className={styles.titleBadge} />}
             {preview && albumInfoLine(preview) && (
               <span className={clsx(artistStyles.albumMeta, "truncate")}>{albumInfoLine(preview)}</span>
             )}
@@ -242,6 +185,7 @@ const AlbumPreview = () => {
                 >
                   {selectedCount >= selectable.length && selectable.length > 0 ? "Clear selection" : "Select all"}
                 </button>
+                <StreamActionRow items={streamItems} playLabel="Play album" />
                 <span className={styles.count}>
                   {trackCountLabel(preview)}
                   {selectedCount > 0 && ` · ${selectedCount} selected`}
@@ -253,17 +197,27 @@ const AlbumPreview = () => {
                   const above = preview.tracks[i - 1];
                   const below = preview.tracks[i + 1];
                   return (
-                    <TrackRow
+                    <AlbumTrackRow
                       key={track.index}
                       track={track}
                       position={i}
                       selected={selection.selected.has(track.index)}
                       selectedAbove={!!above && selection.selected.has(above.index)}
                       selectedBelow={!!below && selection.selected.has(below.index)}
+                      libraryState={libraryStates[track.url]}
+                      task={taskStates[track.url]}
+                      cover={preview.cover_url}
                       onSelect={(e) =>
                         selectTrack(track.index, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
                       }
                       onPlay={() => playTrack(track)}
+                      onDownload={() => void downloadTrack(track)}
+                      onContextMenu={(e) =>
+                        openMenu(e, albumTrackToRemoteTrack(preview, track), {
+                          list: remoteList,
+                          downloadState: libraryStates[track.url] ?? "none",
+                        })
+                      }
                     />
                   );
                 })}

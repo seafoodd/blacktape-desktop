@@ -1,0 +1,32 @@
+/* Same look as `actionBtn` of the search results (the section header buttons). */
+.row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 100ms ease;
+}
+
+.button:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.button:focus-visible {
+    outline: 2px solid var(--color-primaryLight);
+    outline-offset: 2px;
+}

@@ -28,6 +28,13 @@ import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
 import EditAlbumModal from "@/features/library/ui/EditAlbumModal.tsx";
 import { decodeHtmlEntities } from "@/shared/lib/html.ts";
 import SongListItem from "@/features/library/ui/song-list-item/SongListItem.tsx";
+import {
+  playableMissingTracks,
+  sourceOfAlbum,
+  useMissingTracksStore,
+} from "@/features/library/model/missingTracksStore.ts";
+import MissingTrackRow from "@/features/library/ui/missing-track-row/MissingTrackRow.tsx";
+import { missingAlbumMenuItems } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 
 const ArtistAlbums = () => {
   const { selectedTab, albums, activeDownloads, cancelDownload } =
@@ -38,6 +45,25 @@ const ArtistAlbums = () => {
     position: ContextMenuPosition;
     items: MenuItemOption[];
   } | null>(null);
+
+  const missingArtist = useMissingTracksStore((s) => s.artist);
+  const missingSources = useMissingTracksStore((s) => s.sources);
+  const missingShown = useMissingTracksStore((s) => s.shown);
+  const missingTracks = useMissingTracksStore((s) => s.tracks);
+  const loadMissingSources = useMissingTracksStore((s) => s.loadSources);
+  const toggleMissing = useMissingTracksStore((s) => s.toggle);
+  const downloadMissing = useMissingTracksStore((s) => s.downloadMissing);
+  // The store describes one artist at a time: until it has switched to the selected one, show none of its data.
+  const missingReady = missingArtist === selectedTab;
+  const sourceOf = (title: string) =>
+    missingReady ? sourceOfAlbum(missingSources, title) : undefined;
+  const isMissingShown = (title: string) =>
+    missingReady && missingShown.has(title);
+
+  // Sources follow the library: a download or delete changes the albums list, which re-reads them.
+  useEffect(() => {
+    if (selectedTab) void loadMissingSources(selectedTab);
+  }, [selectedTab, albums, loadMissingSources]);
 
   // Songs of all albums in display order (Shift ranges follow it).
   const allSongs = useMemo(() => albums.flatMap((a) => a.songs), [albums]);
@@ -198,6 +224,10 @@ const ArtistAlbums = () => {
         label: "Add Album to Playlist...",
         action: () => openModal(<AddToPlaylistModal songIds={ids} />),
       },
+      ...missingAlbumMenuItems(sourceOf(album.title), isMissingShown(album.title), {
+        toggle: () => toggleMissing(album.title),
+        download: () => void downloadMissing(album.title),
+      }),
       { separator: true, label: "" },
       {
         label: "Edit Album...",
@@ -223,6 +253,22 @@ const ArtistAlbums = () => {
           ),
       },
     ];
+  };
+
+  /** Missing songs of an album, listed after its songs while shown. */
+  const renderMissingRows = (album: Album) => {
+    const missing = isMissingShown(album.title)
+      ? missingTracks[album.title]
+      : null;
+    if (!missing) return null;
+    return playableMissingTracks(missing).map((track) => (
+      <MissingTrackRow
+        key={`missing-${track.index}-${track.url}`}
+        album={album.title}
+        missing={missing}
+        track={track}
+      />
+    ));
   };
 
   const activeArtistDownloads = useMemo(() => {
@@ -458,6 +504,7 @@ const ArtistAlbums = () => {
                     selected={selection.selected.has(song.id)}
                   />
                 ))}
+                {renderMissingRows(album)}
               </ul>
             </div>
           </section>
