@@ -37,7 +37,8 @@ const ProfileSkeleton = () => (
  * only used for the metric it actually measures (never relabelled).
  */
 export function profileMetaParts(
-  profile: Pick<ArtistProfile, "subscribers" | "monthly_audience" | "location">,
+  profile: Pick<ArtistProfile, "subscribers" | "monthly_audience" | "location"> &
+    Partial<Pick<ArtistProfile, "followers">>,
   artist: Pick<SearchSuggestion, "subscriber_count" | "audience_kind">,
 ): string[] {
   const subscribers = formatSubscribers(profile.subscribers);
@@ -45,9 +46,14 @@ export function profileMetaParts(
     typeof profile.monthly_audience === "number" && profile.monthly_audience > 0
       ? `${formatCompactNumber(profile.monthly_audience)} monthly audience`
       : null;
+  const followers =
+    typeof profile.followers === "number" && profile.followers > 0
+      ? `${formatCompactNumber(profile.followers)} followers`
+      : null;
   const fromRow = formatAudience(artist.subscriber_count, artist.audience_kind);
   return [
     subscribers ?? (artist.audience_kind === "subscribers" ? fromRow : null),
+    followers ?? (artist.audience_kind === "followers" ? fromRow : null),
     monthly ?? (artist.audience_kind === "monthly_audience" ? fromRow : null),
     profile.location,
   ].filter((p): p is string => typeof p === "string" && p !== "");

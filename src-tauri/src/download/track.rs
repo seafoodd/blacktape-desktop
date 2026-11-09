@@ -1,4 +1,4 @@
-use super::{bandcamp, youtube};
+use super::{bandcamp, soundcloud, youtube};
 use crate::download::album::download_album_cover;
 use crate::download::types::{AlbumMetaEvent, DownloadResult, ProgressEvent, TrackMetaItem};
 use crate::download::ytdlp;
@@ -26,6 +26,7 @@ pub async fn process_track_url(
     let (track_info, external_cover_url) = match platform {
         Platform::Bandcamp => bandcamp::parse_track(url).await?,
         Platform::Youtube => youtube::parse_track(url).await?,
+        Platform::Soundcloud => soundcloud::parse_track(url).await?,
         Platform::Local => {
             return Err("Local files cannot be processed via remote URL pipelines.".into());
         }

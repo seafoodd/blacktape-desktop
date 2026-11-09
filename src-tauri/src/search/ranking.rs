@@ -89,7 +89,7 @@ const NOISE_PHRASES: &[&[&str]] = &[
 /// exactly and no track/album is a strong match (exact title or split query), see `champion_index`.
 pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
     // 1. Score each known item. Native index = position within its (platform, type) source list.
-    let mut counters = [[0usize; 3]; 3];
+    let mut counters = [[0usize; 3]; 4];
     let mut scored: Vec<(f32, usize, SearchSuggestion)> = Vec::new();
     for item in raw {
         let type_slot = match item.item_type {
@@ -101,7 +101,8 @@ pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
         let platform_slot = match item.platform {
             Platform::Youtube => 0,
             Platform::Bandcamp => 1,
-            Platform::Local => 2,
+            Platform::Soundcloud => 2,
+            Platform::Local => 3,
         };
         let native = counters[platform_slot][type_slot];
         counters[platform_slot][type_slot] += 1;
@@ -143,7 +144,7 @@ pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
 /// ONE item type from one or more platforms (the page ranks tracks, albums and artists separately), but
 /// mixed input is accepted. Pure and deterministic. Part A may tune `score`; this signature is frozen.
 pub fn rank_flat(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
-    let mut counters = [[0usize; 3]; 3];
+    let mut counters = [[0usize; 3]; 4];
     let mut scored: Vec<(f32, usize, SearchSuggestion)> = Vec::new();
     for item in raw {
         let type_slot = match item.item_type {
@@ -155,7 +156,8 @@ pub fn rank_flat(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestio
         let platform_slot = match item.platform {
             Platform::Youtube => 0,
             Platform::Bandcamp => 1,
-            Platform::Local => 2,
+            Platform::Soundcloud => 2,
+            Platform::Local => 3,
         };
         let native = counters[platform_slot][type_slot];
         counters[platform_slot][type_slot] += 1;

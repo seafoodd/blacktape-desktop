@@ -64,6 +64,7 @@ const profileFixture = (name: string): ArtistProfile => ({
   banner: null,
   subscribers: 7_210_000,
   monthly_audience: null,
+    followers: null,
   description: null,
   location: null,
   top_songs: [],
@@ -92,7 +93,7 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const store = () => useSearchPageStore.getState();
 const section = (kind: SearchKind) => useSearchPageStore.getState().sections[kind];
 
-const SEARCH_PLATFORMS = ["youtube", "bandcamp"];
+const SEARCH_PLATFORMS = ["youtube", "bandcamp", "soundcloud"];
 
 beforeEach(() => {
   searchFullMock.mockReset();

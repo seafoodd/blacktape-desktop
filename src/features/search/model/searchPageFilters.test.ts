@@ -74,6 +74,16 @@ describe("applyFilters", () => {
     expect(applyFilters(items, withFilters({ platform: "All", tab: ItemType.Album }))).toHaveLength(3);
   });
 
+  it("keeps only soundcloud items when the soundcloud platform is chosen", () => {
+    const mixed = [
+      make({ name: "S1", platform: "soundcloud" }),
+      make({ name: "Y1", platform: "youtube" }),
+      make({ name: "S2", platform: "soundcloud" }),
+      make({ name: "B1", platform: "bandcamp" }),
+    ];
+    expect(names(applyFilters(mixed, withFilters({ platform: "soundcloud" })))).toEqual(["S1", "S2"]);
+  });
+
   it("applies year bounds inclusively, with min only and max only", () => {
     const years = [
       make({ name: "1999", year: 1999 }),

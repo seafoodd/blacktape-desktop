@@ -38,4 +38,22 @@ describe("profileMetaParts", () => {
     ).toEqual([]);
     expect(profileMetaParts(emptyProfile, { subscriber_count: 6500 })).toEqual([]);
   });
+
+  it("shows the profile's followers (SoundCloud) before the location", () => {
+    expect(
+      profileMetaParts(
+        { subscribers: null, monthly_audience: null, followers: 12_000_000, location: "Berlin, DE" },
+        {},
+      ),
+    ).toEqual(["12M followers", "Berlin, DE"]);
+  });
+
+  it("falls back to the search row's followers when the profile has none", () => {
+    expect(
+      profileMetaParts(
+        { subscribers: null, monthly_audience: null, followers: null, location: null },
+        { subscriber_count: 5_000_000, audience_kind: "followers" },
+      ),
+    ).toEqual(["5M followers"]);
+  });
 });

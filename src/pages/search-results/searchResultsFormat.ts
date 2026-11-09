@@ -72,6 +72,8 @@ export function platformLabel(platform: string | null | undefined): string {
       return "YouTube";
     case "bandcamp":
       return "Bandcamp";
+    case "soundcloud":
+      return "SoundCloud";
     case "local":
       return "Local";
     default:
@@ -187,11 +189,12 @@ export function formatSubscribers(count: number | undefined | null): string | nu
 /** "7.2M monthly audience" / "1.7K subscribers" for a search item; null when the kind is unknown (never guess the label). */
 export function formatAudience(
   count: number | undefined | null,
-  kind: "subscribers" | "monthly_audience" | null | undefined,
+  kind: "subscribers" | "monthly_audience" | "followers" | null | undefined,
 ): string | null {
   if (typeof count !== "number" || count <= 0) return null;
   if (kind === "subscribers") return `${formatCompactNumber(count)} subscribers`;
   if (kind === "monthly_audience") return `${formatCompactNumber(count)} monthly audience`;
+  if (kind === "followers") return `${formatCompactNumber(count)} followers`;
   return null;
 }
 

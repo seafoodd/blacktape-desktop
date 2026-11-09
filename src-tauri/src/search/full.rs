@@ -23,7 +23,7 @@
 
 #![allow(dead_code)]
 
-use crate::search::{bandcamp_full, ranking, youtube_full, SearchSuggestion};
+use crate::search::{bandcamp_full, ranking, soundcloud, youtube_full, SearchSuggestion};
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -47,6 +47,9 @@ pub struct SearchCursor {
     /// contains `%3D` escapes: use it verbatim in the URL, do NOT percent-encode it again).
     #[serde(default)]
     pub youtube: Option<String>,
+    /// SoundCloud `offset` of the next page.
+    #[serde(default)]
+    pub soundcloud: Option<u32>,
 }
 
 /// A non-fatal platform problem, shown by the page as a small notice ("YouTube is unavailable").
@@ -81,8 +84,10 @@ pub struct ArtistProfile {
     pub avatar: Option<String>,
     /// Wide header image (YouTube Music immersive header). Optional decoration.
     pub banner: Option<String>,
-    /// YouTube: header "7.21M" subscribers parsed to a number; Bandcamp: `None`.
+    /// YouTube: header "7.21M" subscribers parsed to a number; Bandcamp/SoundCloud: `None`.
     pub subscribers: Option<u64>,
+    /// SoundCloud follower count; other platforms `None`.
+    pub followers: Option<u64>,
     /// YouTube: "67.4M monthly audience" parsed; Bandcamp: `None`.
     pub monthly_audience: Option<u64>,
     /// Bio text (YouTube description / Bandcamp bio when present), trimmed, may be long.
@@ -111,6 +116,8 @@ pub fn first_page_target(kind: SearchKind) -> usize {
 const BANDCAMP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Timeout of the artist profile request (D18).
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Timeout of one SoundCloud search request.
+const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What one platform contributed to a page. Built from a successful platform call.
 #[derive(Debug, Default, Clone)]
@@ -118,6 +125,8 @@ pub(crate) struct Fetched {
     pub items: Vec<SearchSuggestion>,
     /// YouTube only: the token of the next page. Bandcamp always leaves it `None`.
     pub next_token: Option<String>,
+    /// SoundCloud only: the offset of the next page.
+    pub next_offset: Option<u32>,
     /// Partial failure (YouTube first-page chain): items kept, `next_token` is the token that failed.
     pub warning: Option<String>,
 }
@@ -143,18 +152,34 @@ pub async fn search_full(
     let query = query.trim();
     let want_youtube = platforms.contains(&Platform::Youtube);
     let want_bandcamp = platforms.contains(&Platform::Bandcamp);
-    if query.is_empty() || !(want_youtube || want_bandcamp) {
+    let want_soundcloud = platforms.contains(&Platform::Soundcloud);
+    if query.is_empty() || !(want_youtube || want_bandcamp || want_soundcloud) {
         return Ok(FullSearchPage::default());
     }
 
     if let Some(cursor) = cursor {
-        // "Show more": one YouTube continuation request. Bandcamp has no paging (D9), so it is never asked here.
-        let token = match cursor.youtube {
-            Some(token) if want_youtube && !token.is_empty() => token,
-            _ => return Ok(FullSearchPage::default()),
+        // "Show more": one continuation request per platform that has a cursor. Bandcamp has no paging (D9).
+        let token = cursor
+            .youtube
+            .filter(|token| want_youtube && !token.is_empty());
+        let offset = cursor.soundcloud.filter(|_| want_soundcloud);
+        if token.is_none() && offset.is_none() {
+            return Ok(FullSearchPage::default());
+        }
+        let youtube = async {
+            match &token {
+                Some(token) => Some(youtube_more(query, kind, token).await),
+                None => None,
+            }
         };
-        let outcome = youtube_more(query, kind, &token).await;
-        return assemble_page(query, Some(outcome), None);
+        let soundcloud = async {
+            match offset {
+                Some(offset) => Some(soundcloud_page(query, kind, offset).await),
+                None => None,
+            }
+        };
+        let (youtube, soundcloud) = tokio::join!(youtube, soundcloud);
+        return assemble_platforms(query, youtube, None, soundcloud);
     }
 
     let youtube = async {
@@ -171,8 +196,15 @@ pub async fn search_full(
             None
         }
     };
-    let (youtube, bandcamp) = tokio::join!(youtube, bandcamp);
-    assemble_page(query, youtube, bandcamp)
+    let soundcloud = async {
+        if want_soundcloud {
+            Some(soundcloud_page(query, kind, 0).await)
+        } else {
+            None
+        }
+    };
+    let (youtube, bandcamp, soundcloud) = tokio::join!(youtube, bandcamp, soundcloud);
+    assemble_platforms(query, youtube, bandcamp, soundcloud)
 }
 
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
@@ -183,6 +215,7 @@ async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, St
             items: page.items,
             next_token: page.next_token,
             warning: page.warning,
+            next_offset: None,
         })
         .map_err(|e| e.to_string())
 }
@@ -195,6 +228,7 @@ async fn youtube_more(query: &str, kind: SearchKind, token: &str) -> Result<Fetc
             items: page.items,
             next_token: page.next_token,
             warning: None,
+            next_offset: None,
         })
         .map_err(|e| e.to_string())
 }
@@ -206,8 +240,33 @@ async fn bandcamp_page(query: &str, kind: SearchKind) -> Result<Fetched, String>
             items,
             next_token: None,
             warning: None,
+            next_offset: None,
         }),
         Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("request timed out".to_string()),
+    }
+}
+
+/// One SoundCloud page of `kind` starting at `offset`, bounded by `SOUNDCLOUD_TIMEOUT`.
+async fn soundcloud_page(query: &str, kind: SearchKind, offset: u32) -> Result<Fetched, String> {
+    let sc_kind = match kind {
+        SearchKind::Track => soundcloud::SearchKind::Tracks,
+        SearchKind::Album => soundcloud::SearchKind::Sets,
+        SearchKind::Artist => soundcloud::SearchKind::Users,
+    };
+    let limit = first_page_target(kind) as u32;
+    match tokio::time::timeout(
+        SOUNDCLOUD_TIMEOUT,
+        soundcloud::search_kind(query, sc_kind, limit, offset),
+    )
+    .await
+    {
+        Ok(Ok(page)) => Ok(Fetched {
+            items: page.items,
+            next_offset: page.next_offset,
+            ..Fetched::default()
+        }),
+        Ok(Err(e)) => Err(e),
         Err(_) => Err("request timed out".to_string()),
     }
 }
@@ -223,9 +282,20 @@ pub(crate) fn assemble_page(
     youtube: Option<Result<Fetched, String>>,
     bandcamp: Option<Result<Fetched, String>>,
 ) -> Result<FullSearchPage, String> {
+    assemble_platforms(query, youtube, bandcamp, None)
+}
+
+/// `assemble_page` with SoundCloud. The cursor carries the YouTube token and/or the SoundCloud offset.
+pub(crate) fn assemble_platforms(
+    query: &str,
+    youtube: Option<Result<Fetched, String>>,
+    bandcamp: Option<Result<Fetched, String>>,
+    soundcloud: Option<Result<Fetched, String>>,
+) -> Result<FullSearchPage, String> {
     let requested: Vec<(Platform, Result<Fetched, String>)> = [
         (Platform::Youtube, youtube),
         (Platform::Bandcamp, bandcamp),
+        (Platform::Soundcloud, soundcloud),
     ]
     .into_iter()
     .filter_map(|(platform, outcome)| outcome.map(|outcome| (platform, outcome)))
@@ -239,12 +309,15 @@ pub(crate) fn assemble_page(
     let mut warnings = Vec::new();
     let mut failures = Vec::new();
     let mut next_token = None;
+    let mut next_offset = None;
     for (platform, outcome) in requested {
         match outcome {
             Ok(fetched) => {
                 items.extend(fetched.items);
-                if platform == Platform::Youtube {
-                    next_token = fetched.next_token;
+                match platform {
+                    Platform::Youtube => next_token = fetched.next_token,
+                    Platform::Soundcloud => next_offset = fetched.next_offset,
+                    _ => {}
                 }
                 if let Some(message) = fetched.warning {
                     warnings.push(PlatformWarning { platform, message });
@@ -260,8 +333,9 @@ pub(crate) fn assemble_page(
         return Err(failures.join("; "));
     }
 
-    let next_cursor = next_token.map(|token| SearchCursor {
-        youtube: Some(token),
+    let next_cursor = (next_token.is_some() || next_offset.is_some()).then(|| SearchCursor {
+        youtube: next_token,
+        soundcloud: next_offset,
     });
     let has_more = next_cursor.is_some();
     Ok(FullSearchPage {
@@ -276,6 +350,7 @@ fn platform_name(platform: Platform) -> &'static str {
     match platform {
         Platform::Youtube => "YouTube",
         Platform::Bandcamp => "Bandcamp",
+        Platform::Soundcloud => "SoundCloud",
         Platform::Local => "Local",
     }
 }
@@ -290,6 +365,11 @@ pub async fn artist_profile(platform: Platform, url: &str) -> Result<ArtistProfi
         }
         Platform::Bandcamp => {
             tokio::time::timeout(PROFILE_TIMEOUT, bandcamp_full::artist_profile(url)).await
+        }
+        Platform::Soundcloud => {
+            tokio::time::timeout(PROFILE_TIMEOUT, soundcloud::artist_profile(url))
+                .await
+                .map(|r| r.map_err(Into::into))
         }
         Platform::Local => return Err("artist profiles are not available for local files".to_string()),
     };
@@ -372,6 +452,7 @@ mod tests {
             items,
             next_token: next.map(str::to_string),
             warning: warning.map(str::to_string),
+            next_offset: None,
         }
     }
 
@@ -438,6 +519,58 @@ mod tests {
         let cursor = page.next_cursor.expect("youtube has more");
         assert_eq!(cursor.youtube.as_deref(), Some("yt-token"));
         assert!(page.has_more);
+    }
+
+    #[test]
+    fn assemble_cursor_carries_soundcloud_offset() {
+        let sc = Fetched {
+            items: vec![yt_track("s")],
+            next_offset: Some(50),
+            ..Fetched::default()
+        };
+        let page = assemble_platforms("q", None, None, Some(Ok(sc.clone()))).unwrap();
+        let cursor = page.next_cursor.expect("soundcloud has more");
+        assert_eq!(cursor.soundcloud, Some(50));
+        assert_eq!(cursor.youtube, None);
+        assert!(page.has_more);
+
+        let both = assemble_platforms(
+            "q",
+            Some(Ok(fetched(vec![yt_track("a")], Some("t"), None))),
+            None,
+            Some(Ok(sc)),
+        )
+        .unwrap();
+        let cursor = both.next_cursor.unwrap();
+        assert_eq!((cursor.youtube.as_deref(), cursor.soundcloud), (Some("t"), Some(50)));
+    }
+
+    #[test]
+    fn assemble_soundcloud_failure_is_a_warning_when_another_platform_works() {
+        let page = assemble_platforms(
+            "q",
+            Some(Ok(fetched(vec![yt_track("a")], None, None))),
+            None,
+            Some(Err("client id".into())),
+        )
+        .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.warnings.len(), 1);
+        assert_eq!(page.warnings[0].platform, Platform::Soundcloud);
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn assemble_all_failed_including_soundcloud_is_error() {
+        let err = assemble_platforms("q", Some(Err("a".into())), None, Some(Err("b".into()))).unwrap_err();
+        assert!(err.contains("YouTube") && err.contains("SoundCloud"), "{err}");
+    }
+
+    #[test]
+    fn cursor_deserializes_soundcloud_offset() {
+        let c: SearchCursor = serde_json::from_str("{\"soundcloud\":50}").unwrap();
+        assert_eq!(c.soundcloud, Some(50));
+        assert_eq!(c.youtube, None);
     }
 
     #[test]
@@ -560,7 +693,7 @@ mod tests {
             "daft punk",
             SearchKind::Track,
             &[Platform::Youtube],
-            Some(SearchCursor { youtube: None }),
+            Some(SearchCursor::default()),
         ))
         .unwrap();
         assert!(page.items.is_empty());
@@ -572,6 +705,7 @@ mod tests {
             &[Platform::Youtube],
             Some(SearchCursor {
                 youtube: Some(String::new()),
+                soundcloud: None,
             }),
         ))
         .unwrap();
@@ -587,6 +721,7 @@ mod tests {
             &[Platform::Bandcamp],
             Some(SearchCursor {
                 youtube: Some("tok".to_string()),
+                soundcloud: None,
             }),
         ))
         .unwrap();

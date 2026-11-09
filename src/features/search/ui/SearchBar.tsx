@@ -11,6 +11,10 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import {
+  matchesPlatformFilter,
+  PLATFORM_FILTERS,
+} from "@/shared/lib/platforms.ts";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
@@ -93,10 +97,9 @@ export const SearchBar = ({ className }: SearchBarProps) => {
       const matchesCategory =
         activeCategory === "All" ||
         item.item_type.toLowerCase() === activeCategory.toLowerCase();
-      const matchesPlatform =
-        activePlatform === "All" ||
-        item.platform?.toLowerCase() === activePlatform.toLowerCase();
-      return matchesCategory && matchesPlatform;
+      return (
+        matchesCategory && matchesPlatformFilter(item.platform, activePlatform)
+      );
     });
   }, [searchResults, activeCategory, activePlatform]);
 
@@ -142,8 +145,8 @@ export const SearchBar = ({ className }: SearchBarProps) => {
             <div className={styles.filterSection}>
               <span className={styles.sectionLabel}>Platforms</span>
               <div className={styles.pillGrid}>
-                {(["All", "Youtube", "Bandcamp"] as PlatformFilter[]).map(
-                  (plat) => (
+                {PLATFORM_FILTERS.map(
+                  (plat: PlatformFilter) => (
                     <button
                       key={plat}
                       type="button"

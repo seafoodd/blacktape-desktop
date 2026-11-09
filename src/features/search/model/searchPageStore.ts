@@ -100,7 +100,7 @@ export const emptySection = (): SectionState => ({
   warnings: [],
 });
 
-const SEARCH_PLATFORMS: Platform[] = ["youtube", "bandcamp"];
+const SEARCH_PLATFORMS: Platform[] = ["youtube", "bandcamp", "soundcloud"];
 const KINDS: SearchKind[] = [ItemType.Track, ItemType.Album, ItemType.Artist];
 
 // Module-level guards: a newer search (or profile) invalidates every older response still in flight.

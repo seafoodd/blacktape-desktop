@@ -10,9 +10,11 @@ import type { Platform } from "@/shared/types.ts";
 /** Kind of a `search_full` request. Same strings as the Rust `SearchKind` / `ItemType` enum values. */
 export type SearchKind = ItemType.Track | ItemType.Album | ItemType.Artist;
 
-/** Opaque paging state; send back unchanged. Bandcamp has no paging, so only YouTube Music appears here. */
+/** Opaque paging state; send back unchanged. Bandcamp has no paging; YouTube Music and SoundCloud do. */
 export interface SearchCursor {
   youtube?: string | null;
+  /** SoundCloud offset of the next page. */
+  soundcloud?: number | null;
 }
 
 export interface PlatformWarning {
@@ -38,10 +40,12 @@ export interface ArtistProfile {
   /** Wide header image (YouTube only). */
   banner: string | null;
   subscribers: number | null;
+  /** SoundCloud follower count. */
+  followers: number | null;
   monthly_audience: number | null;
   description: string | null;
   location: string | null;
-  /** YouTube "Top songs" (<= 5 tracks). Empty for Bandcamp. */
+  /** YouTube "Top songs" (<= 5 tracks). Bandcamp: first tracks; SoundCloud: most played tracks. */
   top_songs: SearchSuggestion[];
   /** Albums (item_type Album). */
   albums: SearchSuggestion[];

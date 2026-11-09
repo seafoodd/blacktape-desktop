@@ -23,7 +23,7 @@ pub enum QualityTier {
 pub enum Platform {
     Youtube,
     Bandcamp,
-    // Soundcloud,
+    Soundcloud,
     Local,
 }
 

@@ -27,6 +27,7 @@ const PLATFORM_OPTIONS: { value: PlatformChoice; label: string }[] = [
   { value: "All", label: "All" },
   { value: "youtube", label: "YouTube" },
   { value: "bandcamp", label: "Bandcamp" },
+  { value: "soundcloud", label: "SoundCloud" },
 ];
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [

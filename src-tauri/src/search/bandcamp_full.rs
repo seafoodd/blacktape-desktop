@@ -290,6 +290,7 @@ pub fn parse_artist_page(html: &str, base_url: &str) -> ArtistProfile {
         banner: None,
         subscribers: None,
         monthly_audience: None,
+        followers: None,
         description,
         location,
         top_songs,

@@ -118,7 +118,7 @@ describe("platformLabel", () => {
   });
 
   it("passes unknown values through and tolerates missing ones", () => {
-    expect(platformLabel("soundcloud")).toBe("soundcloud");
+    expect(platformLabel("tidal")).toBe("tidal");
     expect(platformLabel(null)).toBe("");
     expect(platformLabel(undefined)).toBe("");
   });
@@ -258,6 +258,8 @@ describe("formatAudience", () => {
   it("labels by kind and never guesses", () => {
     expect(formatAudience(67_400_000, "monthly_audience")).toBe("67.4M monthly audience");
     expect(formatAudience(1_700, "subscribers")).toBe("1,700 subscribers");
+    expect(formatAudience(1_700, "followers")).toBe("1,700 followers");
+    expect(formatAudience(2_500_000, "followers")).toBe("2.5M followers");
     expect(formatAudience(1_700, null)).toBeNull();
     expect(formatAudience(1_700, undefined)).toBeNull();
     expect(formatAudience(0, "subscribers")).toBeNull();

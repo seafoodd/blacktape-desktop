@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { getArtistAlbums, getArtists } from "@/shared/lib/audio.ts";
 import { searchPlatforms } from "@/shared/lib/search.ts";
+import { type PlatformFilter, SEARCH_PLATFORMS } from "@/shared/lib/platforms.ts";
 import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -59,7 +60,7 @@ export enum ItemType {
 }
 
 export type CategoryFilter = "All" | ItemType;
-export type PlatformFilter = "All" | "Youtube" | "Bandcamp";
+export type { PlatformFilter };
 
 export type SearchSuggestion = {
   item_type: ItemType;
@@ -70,7 +71,7 @@ export type SearchSuggestion = {
   img: string;
   subscriber_count?: number;
   /** What `subscriber_count` counts (YouTube artist rows): followers or monthly listeners. */
-  audience_kind?: "subscribers" | "monthly_audience" | null;
+  audience_kind?: "subscribers" | "monthly_audience" | "followers" | null;
   view_count?: number;
   year?: number;
   duration?: number;
@@ -163,10 +164,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     try {
-      const results: SearchSuggestion[] = await searchPlatforms(trimmedQuery, [
-        "bandcamp",
-        "youtube",
-      ]);
+      const results: SearchSuggestion[] = await searchPlatforms(
+        trimmedQuery,
+        SEARCH_PLATFORMS,
+      );
       const isLatest = searchGuard.isLatest(token);
 
       set((state) => ({

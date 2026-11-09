@@ -174,6 +174,7 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
                             source = match platform_str.to_lowercase().as_str() {
                                 "youtube" | "youtubemusic" => Platform::Youtube,
                                 "bandcamp" => Platform::Bandcamp,
+                                "soundcloud" => Platform::Soundcloud,
                                 _ => Platform::Local,
                             };
                         }

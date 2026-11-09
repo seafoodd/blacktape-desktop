@@ -536,6 +536,11 @@
     color: rgba(90, 190, 215, 0.8);
 }
 
+.badgeSoundcloud {
+    background-color: rgba(255, 110, 20, 0.15);
+    color: rgba(255, 150, 80, 0.8);
+}
+
 .filtersToggle {
     position: relative;
     display: inline-flex;

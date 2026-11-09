@@ -12,7 +12,7 @@ import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts"
 /** Tab order in the UI: Tracks, Albums, Artists, All. */
 export type TypeTab = "All" | ItemType.Track | ItemType.Album | ItemType.Artist;
 /** Lower-case platform ids as used by `SearchSuggestion.platform`. */
-export type PlatformChoice = "All" | "youtube" | "bandcamp";
+export type PlatformChoice = "All" | "youtube" | "bandcamp" | "soundcloud";
 
 export interface NumberRange {
   min?: number;

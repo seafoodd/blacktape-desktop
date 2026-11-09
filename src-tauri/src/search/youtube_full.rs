@@ -369,6 +369,7 @@ pub fn parse_artist_profile(resp: &Value, browse_id: &str) -> ArtistProfile {
         banner,
         subscribers,
         monthly_audience,
+        followers: None,
         description,
         location: None,
         top_songs,

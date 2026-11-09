@@ -9,6 +9,7 @@ export const PlatformBadge = ({ platform }: { platform: string | null | undefine
       styles.badge,
       platform === "youtube" && styles.badgeYoutube,
       platform === "bandcamp" && styles.badgeBandcamp,
+      platform === "soundcloud" && styles.badgeSoundcloud,
     )}
   >
     {platformLabel(platform)}
