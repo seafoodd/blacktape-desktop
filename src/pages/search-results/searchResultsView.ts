@@ -6,6 +6,8 @@ import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts"
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
 import {
   applyFilters,
+  itemsForPlatform,
+  type ItemCopy,
   sortItems,
   type PlatformChoice,
   type SearchPageFilters,
@@ -45,8 +47,10 @@ export function visibleSectionItems(
   filters: SearchPageFilters,
   sort: SearchPageSort,
   kind: SearchKind,
+  copies: ItemCopy[] = [],
 ): SearchSuggestion[] {
-  return sortItems(applyFilters(items, filtersForKind(filters, kind)), sort);
+  const pool = itemsForPlatform(items, copies, filters.platform);
+  return sortItems(applyFilters(pool, filtersForKind(filters, kind)), sort);
 }
 
 /** Whether the section of `kind` is part of the selected tab ("All" shows every section). */

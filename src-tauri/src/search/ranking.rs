@@ -13,7 +13,8 @@
 use crate::search::bandcamp::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
 /// Tracks / albums placed right after the champion (same slot structure as the legacy feed).
@@ -144,6 +145,17 @@ pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
 /// ONE item type from one or more platforms (the page ranks tracks, albums and artists separately), but
 /// mixed input is accepted. Pure and deterministic. Part A may tune `score`; this signature is frozen.
 pub fn rank_flat(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
+    rank_flat_with_copies(raw, query).0
+}
+
+/// `rank_flat` plus the copies it dropped that live on ANOTHER platform than the kept item: pairs of
+/// (`item_url_path` of the kept item, the copy), at most one copy per platform, best score first. The page
+/// shows a copy in place of the kept item when the user filters by the copy's platform; without them an
+/// album that exists on Bandcamp and YouTube would vanish under the YouTube filter. Pure.
+pub fn rank_flat_with_copies(
+    raw: Vec<SearchSuggestion>,
+    query: &str,
+) -> (Vec<SearchSuggestion>, Vec<(String, SearchSuggestion)>) {
     let mut counters = [[0usize; 3]; 4];
     let mut scored: Vec<(f32, usize, SearchSuggestion)> = Vec::new();
     for item in raw {
@@ -166,12 +178,26 @@ pub fn rank_flat(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestio
         scored.push((s, seq, item));
     }
     scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    let mut seen = HashSet::new();
-    scored
-        .into_iter()
-        .filter(|(_, _, item)| seen.insert(dedup_key(item)))
-        .map(|(_, _, item)| item)
-        .collect()
+    // dedup key -> (url of the kept item, platforms already present for this key)
+    let mut seen: HashMap<String, (String, Vec<Platform>)> = HashMap::new();
+    let mut items = Vec::new();
+    let mut copies = Vec::new();
+    for (_, _, item) in scored {
+        match seen.entry(dedup_key(&item)) {
+            Entry::Vacant(slot) => {
+                slot.insert((item.item_url_path.clone(), vec![item.platform]));
+                items.push(item);
+            }
+            Entry::Occupied(mut slot) => {
+                let (kept_url, platforms) = slot.get_mut();
+                if !platforms.contains(&item.platform) {
+                    platforms.push(item.platform);
+                    copies.push((kept_url.clone(), item));
+                }
+            }
+        }
+    }
+    (items, copies)
 }
 
 /// Moves up to `limit` items of `kind` from `pending` (in order) into `out`.
@@ -1573,5 +1599,86 @@ mod tests {
         );
         let real_band = track("Some Song", "Artist Two");
         assert!(score(&real_band, "artist", 0, 0.0) > score(&placeholder, "artist", 0, 0.0));
+    }
+
+    // ---- rank_flat_with_copies ----
+
+    fn on(platform: Platform, url: &str, item: SearchSuggestion) -> SearchSuggestion {
+        SearchSuggestion {
+            platform,
+            item_url_path: url.into(),
+            ..item
+        }
+    }
+
+    #[test]
+    fn rank_flat_with_copies_same_album_on_two_platforms_gives_one_item_and_one_copy() {
+        let yt = on(Platform::Youtube, "https://yt/discovery", album("Discovery", "Daft Punk"));
+        let bc = on(Platform::Bandcamp, "https://bc/discovery", album("Discovery", "Daft Punk"));
+        let (items, copies) = rank_flat_with_copies(vec![yt, bc], "discovery");
+        assert_eq!(items.len(), 1);
+        assert_eq!(copies.len(), 1);
+        let (of, copy) = &copies[0];
+        assert_eq!(of, &items[0].item_url_path);
+        let other = if items[0].item_url_path == "https://yt/discovery" {
+            "https://bc/discovery"
+        } else {
+            "https://yt/discovery"
+        };
+        assert_eq!(copy.item_url_path, other);
+    }
+
+    #[test]
+    fn rank_flat_with_copies_two_duplicates_on_the_kept_platform_are_not_copies() {
+        let first = on(Platform::Youtube, "https://yt/a", album("Discovery", "Daft Punk"));
+        let second = on(Platform::Youtube, "https://yt/b", album("Discovery", "Daft Punk"));
+        let (items, copies) = rank_flat_with_copies(vec![first, second], "discovery");
+        assert_eq!(items.len(), 1);
+        assert!(copies.is_empty());
+    }
+
+    #[test]
+    fn rank_flat_with_copies_three_platforms_give_one_item_and_two_copies_once_per_platform() {
+        let yt = on(Platform::Youtube, "yt", album("Discovery", "Daft Punk"));
+        let bc = on(Platform::Bandcamp, "bc", album("Discovery", "Daft Punk"));
+        let sc = on(Platform::Soundcloud, "sc", album("Discovery", "Daft Punk"));
+        // A second Bandcamp duplicate: its platform is already seen, so it must not become a copy.
+        let bc2 = on(Platform::Bandcamp, "bc2", album("Discovery", "Daft Punk"));
+        let (items, copies) = rank_flat_with_copies(vec![yt, bc, sc, bc2], "discovery");
+        assert_eq!(items.len(), 1);
+        assert_eq!(copies.len(), 2);
+        let mut urls: Vec<String> = std::iter::once(items[0].item_url_path.clone())
+            .chain(copies.iter().map(|(_, c)| c.item_url_path.clone()))
+            .collect();
+        urls.sort();
+        assert_eq!(urls, vec!["bc", "sc", "yt"]);
+        for (of, _) in &copies {
+            assert_eq!(of, &items[0].item_url_path);
+        }
+    }
+
+    #[test]
+    fn rank_flat_with_copies_unrelated_items_have_no_copies() {
+        let a = on(Platform::Youtube, "yt-a", album("Discovery", "Daft Punk"));
+        let b = on(Platform::Bandcamp, "bc-b", album("Random Access", "Someone Else"));
+        let (items, copies) = rank_flat_with_copies(vec![a, b], "daft punk");
+        assert_eq!(items.len(), 2);
+        assert!(copies.is_empty());
+    }
+
+    #[test]
+    fn rank_flat_with_copies_rank_flat_matches_the_items_of_rank_flat_with_copies() {
+        let input = vec![
+            on(Platform::Youtube, "yt-1", track("One More Time", "Daft Punk")),
+            on(Platform::Bandcamp, "bc-1", track("One More Time", "Daft Punk")),
+            on(Platform::Soundcloud, "sc-1", track("Harder", "Daft Punk")),
+            album("Discovery", "Daft Punk"),
+        ];
+        let flat = rank_flat(input.clone(), "daft punk one more time");
+        let (items, _) = rank_flat_with_copies(input, "daft punk one more time");
+        assert_eq!(names(&flat), names(&items));
+        let flat_urls: Vec<&str> = flat.iter().map(|i| i.item_url_path.as_str()).collect();
+        let item_urls: Vec<&str> = items.iter().map(|i| i.item_url_path.as_str()).collect();
+        assert_eq!(flat_urls, item_urls);
     }
 }

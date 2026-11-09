@@ -3,7 +3,9 @@ import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts"
 import {
   DEFAULT_FILTERS,
   applyFilters,
+  itemsForPlatform,
   mergePages,
+  type ItemCopy,
   normalizeText,
   pickProfileArtist,
   popularityOf,
@@ -386,5 +388,70 @@ describe("mergePages", () => {
 
   it("handles two empty lists", () => {
     expect(mergePages([], [])).toEqual([]);
+  });
+});
+
+describe("itemsForPlatform", () => {
+  it("returns the same array for platform All", () => {
+    const bc = make({ platform: "bandcamp" });
+    const items = [bc];
+    const copies: ItemCopy[] = [{ of: bc.item_url_path, item: make({ platform: "youtube" }) }];
+    expect(itemsForPlatform(items, copies, "All")).toBe(items);
+  });
+
+  it("returns the same array when there are no copies", () => {
+    const items = [make({ platform: "bandcamp" })];
+    expect(itemsForPlatform(items, [], "youtube")).toBe(items);
+  });
+
+  it("replaces a bandcamp item with its youtube copy in place", () => {
+    const bc = make({ platform: "bandcamp", name: "Album" });
+    const yt = make({ platform: "youtube", name: "Album on YouTube" });
+    const alreadyYoutube = make({ platform: "youtube", name: "Other" });
+    const bcWithoutCopy = make({ platform: "bandcamp", name: "Lonely" });
+    const items = [bc, alreadyYoutube, bcWithoutCopy];
+
+    const result = itemsForPlatform(items, [{ of: bc.item_url_path, item: yt }], "youtube");
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toBe(yt);
+    expect(result[1]).toBe(alreadyYoutube);
+    // No copy: the bandcamp item stays; applyFilters drops it for the youtube platform later.
+    expect(result[2]).toBe(bcWithoutCopy);
+  });
+
+  it("ignores a copy on another platform than the chosen one", () => {
+    const bc = make({ platform: "bandcamp" });
+    const sc = make({ platform: "soundcloud" });
+    const result = itemsForPlatform([bc], [{ of: bc.item_url_path, item: sc }], "youtube");
+    expect(result[0]).toBe(bc);
+  });
+
+  it("uses the first of several youtube copies of one item", () => {
+    const bc = make({ platform: "bandcamp" });
+    const first = make({ platform: "youtube", name: "first" });
+    const second = make({ platform: "youtube", name: "second" });
+    const copies: ItemCopy[] = [
+      { of: bc.item_url_path, item: first },
+      { of: bc.item_url_path, item: second },
+    ];
+    const result = itemsForPlatform([bc], copies, "youtube");
+    expect(result[0]).toBe(first);
+  });
+
+  it("does not mutate the input arrays", () => {
+    const bc = make({ platform: "bandcamp" });
+    const yt = make({ platform: "youtube" });
+    const items = [bc];
+    const copies: ItemCopy[] = [{ of: bc.item_url_path, item: yt }];
+    const itemsBefore = [...items];
+    const copiesBefore = [...copies];
+
+    itemsForPlatform(items, copies, "youtube");
+
+    expect(items).toEqual(itemsBefore);
+    expect(items[0]).toBe(bc);
+    expect(copies).toEqual(copiesBefore);
+    expect(copies[0].item).toBe(yt);
   });
 });

@@ -59,9 +59,19 @@ pub struct PlatformWarning {
     pub message: String,
 }
 
+/// The same album / song / artist as a listed item, on another platform (see `ranking::rank_flat_with_copies`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PlatformCopy {
+    /// `item_url_path` of the item of `FullSearchPage::items` this is a copy of.
+    pub of: String,
+    pub item: SearchSuggestion,
+}
+
 /// One page of results for one kind.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FullSearchPage {
+    /// Copies of `items` on other platforms; shown instead of the item when the page is filtered by platform.
+    pub copies: Vec<PlatformCopy>,
     /// Ranked, deduplicated items, all of the requested kind (`SearchSuggestion` shape unchanged, D8).
     pub items: Vec<SearchSuggestion>,
     /// Cursor for the next page, `None` when there is nothing more. Invariant: `has_more == next_cursor.is_some()`.
@@ -338,8 +348,10 @@ pub(crate) fn assemble_platforms(
         soundcloud: next_offset,
     });
     let has_more = next_cursor.is_some();
+    let (items, copies) = ranking::rank_flat_with_copies(items, query);
     Ok(FullSearchPage {
-        items: ranking::rank_flat(items, query),
+        items,
+        copies: copies.into_iter().map(|(of, item)| PlatformCopy { of, item }).collect(),
         next_cursor,
         has_more,
         warnings,
