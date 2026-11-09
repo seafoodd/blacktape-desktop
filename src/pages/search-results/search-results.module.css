@@ -738,6 +738,18 @@
     color: var(--color-primaryLight);
 }
 
+.libraryMark {
+    /* same box as .rowDownloadBtn (20px icon + 6px padding) so the check lines up with the download buttons */
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    box-sizing: border-box;
+    color: var(--color-info);
+}
+
 .progressText {
     flex-shrink: 0;
     min-width: 36px;

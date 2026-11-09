@@ -80,11 +80,11 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
   } else if (inLibrary) {
     control = (
       <span
-        className={clsx(styles.progressText, overlay && styles.progressBadge)}
+        className={clsx(overlay ? [styles.progressText, styles.progressBadge] : styles.libraryMark)}
         title="Already in your library"
         aria-label="Already in your library"
       >
-        <FaCheckCircle size={overlay ? 18 : 16} />
+        <FaCheckCircle size={18} />
       </span>
     );
   } else {
