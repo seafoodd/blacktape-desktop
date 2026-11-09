@@ -86,6 +86,8 @@ pub struct PlayerState {
     pub source_index: Option<usize>,
     /// The current song is a remote stream, not a library file.
     pub streaming: bool,
+    /// The current stream song is still being opened.
+    pub stream_loading: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

@@ -95,6 +95,7 @@ export const ResultSection = ({
               <TrackRow
                 key={`${i}-${item.item_url_path}`}
                 item={item}
+                list={visible}
                 progress={downloads.get(item.item_url_path)}
               />
             ))}

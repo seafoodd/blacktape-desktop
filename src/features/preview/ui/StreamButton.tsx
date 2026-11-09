@@ -12,6 +12,8 @@ import styles from "./stream-button.module.css";
 
 interface StreamButtonProps {
   item: SearchSuggestion;
+  /** The list the item belongs to: the tracks after it are queued behind it. */
+  list?: readonly SearchSuggestion[];
   /** Placement class of the button (it sits over the cover, like the play button of the queue). */
   className?: string;
 }
@@ -20,18 +22,20 @@ interface StreamButtonProps {
  * Play / pause / spinner button over a cover. Starts the streaming playback of the track in the normal player;
  * hovering warms the stream url.
  */
-export const StreamButton = ({ item, className }: StreamButtonProps) => {
+export const StreamButton = ({ item, list, className }: StreamButtonProps) => {
   const url = item.item_url_path;
   const currentSong = useAudioStore((s) => s.currentSong);
   const isStreaming = useAudioStore((s) => s.isStreaming);
   const isPlaying = useAudioStore((s) => s.isPlaying);
-  const loading = useStreamStore((s) => s.loadingUrl === url);
+  const streamLoading = useAudioStore((s) => s.streamLoading);
+  const pending = useStreamStore((s) => s.pendingUrl === url);
   const error = useStreamStore((s) => (s.error?.url === url ? s.error.message : null));
   const play = useStreamStore((s) => s.play);
   const prefetch = useStreamStore((s) => s.prefetch);
   const timer = useRef<number | undefined>(undefined);
   const active = isStreamingUrl(currentSong, isStreaming, url);
-  const playing = active && isPlaying;
+  const loading = pending || (active && streamLoading);
+  const playing = active && isPlaying && !streamLoading;
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
@@ -42,7 +46,7 @@ export const StreamButton = ({ item, className }: StreamButtonProps) => {
   const onLeave = () => window.clearTimeout(timer.current);
   const onClick = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    void play(item);
+    void play(item, list);
   };
 
   const label = playing ? "Pause" : "Play preview";

@@ -1,4 +1,4 @@
-//! Streaming playback: `stream_play` resolves a track page to a direct audio url, opens it (HTTP or HLS) and
+//! Streaming playback: `open_stream` resolves a track page to a direct audio url, opens it (HTTP or HLS) and
 //! plays it through the normal audio player (`AudioPlayer::play_stream`), so the existing player controls,
 //! queue handling, media keys and volume all apply. `stream_prefetch` warms the url cache.
 
@@ -9,7 +9,6 @@ use crate::preview::segmented_source::SegmentedSource;
 use crate::types::{Platform, QualityTier, Song};
 use rodio::{Decoder, Source};
 use serde::Deserialize;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{command, AppHandle, State};
@@ -27,9 +26,6 @@ pub struct StreamRequest {
     #[serde(default)]
     pub duration_ms: Option<u64>,
 }
-
-/// Newest `stream_play` call wins: older ones that are still resolving give up silently.
-static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Warm-ups run at most this many at a time (each one spawns yt-dlp for YouTube).
 const PREFETCH_CONCURRENCY: usize = 2;
@@ -178,7 +174,8 @@ async fn wait_until_available(info: &StreamInfo) {
 
 async fn open_with_retry(
     app: &AppHandle,
-    req: &StreamRequest,
+    platform: Platform,
+    url: &str,
     info: StreamInfo,
 ) -> Result<(BoxedSource, Option<Duration>, StreamInfo), String> {
     wait_until_available(&info).await;
@@ -191,8 +188,8 @@ async fn open_with_retry(
         Err(first_error) => {
             // The cached url may have expired: look the track up again once.
             eprintln!("[preview] open failed ({first_error}), re-resolving");
-            resolve::forget(req.platform, &req.url).await;
-            let fresh = resolve::resolve(app, req.platform, &req.url).await?;
+            resolve::forget(platform, url).await;
+            let fresh = resolve::resolve(app, platform, url).await?;
             wait_until_available(&fresh).await;
             let retry = fresh.clone();
             let (source, total) = tokio::task::spawn_blocking(move || open_decoder(&retry))
@@ -203,44 +200,41 @@ async fn open_with_retry(
     }
 }
 
-#[command]
-pub async fn stream_play(
-    app: AppHandle,
-    player: State<'_, Mutex<AudioPlayer>>,
-    request: StreamRequest,
-) -> Result<(), String> {
+/// Resolves and opens the stream of a track page `url` (used by the player for the current and the next
+/// stream song of the queue). Returns the decoder and its duration when known.
+pub async fn open_stream(
+    app: &AppHandle,
+    platform: Platform,
+    url: &str,
+) -> Result<(BoxedSource, Option<Duration>), String> {
     let started = Instant::now();
-    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    let is_current = || GENERATION.load(Ordering::SeqCst) == generation;
+    let info = resolve::resolve(app, platform, url).await?;
+    let (source, total, info) = open_with_retry(app, platform, url, info).await?;
+    println!("[stream] {platform:?} opened in {} ms", started.elapsed().as_millis());
+    let duration = total.or(info.duration_ms.map(Duration::from_millis));
+    Ok((source, duration))
+}
 
-    let info = resolve::resolve(&app, request.platform, &request.url).await?;
-    if !is_current() {
-        return Ok(());
+/// Replaces the queue with stream songs (e.g. the clicked search result and the tracks after it) and
+/// starts `index`. The player opens the songs in the background (`stream_loading` in the player state)
+/// and keeps the next one prepared for a gapless transition.
+#[command]
+pub fn stream_queue(
+    player: State<'_, Mutex<AudioPlayer>>,
+    requests: Vec<StreamRequest>,
+    index: usize,
+) -> Result<(), String> {
+    if requests.is_empty() {
+        return Err("nothing to play".to_string());
     }
-    let (source, total, info) = open_with_retry(&app, &request, info).await?;
-    if !is_current() {
-        return Ok(());
-    }
-    let duration_ms = total
-        .map(|d| d.as_millis() as u64)
-        .or(info.duration_ms)
-        .or(request.duration_ms);
-    let song = stream_song(&request, duration_ms);
+    let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
+    let index = index.min(songs.len() - 1);
     let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
-    // A newer click must not be overridden.
-    if !is_current() {
-        return Ok(());
-    }
-    p.play_stream(song, source, duration_ms.map(Duration::from_millis));
-    println!(
-        "[stream] {:?} started in {} ms",
-        request.platform,
-        started.elapsed().as_millis()
-    );
+    p.start_playback(songs, index);
     Ok(())
 }
 
-/// Warms the url cache (resolve only) so a following `stream_play` starts faster. Errors are ignored.
+/// Warms the url cache (resolve only) so a following stream starts faster. Errors are ignored.
 #[command]
 pub async fn stream_prefetch(app: AppHandle, platform: Platform, url: String) {
     let Ok(_permit) = prefetch_slots().acquire().await else {

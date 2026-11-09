@@ -118,6 +118,7 @@ export const ArtistProfileCard = ({ artist, profile, downloads }: ArtistProfileC
                   <TrackRow
                     key={`${i}-${song.item_url_path}`}
                     item={song}
+                    list={topSongs}
                     progress={downloads.get(song.item_url_path)}
                     compact
                   />

@@ -1,7 +1,7 @@
 /**
  * Invoke wrappers of the streaming playback. `StreamRequest` mirrors `StreamRequest` in
- * `src-tauri/src/preview/commands.rs` (serde, snake_case). The track then plays through the normal player,
- * so its state arrives with the usual `player-state` event (`streaming: true`).
+ * `src-tauri/src/preview/commands.rs` (serde, snake_case). The tracks then play through the normal player
+ * and queue, so their state arrives with the usual `player-state` event (`streaming`, `stream_loading`).
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { Platform } from "@/shared/types.ts";
@@ -15,9 +15,17 @@ export interface StreamRequest {
   duration_ms?: number | null;
 }
 
-/** Resolves, opens and plays the track. Rejects with a message when it cannot be streamed. */
-export const streamPlay = (request: StreamRequest): Promise<void> =>
-  invoke("stream_play", { request });
+/**
+ * Replaces the queue with stream songs and starts `index`. Returns at once: the player opens the song in the
+ * background (`stream_loading` in the player state) and emits `stream-error` when it cannot be played.
+ */
+export const streamQueue = (requests: StreamRequest[], index: number): Promise<void> =>
+  invoke("stream_queue", { requests, index });
+
+export interface StreamError {
+  url: string;
+  message: string;
+}
 
 /** Warms the stream url cache; never rejects. */
 export const streamPrefetch = async (platform: Platform, url: string): Promise<void> => {

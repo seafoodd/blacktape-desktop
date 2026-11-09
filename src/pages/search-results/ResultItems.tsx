@@ -40,19 +40,21 @@ export const Cover = ({
 
 interface TrackRowProps {
   item: SearchSuggestion;
+  /** The list the row belongs to: playing the row queues the tracks after it. */
+  list?: readonly SearchSuggestion[];
   progress?: DownloadProgress;
   /** Compact rows (artist profile "Top songs") keep the play count out. */
   compact?: boolean;
 }
 
-export const TrackRow = ({ item, progress, compact = false }: TrackRowProps) => {
+export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProps) => {
   const plays = compact ? null : formatPlays(item.view_count);
   const subline = trackSubline(item.band_name, item.album_name);
   return (
     <div className={styles.trackRow}>
       <div className={styles.trackCoverBox}>
         <Cover src={item.img} alt={item.name} className={styles.trackCover} />
-        <StreamButton item={item} className={styles.trackPreview} />
+        <StreamButton item={item} list={list} className={styles.trackPreview} />
       </div>
       <div className={styles.trackInfo}>
         <p className={styles.ellipsis} title={item.name}>

@@ -213,6 +213,39 @@ async fn get_lyrics(
     Ok(lyrics_source)
 }
 
+/// Lyrics of a streamed song (not in the library, so nothing is stored in the database). Results are kept in
+/// memory for the session so switching back to a song does not ask the providers again.
+#[command]
+async fn get_stream_lyrics(
+    artist: String,
+    title: String,
+    album: Option<String>,
+    duration_ms: Option<u64>,
+    provider: Option<String>,
+) -> Result<LyricsSource, String> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, LyricsSource>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let provider = provider.filter(|p| !p.trim().is_empty() && p != "auto");
+    let key = format!("{}|{}|{}", artist.to_lowercase(), title.to_lowercase(), provider.as_deref().unwrap_or(""));
+    if provider.is_none() {
+        if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            return Ok(hit.clone());
+        }
+    }
+    let album = album.filter(|a| !a.trim().is_empty());
+    let result = match provider.as_deref() {
+        Some(p) => fetch_lyrics_from_provider(p, &artist, &title, album.as_deref(), duration_ms).await,
+        None => fetch_lyrics(&artist, &title, album.as_deref(), duration_ms).await,
+    }?;
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(format!("{}|{}|", artist.to_lowercase(), title.to_lowercase()), result.clone());
+    Ok(result)
+}
+
 #[command]
 async fn refetch_lyrics(
     state: State<'_, tokio::sync::Mutex<Database>>,
@@ -722,8 +755,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(generate_handler![
             // Streaming
-            preview::commands::stream_play,
+            preview::commands::stream_queue,
             preview::commands::stream_prefetch,
+            get_stream_lyrics,
             // Player Commands
             start_playback,
             pause,

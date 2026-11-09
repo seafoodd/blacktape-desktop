@@ -25,6 +25,8 @@ interface AudioState {
   isPlaying: boolean;
   /** The current song is a remote stream, not a library file. */
   isStreaming: boolean;
+  /** The current stream song is still being opened. */
+  streamLoading: boolean;
   shuffleMode: boolean;
   repeatMode: RepeatMode;
   /** Position of the current song in `queue`. */
@@ -62,6 +64,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   volume: 0,
   isPlaying: false,
   isStreaming: false,
+  streamLoading: false,
   shuffleMode: false,
   repeatMode: RepeatMode.Off,
   queueCursor: null,
@@ -149,6 +152,7 @@ if (typeof window !== "undefined") {
     useAudioStore.setState({
       isPlaying: state.is_playing,
       isStreaming: Boolean(state.streaming),
+      streamLoading: Boolean(state.stream_loading),
       currentSong: state.current_song,
       progress: state.progress,
       volume: state.volume,

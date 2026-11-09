@@ -20,6 +20,11 @@ use std::time::Instant;
 use std::{fs::File, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// A song of the queue that is streamed from its platform instead of played from a file.
+pub fn is_stream_song(song: &Song) -> bool {
+    song.path.is_empty() && song.source_url.as_deref().is_some_and(|u| !u.is_empty())
+}
+
 /// Index in the original queue of the song at `cursor` in the play order.
 pub fn source_index_at(play_order: Option<&[usize]>, cursor: Option<usize>) -> Option<usize> {
     play_order?.get(cursor?).copied()
@@ -48,8 +53,16 @@ pub struct AudioPlayer {
     repeat_mode: RepeatMode,
     play_order: Option<Vec<usize>>,
     cursor: Option<usize>,
-    /// The current song is a stream (see `play_stream`), not a file of the library.
-    streaming: bool,
+    /// Url of the stream song that is being opened right now (nothing plays meanwhile).
+    stream_loading: Option<String>,
+    /// Bumped for every stream load; a finished load only applies when it is still the newest.
+    stream_generation: u64,
+    /// The next song of the queue, already opened (stream songs only): url, source, duration.
+    prepared: Option<(String, BoxedSource, Option<Duration>)>,
+    /// Url of the stream song being prepared in the background.
+    preparing: Option<String>,
+    /// Duration of a prepared stream that was appended for a gapless transition.
+    appended_duration: Option<Duration>,
 }
 
 /// Playback position saved while the current song's file is released for a tag edit.
@@ -100,7 +113,11 @@ impl AudioPlayer {
             repeat_mode: RepeatMode::Off,
             play_order: None,
             cursor: None,
-            streaming: false,
+            stream_loading: None,
+            stream_generation: 0,
+            prepared: None,
+            preparing: None,
+            appended_duration: None,
         }
     }
 
@@ -142,34 +159,39 @@ impl AudioPlayer {
 
                 let state = handle.state::<Mutex<AudioPlayer>>();
 
-                let mut pending_transition: Option<(usize, Song)> = None;
+                let mut pending_transition: Option<(usize, Song, bool)> = None;
 
                 let needs_emit = {
                     let mut player = state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-                    if player.is_paused() {
+                    if player.is_paused() || player.stream_loading.is_some() {
                         false
                     } else {
                         let current_pos = player.seek_offset + player.player.get_pos();
                         let mut advanced = false;
 
-                        if player.streaming {
-                            if player.player.empty() {
-                                player.end_stream();
-                                advanced = true;
-                                sleep_time = Duration::ZERO;
+                        let stream_ran_out = player.player.empty()
+                            && player.current_song.as_ref().is_some_and(is_stream_song);
+                        if stream_ran_out {
+                            // A stream ended before its announced duration (or nothing was buffered).
+                            if let Some(next_cursor) = player.get_next_cursor() {
+                                if let Some(next_song) = player.song_at(next_cursor) {
+                                    pending_transition = Some((next_cursor, next_song, false));
+                                }
                             }
+                            sleep_time = Duration::ZERO;
+                            advanced = true;
                         } else if let Some(duration) = player.duration {
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 println!("start seamless transition");
 
                                 if let Some(next_cursor) = player.get_next_cursor() {
-                                    if let Some(next_song) =
+                                    if let Some((next_song, appended)) =
                                         player.buffer_next_in_queue(next_cursor)
                                     {
-                                        pending_transition = Some((next_cursor, next_song));
+                                        pending_transition = Some((next_cursor, next_song, appended));
                                         sleep_time = duration.saturating_sub(current_pos);
                                         advanced = true;
                                     }
@@ -192,13 +214,25 @@ impl AudioPlayer {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-                    if let Some((next_cursor, next_song)) = pending_transition.take() {
-                        player.cursor = Some(next_cursor);
-                        player.current_song = Some(next_song.clone());
-                        player.duration = Some(Duration::from_millis(next_song.duration_ms));
-                        player.seek_offset = Duration::ZERO;
-                    } else {
-                        player.stop();
+                    match pending_transition.take() {
+                        Some((next_cursor, next_song, true)) => {
+                            // Seamless: the next source was already appended.
+                            player.cursor = Some(next_cursor);
+                            player.current_song = Some(next_song.clone());
+                            player.duration = player
+                                .appended_duration
+                                .take()
+                                .or(Some(Duration::from_millis(next_song.duration_ms)));
+                            player.seek_offset = Duration::ZERO;
+                            player.prepare_next();
+                        }
+                        Some((next_cursor, next_song, false)) => {
+                            // Nothing could be appended (stream not ready yet): load it now.
+                            player.cursor = Some(next_cursor);
+                            player.play(next_song);
+                            continue;
+                        }
+                        None => player.stop(),
                     }
 
                     player.emit_state();
@@ -224,7 +258,10 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
-        self.streaming = false;
+        if is_stream_song(&song) {
+            return self.play_stream_song(song);
+        }
+        self.stream_loading = None;
         let source = match Self::decode_source(&song.path) {
             Ok(s) => s,
             Err(e) => {
@@ -251,6 +288,7 @@ impl AudioPlayer {
             .expect("Failed to resume media controls state");
         self.emit_state();
         self.update_discord_song(Some(0));
+        self.prepare_next();
     }
 
     fn decode_source(path_str: &str) -> Result<BoxedSource, Box<dyn std::error::Error>> {
@@ -282,8 +320,7 @@ impl AudioPlayer {
 
     pub fn resume(&mut self) {
         if self.player.len() < 1 {
-            if self.streaming {
-                // The stream ran out; there is nothing to reload from disk.
+            if self.stream_loading.is_some() {
                 return;
             }
             if let Some(song) = self.current_song.clone() {
@@ -433,27 +470,33 @@ impl AudioPlayer {
         self.cursor = Some(next_cursor);
 
         if let Some(next_song) = self.get_song_at_cursor() {
+            if is_stream_song(&next_song) {
+                self.play(next_song);
+                return true;
+            }
             self.buffer_next_silent(&next_song);
             self.current_song = Some(next_song.clone());
             self.duration = Some(Duration::from_millis(next_song.duration_ms));
             self.seek_offset = Duration::ZERO;
+            self.prepare_next();
             true
         } else {
             false
         }
     }
 
-    fn buffer_next_in_queue(&mut self, next_cursor: usize) -> Option<Song> {
-        if let Some(next_song) = self
-            .queue
-            .get(self.play_order.as_ref()?[next_cursor])
-            .cloned()
-        {
-            self.buffer_next_silent(&next_song);
-            Some(next_song)
-        } else {
-            None
-        }
+    /// Appends the song at `next_cursor` for a gapless transition. Returns the song and whether audio was
+    /// appended (a stream song that is not prepared yet is not).
+    fn buffer_next_in_queue(&mut self, next_cursor: usize) -> Option<(Song, bool)> {
+        let next_song = self.song_at(next_cursor)?;
+        let appended = self.buffer_next_silent(&next_song);
+        Some((next_song, appended))
+    }
+
+    /// Song at play-order position `cursor`.
+    fn song_at(&self, cursor: usize) -> Option<Song> {
+        let idx = *self.play_order.as_ref()?.get(cursor)?;
+        self.queue.get(idx).cloned()
     }
 
     pub fn start_playback(&mut self, songs: Vec<Song>, current_index: usize) {
@@ -559,7 +602,11 @@ impl AudioPlayer {
         let formatted_uri: String;
 
         let uri_ref = if let Some(path) = &song.cover_url {
-            formatted_uri = Self::format_cover_path(path);
+            formatted_uri = if path.starts_with("http://") || path.starts_with("https://") {
+                path.clone()
+            } else {
+                Self::format_cover_path(path)
+            };
             Some(formatted_uri.as_str())
         } else {
             None
@@ -576,19 +623,32 @@ impl AudioPlayer {
         });
     }
 
-    fn buffer_next_silent(&mut self, song: &Song) {
+    fn buffer_next_silent(&mut self, song: &Song) -> bool {
+        if is_stream_song(song) {
+            let url = song.source_url.clone().unwrap_or_default();
+            return match self.take_prepared(&url) {
+                Some((source, duration)) => {
+                    self.appended_duration = duration;
+                    self.player.append(source);
+                    true
+                }
+                None => false,
+            };
+        }
         let now = Instant::now();
         println!("Silent buffer: {}, {:?}", song.title, song.id);
-        if let Ok(source) = Self::decode_source(&song.path) {
-            self.player.append(source);
-        }
+        let appended = match Self::decode_source(&song.path) {
+            Ok(source) => {
+                self.player.append(source);
+                true
+            }
+            Err(_) => false,
+        };
         println!("BUFFERING TOOK: {:#?}", now.elapsed());
+        appended
     }
 
     pub fn next(&mut self) {
-        if self.streaming {
-            self.end_stream();
-        }
         self.player.skip_one();
         self.player.play();
 
@@ -623,10 +683,6 @@ impl AudioPlayer {
     }
 
     pub fn previous(&mut self) {
-        if self.streaming {
-            self.end_stream();
-            return;
-        }
         let absolute_pos = self.seek_offset + self.player.get_pos();
         if absolute_pos > Duration::from_secs(5) {
             if let Some(current) = self.get_song_at_cursor() {
@@ -672,7 +728,7 @@ impl AudioPlayer {
             self.player.len()
         );
 
-        if self.player.len() < 1 && self.streaming {
+        if self.player.len() < 1 && self.stream_loading.is_some() {
             return;
         }
         if self.player.len() < 1 {
@@ -869,7 +925,8 @@ impl AudioPlayer {
             queue: ordered_queue,
             queue_cursor: self.cursor,
             source_index: source_index_at(self.play_order.as_deref(), self.cursor),
-            streaming: self.streaming,
+            streaming: self.current_song.as_ref().is_some_and(is_stream_song),
+            stream_loading: self.stream_loading.is_some(),
         };
 
         if let Some(ref song) = state.current_song {
@@ -939,13 +996,9 @@ impl AudioPlayer {
         let prev_is_paused = self.is_paused();
         let prev_volume = self.get_volume();
         let prev_pos = self.seek_offset + self.player.get_pos();
-        let prev_song = if self.streaming {
-            // A remote stream cannot be re-opened from a path: it ends with the old device.
-            self.end_stream();
-            None
-        } else {
-            self.current_song.clone()
-        };
+        let prev_song = self.current_song.clone();
+        // Prepared streams belong to nothing device specific, but their decoders are cheap to reopen.
+        self.prepared = None;
 
         let new_sink = Self::create_sink()?;
         let new_player = Player::connect_new(new_sink.mixer());
@@ -953,7 +1006,10 @@ impl AudioPlayer {
         self.sink = new_sink;
         self.player = new_player;
 
-        if let Some(song) = prev_song {
+        if let Some(song) = prev_song.as_ref().filter(|s| is_stream_song(s)).cloned() {
+            // A stream is reopened from the network (from the start).
+            self.play(song);
+        } else if let Some(song) = prev_song {
             if let Ok(mut source) = Self::decode_source(&song.path) {
                 if prev_pos.as_millis() > 0 {
                     let _ = source.try_seek(prev_pos);
@@ -986,9 +1042,62 @@ impl AudioPlayer {
 
     // ----- streaming -----
 
-    /// Plays `source` (a remote track) as the current song without touching the queue. `song` carries the
-    /// metadata shown by the player (`id` is None, `path` is empty).
-    pub fn play_stream(&mut self, song: Song, source: BoxedSource, duration: Option<Duration>) {
+    /// Plays a stream song: right away when it was prepared, otherwise it is opened in the background
+    /// (`stream_loading` is set meanwhile) and starts when ready.
+    fn play_stream_song(&mut self, song: Song) {
+        let url = song.source_url.clone().unwrap_or_default();
+        if let Some((source, duration)) = self.take_prepared(&url) {
+            self.stream_loading = None;
+            return self.start_source(song, source, duration);
+        }
+        self.stream_generation += 1;
+        let generation = self.stream_generation;
+        self.player.clear();
+        self.seek_offset = Duration::ZERO;
+        self.duration = Some(Duration::from_millis(song.duration_ms));
+        self.stream_loading = Some(url.clone());
+        self.current_song = Some(song.clone());
+        self.update_current_metadata();
+        self.emit_state();
+
+        let handle = self.handle.clone();
+        let platform = song.source;
+        tauri::async_runtime::spawn(async move {
+            let result = crate::preview::commands::open_stream(&handle, platform, &url).await;
+            let state = handle.state::<Mutex<AudioPlayer>>();
+            let mut player = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            player.on_stream_opened(generation, &url, result);
+        });
+    }
+
+    fn on_stream_opened(
+        &mut self,
+        generation: u64,
+        url: &str,
+        result: Result<(BoxedSource, Option<Duration>), String>,
+    ) {
+        if generation != self.stream_generation || self.stream_loading.as_deref() != Some(url) {
+            return; // a newer song was started meanwhile
+        }
+        self.stream_loading = None;
+        let Some(song) = self.current_song.clone() else {
+            return;
+        };
+        match result {
+            Ok((source, duration)) => self.start_source(song, source, duration),
+            Err(message) => {
+                eprintln!("[stream] could not open {url}: {message}");
+                let _ = self.handle.emit(
+                    "stream-error",
+                    serde_json::json!({ "url": url, "message": message }),
+                );
+                self.stop();
+            }
+        }
+    }
+
+    /// Starts an opened source as the current song.
+    fn start_source(&mut self, song: Song, source: BoxedSource, duration: Option<Duration>) {
         self.duration = source
             .total_duration()
             .or(duration)
@@ -997,32 +1106,58 @@ impl AudioPlayer {
         self.player.clear();
         self.player.append(source);
         self.player.play();
-        self.streaming = true;
         self.current_song = Some(song);
 
         self.update_current_metadata();
         let _ = self.media_controls.play();
         self.emit_state();
         self.update_discord_song(Some(0));
+        self.prepare_next();
     }
 
-    pub fn is_streaming(&self) -> bool {
-        self.streaming
+    /// The prepared source of `url`, if that is the one waiting.
+    fn take_prepared(&mut self, url: &str) -> Option<(BoxedSource, Option<Duration>)> {
+        match self.prepared.take() {
+            Some((prepared_url, source, duration)) if prepared_url == url => Some((source, duration)),
+            other => {
+                self.prepared = other;
+                None
+            }
+        }
     }
 
-    /// Drops the stream (nothing plays afterwards) and clears the current song.
-    pub fn end_stream(&mut self) {
-        if !self.streaming {
+    /// Opens the next song of the queue in the background when it is a stream, so the transition has no
+    /// network delay. Only one song is kept prepared.
+    fn prepare_next(&mut self) {
+        let Some(next) = self.get_next_cursor().and_then(|c| self.song_at(c)) else {
+            return;
+        };
+        if !is_stream_song(&next) {
             return;
         }
-        self.player.clear();
-        self.streaming = false;
-        self.current_song = None;
-        self.duration = None;
-        self.seek_offset = Duration::ZERO;
-        let _ = self.media_controls.stop();
-        self.emit_state();
-        self.update_current_metadata();
+        let url = next.source_url.clone().unwrap_or_default();
+        let already = self.prepared.as_ref().is_some_and(|(u, _, _)| *u == url)
+            || self.preparing.as_deref() == Some(url.as_str());
+        if already {
+            return;
+        }
+        self.prepared = None;
+        self.preparing = Some(url.clone());
+        let handle = self.handle.clone();
+        let platform = next.source;
+        tauri::async_runtime::spawn(async move {
+            let result = crate::preview::commands::open_stream(&handle, platform, &url).await;
+            let state = handle.state::<Mutex<AudioPlayer>>();
+            let mut player = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if player.preparing.as_deref() != Some(url.as_str()) {
+                return;
+            }
+            player.preparing = None;
+            match result {
+                Ok((source, duration)) => player.prepared = Some((url, source, duration)),
+                Err(e) => eprintln!("[stream] could not prepare {url}: {e}"),
+            }
+        });
     }
 
     pub fn set_volume(&mut self, fraction: f32) {
@@ -1067,7 +1202,7 @@ impl AudioPlayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_song_edit, source_index_at, AudioPlayer};
+    use super::{apply_song_edit, is_stream_song, source_index_at, AudioPlayer};
     use crate::types::{Platform, QualityTier, Song};
     use rodio::Source;
     use std::time::Duration;
@@ -1218,6 +1353,22 @@ mod tests {
         let result = AudioPlayer::decode_source_from_memory("x.wav", b"not audio".to_vec());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn stream_song_has_no_path_but_a_source_url() {
+        let mut song = make_song(None, "s");
+        song.path = String::new();
+        song.source_url = Some("https://soundcloud.com/a/b".into());
+        assert!(is_stream_song(&song));
+        song.source_url = Some(String::new());
+        assert!(!is_stream_song(&song), "empty url is not a stream");
+        song.source_url = None;
+        assert!(!is_stream_song(&song));
+        let mut file = make_song(Some(1), "f");
+        file.path = "C:/music/a.mp3".into();
+        file.source_url = Some("https://youtube.com/watch?v=x".into());
+        assert!(!is_stream_song(&file), "downloaded songs keep their source url but play from the file");
     }
 
     #[test]
