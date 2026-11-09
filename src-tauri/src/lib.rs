@@ -655,6 +655,8 @@ pub fn run() {
             let media_controls = MediaControls::new(&window, app_handle.clone());
             let audio_player = AudioPlayer::new(media_controls, app_handle.clone());
             app.manage(Mutex::new(audio_player));
+            // Start a yt-dlp process ahead of time so the first YouTube stream starts faster.
+            preview::resolve::warm_up(app_handle.clone());
 
             let app_dir = app
                 .path()

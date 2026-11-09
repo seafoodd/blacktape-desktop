@@ -164,11 +164,24 @@ fn open_decoder(info: &StreamInfo) -> Result<(BoxedSource, Option<Duration>), St
     Ok((Box::new(decoder), total))
 }
 
+/// Sleeps until the url of `info` may be used (YouTube); returns at once for everything else.
+async fn wait_until_available(info: &StreamInfo) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let wait = resolve::wait_before_open(info, now);
+    if !wait.is_zero() {
+        tokio::time::sleep(wait + Duration::from_millis(100)).await;
+    }
+}
+
 async fn open_with_retry(
     app: &AppHandle,
     req: &StreamRequest,
     info: StreamInfo,
 ) -> Result<(BoxedSource, Option<Duration>, StreamInfo), String> {
+    wait_until_available(&info).await;
     let first = info.clone();
     match tokio::task::spawn_blocking(move || open_decoder(&first))
         .await
@@ -180,6 +193,7 @@ async fn open_with_retry(
             eprintln!("[preview] open failed ({first_error}), re-resolving");
             resolve::forget(req.platform, &req.url).await;
             let fresh = resolve::resolve(app, req.platform, &req.url).await?;
+            wait_until_available(&fresh).await;
             let retry = fresh.clone();
             let (source, total) = tokio::task::spawn_blocking(move || open_decoder(&retry))
                 .await
@@ -304,7 +318,6 @@ mod tests {
             .await
             .expect("resolve");
         let resolved = t0.elapsed();
-        let url = info.url.clone();
         let (resolved_ms, open_ms, first_ms, seek_ms, total) = tokio::task::spawn_blocking(move || {
             let t1 = Instant::now();
             let (mut source, total) = open_decoder(&info).expect("open");
@@ -332,11 +345,17 @@ mod tests {
     #[ignore]
     fn live_youtube_stream_decodes_and_seeks() {
         let t0 = Instant::now();
-        let args = resolve::youtube_args("https://www.youtube.com/watch?v=FTQbiNvZqaY");
+        let mut args = resolve::youtube_args(resolve::YOUTUBE_FAST_CLIENTS);
+        args.push("--".into());
+        args.push("https://www.youtube.com/watch?v=FTQbiNvZqaY".into());
         let out = std::process::Command::new("yt-dlp").args(&args).output().expect("yt-dlp");
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let info = resolve::parse_youtube_output(&String::from_utf8_lossy(&out.stdout)).expect("parse");
         let resolved = t0.elapsed();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        let wait = resolve::wait_before_open(&info, now);
+        std::thread::sleep(wait + Duration::from_millis(100));
+        println!("waited {} ms for available_at", wait.as_millis());
         let t1 = Instant::now();
         let (mut source, total) = open_decoder(&info).expect("open");
         let first = source.next().expect("first sample");

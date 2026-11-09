@@ -27,6 +27,9 @@ pub struct StreamInfo {
     pub headers: Vec<(String, String)>,
     /// Set for HLS streams (SoundCloud): `url` is then the playlist and the parts are played concatenated.
     pub hls: Option<HlsPlaylist>,
+    /// Unix time (seconds) from which the url may be used. YouTube answers 403 to stream requests made
+    /// earlier (yt-dlp: "Sleeping N seconds as required by the site").
+    pub available_at: Option<f64>,
 }
 
 const SOUNDCLOUD_TTL: Duration = Duration::from_secs(4 * 60);
@@ -174,6 +177,7 @@ pub(crate) async fn resolve_soundcloud(url: &str) -> Result<StreamInfo, String> 
             duration_ms,
             headers: Vec::new(),
             hls: None,
+            available_at: None,
         });
     }
     // Most tracks are HLS only: fetch the playlist so the fragments can be played back to back.
@@ -199,6 +203,7 @@ pub(crate) async fn resolve_soundcloud(url: &str) -> Result<StreamInfo, String> 
         duration_ms,
         headers: Vec::new(),
         hls: Some(playlist),
+        available_at: None,
     })
 }
 
@@ -255,6 +260,7 @@ pub(crate) async fn resolve_bandcamp(url: &str) -> Result<StreamInfo, String> {
         duration_ms,
         headers: Vec::new(),
         hls: None,
+        available_at: None,
     })
 }
 
@@ -274,27 +280,37 @@ fn http_client() -> &'static reqwest::Client {
 // YouTube
 // ---------------------------------------------------------------------------------------------
 
-/// yt-dlp arguments that print the direct url of the AAC (m4a) audio stream (symphonia decodes AAC in
-/// mp4 but not YouTube's webm/opus). The downloader's client set (`web_embedded,web,tv`) is used on purpose:
-/// its urls accept any byte range, while the urls of yt-dlp's default client set (android_vr) answer 403 to
-/// every range except the first ~128 KiB, which makes seeking and long tracks impossible.
-pub fn youtube_args(url: &str) -> Vec<String> {
+/// Fast client: the embedded web player alone (~1.3 s less work than the downloader's three clients).
+pub const YOUTUBE_FAST_CLIENTS: &str = "web_embedded";
+/// Fallback when the fast client does not offer the m4a stream: the downloader's client set.
+pub const YOUTUBE_FALLBACK_CLIENTS: &str = "web_embedded,web,tv";
+
+/// yt-dlp arguments that print the duration, request headers and direct url of the AAC (m4a) audio stream
+/// (symphonia decodes AAC in mp4 but not YouTube's webm/opus) WITHOUT the video url: the url is either
+/// appended (`--`, url) or fed on stdin (`-a -`) to a process that was started in advance.
+///
+/// Web clients are used on purpose: their urls accept any byte range, while the urls of yt-dlp's default
+/// client set (android_vr) answer 403 to every range but the first ~128 KiB.
+pub fn youtube_args(clients: &str) -> Vec<String> {
     [
         "--no-playlist",
         "--no-warnings",
         "--no-check-formats",
+        "--no-update",
+        "--js-runtimes",
+        "deno",
         "--extractor-args",
-        "youtube:player-client=web_embedded,web,tv",
+        &format!("youtube:player-client={clients}"),
         "-f",
         "140/bestaudio[ext=m4a]",
+        "--print",
+        "available_at=%(available_at)s",
         "--print",
         "%(duration)s",
         "--print",
         "%(http_headers)j",
         "--print",
         "urls",
-        "--",
-        url,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -304,12 +320,15 @@ pub fn youtube_args(url: &str) -> Vec<String> {
 /// Parses the lines printed by `youtube_args`: duration in seconds, the request headers as JSON, then the url.
 pub fn parse_youtube_output(output: &str) -> Option<StreamInfo> {
     let mut duration = None;
+    let mut available_at = None;
     let mut headers: Vec<(String, String)> = Vec::new();
     let mut url = None;
     for line in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
         if line.starts_with("http") {
             url = Some(line.to_string());
             break;
+        } else if let Some(value) = line.strip_prefix("available_at=") {
+            available_at = value.parse::<f64>().ok().filter(|t| t.is_finite() && *t > 0.0);
         } else if line.starts_with('{') {
             if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(line) {
                 headers = map.into_iter().collect();
@@ -324,27 +343,131 @@ pub fn parse_youtube_output(output: &str) -> Option<StreamInfo> {
         duration_ms: duration.map(|secs| (secs * 1000.0).round() as u64),
         headers,
         hls: None,
+        available_at,
     })
 }
 
+/// How long to wait before the stream of `info` may be requested (zero when it is usable already).
+pub fn wait_before_open(info: &StreamInfo, now_unix: f64) -> Duration {
+    match info.available_at {
+        Some(at) if at > now_unix => Duration::from_secs_f64((at - now_unix).min(30.0)),
+        _ => Duration::ZERO,
+    }
+}
+
 async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
-    let args = youtube_args(url);
+    // 1. Fast path: the pre-started yt-dlp process (interpreter already loaded) with the fast client.
+    let fast = match spare::take(app).await {
+        Some(child) => spare::feed(child, url).await,
+        None => run_ytdlp(app, YOUTUBE_FAST_CLIENTS, url).await,
+    };
+    spare::refill(app.clone());
+    if let Some(info) = fast.as_deref().ok().and_then(parse_youtube_output) {
+        return Ok(info);
+    }
+    // 2. The fast client sometimes does not offer the m4a stream: ask the downloader's client set.
+    let output = run_ytdlp(app, YOUTUBE_FALLBACK_CLIENTS, url).await?;
+    parse_youtube_output(&output).ok_or_else(|| {
+        format!(
+            "yt-dlp returned no audio stream{}",
+            fast.err().map(|e| format!(" ({})", e.trim())).unwrap_or_default()
+        )
+    })
+}
+
+/// Starts yt-dlp in the background once (e.g. at app start) so the first YouTube stream skips the
+/// interpreter start-up.
+pub fn warm_up(app: AppHandle) {
+    spare::refill(app);
+}
+
+async fn run_ytdlp(app: &AppHandle, clients: &str, url: &str) -> Result<String, String> {
+    let mut args = youtube_args(clients);
+    args.push("--".to_string());
+    args.push(url.to_string());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    // YouTube intermittently does not offer the m4a stream to these clients ("format is not available"),
-    // a second try usually succeeds.
-    let mut last_error = String::new();
-    for _ in 0..2 {
-        match crate::download::ytdlp::execute(app, &arg_refs).await {
-            Ok(output) => {
-                if let Some(info) = parse_youtube_output(&output) {
-                    return Ok(info);
-                }
-                last_error = "yt-dlp returned no audio stream".to_string();
+    crate::download::ytdlp::execute(app, &arg_refs).await
+}
+
+/// One yt-dlp process started ahead of time with `-a -`: it loads Python and the extractors, then waits
+/// for the video url on stdin. Writing the url and closing stdin saves ~1 s per YouTube stream.
+mod spare {
+    use super::{youtube_args, YOUTUBE_FAST_CLIENTS};
+    use std::process::Stdio;
+    use std::sync::OnceLock;
+    use tauri::AppHandle;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::{Child, Command};
+
+    fn slot() -> &'static tokio::sync::Mutex<Option<Child>> {
+        static SLOT: OnceLock<tokio::sync::Mutex<Option<Child>>> = OnceLock::new();
+        SLOT.get_or_init(|| tokio::sync::Mutex::new(None))
+    }
+
+    fn spawn(app: &AppHandle) -> Option<Child> {
+        let binary = crate::download::ytdlp::get_path(app);
+        if !binary.exists() {
+            return None;
+        }
+        let mut cmd = Command::new(binary);
+        cmd.args(youtube_args(YOUTUBE_FAST_CLIENTS))
+            .args(["-a", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd.spawn().ok()
+    }
+
+    /// The waiting process, if one is ready (a process that already exited is discarded).
+    pub async fn take(app: &AppHandle) -> Option<Child> {
+        let mut slot = slot().lock().await;
+        let mut child = slot.take()?;
+        drop(slot);
+        match child.try_wait() {
+            Ok(None) => Some(child),
+            _ => {
+                refill(app.clone());
+                None
             }
-            Err(e) => last_error = e,
         }
     }
-    Err(last_error)
+
+    /// Makes sure a process is waiting for the next url.
+    pub fn refill(app: AppHandle) {
+        tauri::async_runtime::spawn(async move {
+            let mut slot = slot().lock().await;
+            let alive = match slot.as_mut() {
+                Some(child) => matches!(child.try_wait(), Ok(None)),
+                None => false,
+            };
+            if !alive {
+                *slot = spawn(&app);
+            }
+        });
+    }
+
+    /// Hands `url` to a waiting process and returns its stdout.
+    pub async fn feed(mut child: Child, url: &str) -> Result<String, String> {
+        let mut stdin = child.stdin.take().ok_or("yt-dlp stdin unavailable")?;
+        stdin
+            .write_all(format!("{url}
+").as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        drop(stdin); // EOF: yt-dlp starts working
+        let output = child.wait_with_output().await.map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -393,12 +516,13 @@ mod tests {
     }
 
     #[test]
-    fn youtube_args_end_with_the_url() {
-        let args = youtube_args("https://www.youtube.com/watch?v=abc");
-        assert_eq!(args.last().map(String::as_str), Some("https://www.youtube.com/watch?v=abc"));
+    fn youtube_args_select_clients_and_leave_the_url_out() {
+        let args = youtube_args(YOUTUBE_FAST_CLIENTS);
+        assert!(args.iter().any(|a| a == "youtube:player-client=web_embedded"));
         assert!(args.iter().any(|a| a == "140/bestaudio[ext=m4a]"));
-        assert!(args.iter().any(|a| a == "youtube:player-client=web_embedded,web,tv"));
-        assert_eq!(args[args.len() - 2], "--");
+        assert!(!args.iter().any(|a| a == "--" || a.starts_with("http")));
+        let fallback = youtube_args(YOUTUBE_FALLBACK_CLIENTS);
+        assert!(fallback.iter().any(|a| a == "youtube:player-client=web_embedded,web,tv"));
     }
 
     #[test]
@@ -413,9 +537,27 @@ https://rr1.googlevideo.com/v").unwrap();
             with_headers.headers,
             vec![("Accept".to_string(), "*/*".to_string()), ("User-Agent".to_string(), "UA".to_string())]
         );
+        let timed = parse_youtube_output("available_at=1794229978
+215
+https://rr1.googlevideo.com/v").unwrap();
+        assert_eq!(timed.available_at, Some(1_794_229_978.0));
+        assert_eq!(timed.duration_ms, Some(215_000));
+        assert_eq!(parse_youtube_output("available_at=NA
+https://r/v").unwrap().available_at, None);
         let no_duration = parse_youtube_output("https://rr1.googlevideo.com/v").unwrap();
         assert_eq!(no_duration.duration_ms, None);
         assert_eq!(parse_youtube_output("NA\nhttps://rr/v").unwrap().duration_ms, None);
+    }
+
+    #[test]
+    fn wait_before_open_honours_available_at() {
+        let mut info = parse_youtube_output("https://r/v").unwrap();
+        assert_eq!(wait_before_open(&info, 100.0), Duration::ZERO);
+        info.available_at = Some(102.5);
+        assert_eq!(wait_before_open(&info, 100.0), Duration::from_millis(2500));
+        assert_eq!(wait_before_open(&info, 103.0), Duration::ZERO);
+        info.available_at = Some(1000.0);
+        assert_eq!(wait_before_open(&info, 100.0), Duration::from_secs(30), "capped");
     }
 
     #[test]
