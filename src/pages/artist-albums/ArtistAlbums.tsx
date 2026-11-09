@@ -19,6 +19,9 @@ import {
   type SelectionState,
 } from "@/shared/lib/selection.ts";
 import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
+import { albumMetaLine } from "@/shared/lib/albumMeta.ts";
+import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
+import { setDragGhost } from "@/shared/lib/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
@@ -78,6 +81,18 @@ const ArtistAlbums = () => {
         album.songs.map((s) => s.id),
         e.ctrlKey || e.metaKey,
       ),
+    );
+  };
+
+  /** Dragging an album's cover or title (e.g. onto a playlist) carries all its tracks. */
+  const handleAlbumDragStart = (album: Album, e: React.DragEvent) => {
+    const ids = album.songs.map((s) => s.id);
+    e.dataTransfer.setData(SONG_DRAG_MIME, encodeSongDrag(ids));
+    e.dataTransfer.effectAllowed = "copy";
+    setDragGhost(
+      e,
+      album.title,
+      `${ids.length} ${ids.length === 1 ? "track" : "tracks"} · Drop to add`,
     );
   };
 
@@ -379,8 +394,10 @@ const ArtistAlbums = () => {
               className={clsx(styles.albumBlockLeft, styles.albumHeader)}
               onClick={(e) => handleSelectAlbum(album, e)}
               onDoubleClick={() => handlePlayAlbum(album)}
+              draggable
+              onDragStart={(e) => handleAlbumDragStart(album, e)}
             >
-              <img loading="lazy" decoding="async"
+              <img loading="lazy" decoding="async" draggable={false}
                 src={
                   album.cover_url
                     ? coverSrc(album.cover_url, 200)
@@ -397,13 +414,26 @@ const ArtistAlbums = () => {
               />
             </div>
             <div className={styles.albumBlockRight}>
-              <h2
-                className={clsx(styles.albumTitle, styles.albumHeader, "truncate")}
-                onClick={(e) => handleSelectAlbum(album, e)}
-                onDoubleClick={() => handlePlayAlbum(album)}
-              >
-                {album.title}
-              </h2>
+              <div className={styles.albumTitleRow}>
+                <h2
+                  className={clsx(
+                    styles.albumTitle,
+                    styles.albumHeader,
+                    "truncate",
+                  )}
+                  onClick={(e) => handleSelectAlbum(album, e)}
+                  onDoubleClick={() => handlePlayAlbum(album)}
+                  draggable
+                  onDragStart={(e) => handleAlbumDragStart(album, e)}
+                >
+                  {album.title}
+                </h2>
+                {albumMetaLine(album.songs) && (
+                  <span className={clsx(styles.albumMeta, "truncate")}>
+                    {albumMetaLine(album.songs)}
+                  </span>
+                )}
+              </div>
               <ul className={styles.songs}>
                 {album.songs.map((song: Song, songIndex: number) => (
                   <SongListItem
