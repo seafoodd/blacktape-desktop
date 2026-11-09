@@ -135,7 +135,7 @@ export function albumInfoLine(
 
 /** The track as a search item, so the stream button can play it (and queue the tracks after it). */
 export function trackAsStreamItem(
-  preview: Pick<AlbumPreview, "platform" | "title" | "artist" | "cover_url">,
+  preview: Pick<AlbumPreview, "platform" | "title" | "artist" | "cover_url"> & Partial<Pick<AlbumPreview, "url">>,
   track: AlbumTrackInfo,
 ): SearchSuggestion {
   return {
@@ -143,6 +143,7 @@ export function trackAsStreamItem(
     name: track.title,
     band_name: track.artists[0] || preview.artist,
     album_name: preview.title,
+    album_url: preview.url,
     item_url_path: track.url,
     img: preview.cover_url ?? "",
     duration: typeof track.duration_ms === "number" ? Math.round(track.duration_ms / 1000) : undefined,

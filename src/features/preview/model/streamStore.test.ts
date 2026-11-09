@@ -109,6 +109,18 @@ describe("toStreamRequest", () => {
     });
   });
 
+  it("maps the album name and album url", () => {
+    const req = toStreamRequest(fixture({ album_name: "LP", album_url: "https://alb" }));
+    expect(req.album).toBe("LP");
+    expect(req.album_url).toBe("https://alb");
+  });
+
+  it("maps a missing album name and album url to undefined", () => {
+    const req = toStreamRequest(fixture());
+    expect(req.album).toBeUndefined();
+    expect(req.album_url).toBeUndefined();
+  });
+
   it("maps an empty image to a null cover", () => {
     expect(toStreamRequest(fixture({ img: "" })).cover).toBeNull();
   });
