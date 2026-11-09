@@ -54,6 +54,8 @@ export function toStreamRequest(item: SearchSuggestion): StreamRequest {
     url: item.item_url_path,
     title: item.name,
     artist: item.band_name,
+    album: item.album_name ?? undefined,
+    album_url: item.album_url ?? undefined,
     cover: item.img || null,
     duration_ms: typeof item.duration === "number" ? item.duration * 1000 : null,
   };

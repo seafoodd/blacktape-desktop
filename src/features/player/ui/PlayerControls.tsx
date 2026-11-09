@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { seek } from "@/shared/lib/audio.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
   MdCloudQueue,
+  MdCheck,
+  MdFavoriteBorder,
+  MdFileDownload,
+  MdPlaylistAdd,
   MdPause,
   MdPlayArrow,
   MdRepeat,
@@ -18,6 +22,14 @@ import {
 import clsx from "clsx";
 import { coverSrc } from "@/shared/lib/cover";
 import placeholderSongImage from "@/assets/react.svg";
+import { ItemType, useLibraryStore, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
+import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
+import { remoteTrackDownloadParams } from "@/features/remote-track-menu/model/buildRemoteTrackMenu.ts";
+import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
+import { useModalStore } from "@/shared/store/modalStore.ts";
+import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
+import { streamAlbumUrl } from "@/shared/lib/stream.ts";
+import { albumTarget, remoteTrackRef, streamSongToRemoteTrack } from "../lib/currentSong.ts";
 import { RepeatMode } from "@/shared/types.ts";
 
 export const PlayerControls = () => {
@@ -64,6 +76,33 @@ export const PlayerControls = () => {
       return setVolume(mutedVolume);
     }
     setVolume(0);
+  };
+
+  const openModal = useModalStore((s) => s.openModal);
+  const albumUrl = streamAlbumUrl(currentSong?.source_url);
+  const target = currentSong ? albumTarget(currentSong, isStreaming, albumUrl) : null;
+  // A stream is not in the library: it can be downloaded (and only then added to a playlist).
+  const streamTrack = useMemo(
+    () => (currentSong && isStreaming ? streamSongToRemoteTrack(currentSong, albumUrl) : null),
+    [currentSong, isStreaming, albumUrl],
+  );
+  const downloadState = useTrackStatus(streamTrack ? remoteTrackRef(streamTrack) : null);
+
+  const openAlbum = () => {
+    if (!currentSong || !target) return;
+    if (target.kind === "library") {
+      void useLibraryStore.getState().setSelectedTab(target.albumArtist);
+      return;
+    }
+    const item: SearchSuggestion = {
+      item_type: ItemType.Album,
+      name: currentSong.album,
+      band_name: currentSong.album_artist,
+      item_url_path: target.url,
+      img: currentSong.cover_url ?? "",
+      platform: currentSong.source,
+    };
+    void useAlbumPreviewStore.getState().open(item);
   };
 
   const currentTime = currentSong ? currentSong.duration_ms * progress : 0;
@@ -170,14 +209,52 @@ export const PlayerControls = () => {
                       Streaming
                     </span>
                   )}
-                  {[
-                    currentSong.album_artist,
-                    currentSong.album,
-                    currentSong.release_year,
-                  ]
-                    .filter(Boolean)
-                    .join(" • ")}
+                  {currentSong.album_artist}
+                  {currentSong.album && " • "}
+                  {target ? (
+                    <button
+                      type="button"
+                      className={styles.albumLink}
+                      onClick={openAlbum}
+                      title="Open the album"
+                    >
+                      {currentSong.album}
+                    </button>
+                  ) : (
+                    currentSong.album
+                  )}
+                  {currentSong.release_year ? ` • ${currentSong.release_year}` : ""}
                 </div>
+              </div>
+              <div className={styles.songActions}>
+                {streamTrack && (
+                  <button
+                    type="button"
+                    className={styles.songAction}
+                    disabled={downloadState === "downloaded"}
+                    title={downloadState === "downloaded" ? "Already in your library" : "Download this song"}
+                    onClick={() => void useLibraryStore.getState().startDownload(remoteTrackDownloadParams(streamTrack))}
+                  >
+                    {downloadState === "downloaded" ? <MdCheck /> : <MdFileDownload />}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={styles.songAction}
+                  disabled={isStreaming}
+                  title={isStreaming ? "Download the song first to add it to a playlist" : "Add to playlist"}
+                  onClick={() => openModal(<AddToPlaylistModal songIds={[currentSong.id]} />)}
+                >
+                  <MdPlaylistAdd />
+                </button>
+                <button
+                  type="button"
+                  className={styles.songAction}
+                  disabled
+                  title="Favorites are not implemented yet"
+                >
+                  <MdFavoriteBorder />
+                </button>
               </div>
             </>
           ) : (

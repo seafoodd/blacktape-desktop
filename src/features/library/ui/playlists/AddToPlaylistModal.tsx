@@ -51,7 +51,7 @@ export const AddToPlaylistModal = ({ songIds }: AddToPlaylistModalProps) => {
           }}
           className={styles.playlistItem}
         >
-          <BsFillPlusSquareFill className={styles.playlistImage} size={48} />
+          <BsFillPlusSquareFill className={styles.playlistImage} size={64} />
           <span className={styles.playlistName}>Create New Playlist</span>
         </button>
         {playlists.length > 0 &&

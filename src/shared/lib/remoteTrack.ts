@@ -55,6 +55,8 @@ export function remoteTrackToStreamRequest(track: RemoteTrack): StreamRequest {
     url: track.url,
     title: track.title,
     artist: track.artist,
+    album: track.album ?? undefined,
+    album_url: track.album_url ?? undefined,
     cover: track.cover || null,
     duration_ms: track.duration_ms ?? null,
   };

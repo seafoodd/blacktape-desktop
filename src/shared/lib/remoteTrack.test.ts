@@ -43,6 +43,7 @@ describe("remoteTrack converters", () => {
       url: item.item_url_path,
       title: "Song",
       artist: "Band",
+      album: "LP",
       cover: "https://img/c.jpg",
       duration_ms: 185000,
     });

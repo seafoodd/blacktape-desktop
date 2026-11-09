@@ -21,6 +21,9 @@ pub struct StreamRequest {
     pub url: String,
     pub title: String,
     pub artist: String,
+    /// Album the track belongs to, shown by the player.
+    #[serde(default)]
+    pub album: Option<String>,
     #[serde(default)]
     pub cover: Option<String>,
     /// Duration known from the search result, used until the decoder reports its own.
@@ -44,7 +47,7 @@ pub fn stream_song(request: &StreamRequest, duration_ms: Option<u64>) -> Song {
         title: request.title.clone(),
         artists: vec![request.artist.clone()],
         album_artist: request.artist.clone(),
-        album: String::new(),
+        album: request.album.clone().unwrap_or_default(),
         duration_ms: duration_ms.unwrap_or(0),
         track_number: None,
         genre: None,
@@ -377,6 +380,7 @@ mod tests {
             url: "https://soundcloud.com/a/b".into(),
             title: "T".into(),
             artist: "A".into(),
+            album: Some("Alb".into()),
             cover: Some("https://img/x.jpg".into()),
             duration_ms: Some(1234),
         };
@@ -389,6 +393,7 @@ mod tests {
         assert_eq!(song.source, Platform::Soundcloud);
         assert_eq!(song.source_url.as_deref(), Some("https://soundcloud.com/a/b"));
         assert_eq!(song.cover_url.as_deref(), Some("https://img/x.jpg"));
+        assert_eq!(song.album, "Alb");
     }
 
     #[test]
@@ -398,12 +403,14 @@ mod tests {
             url: "u".into(),
             title: "T".into(),
             artist: "A".into(),
+            album: None,
             cover: Some(String::new()),
             duration_ms: None,
         };
         let song = stream_song(&request, None);
         assert_eq!(song.cover_url, None);
         assert_eq!(song.duration_ms, 0);
+        assert_eq!(song.album, "");
     }
 
     #[test]
@@ -413,7 +420,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.platform, Platform::Youtube);
-        assert!(r.cover.is_none() && r.duration_ms.is_none());
+        assert!(r.cover.is_none() && r.duration_ms.is_none() && r.album.is_none());
     }
 
     #[test]
