@@ -11,6 +11,7 @@ use crate::soundcloud::{
     Availability, ScCollection, ScPlaylist, ScTrack, ScUser,
 };
 use crate::types::Platform;
+use std::collections::HashSet;
 use std::error::Error;
 
 const DROPDOWN_TRACKS: u32 = 20;
@@ -87,7 +88,75 @@ pub async fn search_kind(
         ],
     )
     .await?;
-    Ok(map_page(&page, kind))
+    let mut result = map_page(&page, kind);
+    if kind == SearchKind::Sets {
+        // Search only returns stub tracks inside a set, so Go+ sets look fine until the tracks are
+        // looked up. Sample a few tracks per set and hide the sets that can't be downloaded.
+        let playlists = page.items::<ScPlaylist>();
+        let blocked = unavailable_set_ids(&playlists).await;
+        if !blocked.is_empty() {
+            result.items = playlists
+                .iter()
+                .filter(|p| !blocked.contains(&p.id))
+                .filter_map(playlist_suggestion)
+                .collect();
+        }
+    }
+    Ok(result)
+}
+
+/// How many tracks of a set are looked up to decide whether it can be downloaded (first and last).
+const SET_SAMPLE_SIZE: usize = 2;
+
+/// Ids of the tracks sampled from `playlist` (first and last stub, deduplicated).
+pub fn sample_track_ids(playlist: &ScPlaylist) -> Vec<u64> {
+    let mut ids: Vec<u64> = Vec::with_capacity(SET_SAMPLE_SIZE);
+    for track in [playlist.tracks.first(), playlist.tracks.last()]
+        .into_iter()
+        .flatten()
+    {
+        if !ids.contains(&track.id) {
+            ids.push(track.id);
+        }
+    }
+    ids
+}
+
+/// Sets whose sampled tracks are all preview-only or geo-blocked. Tracks that could not be loaded
+/// (deleted, request failed) say nothing, so a set without any known sample stays visible.
+pub fn blocked_set_ids(playlists: &[ScPlaylist], fetched: &[ScTrack]) -> HashSet<u64> {
+    playlists
+        .iter()
+        .filter(|playlist| {
+            let known: Vec<&ScTrack> = sample_track_ids(playlist)
+                .iter()
+                .filter_map(|id| fetched.iter().find(|t| t.id == *id))
+                .collect();
+            !known.is_empty()
+                && known.iter().all(|t| {
+                    matches!(
+                        availability(t),
+                        Availability::PreviewOnly | Availability::GeoBlocked
+                    )
+                })
+        })
+        .map(|playlist| playlist.id)
+        .collect()
+}
+
+/// Looks the sampled tracks of `playlists` up in one batch. A failed lookup hides nothing.
+async fn unavailable_set_ids(playlists: &[ScPlaylist]) -> HashSet<u64> {
+    let ids: Vec<u64> = playlists.iter().flat_map(sample_track_ids).collect();
+    if ids.is_empty() {
+        return HashSet::new();
+    }
+    match soundcloud::fetch_tracks(&ids).await {
+        Ok(fetched) => blocked_set_ids(playlists, &fetched),
+        Err(e) => {
+            eprintln!("[SoundCloud search] could not check set tracks: {e}");
+            HashSet::new()
+        }
+    }
 }
 
 pub fn map_page(page: &ScCollection, kind: SearchKind) -> SearchPage {
@@ -328,5 +397,85 @@ mod tests {
         assert_eq!(profile.top_songs.len(), PROFILE_TOP_SONGS);
         let plays: Vec<Option<u64>> = profile.top_songs.iter().map(|t| t.view_count).collect();
         assert_eq!(plays, vec![Some(700), Some(600), Some(500), Some(400), Some(300)]);
+    }
+
+    /// A set as search returns it: stub tracks that only carry an id.
+    fn set(id: u64, track_ids: &[u64]) -> ScPlaylist {
+        let tracks: Vec<serde_json::Value> = track_ids
+            .iter()
+            .map(|t| serde_json::json!({ "id": t }))
+            .collect();
+        serde_json::from_value(serde_json::json!({ "id": id, "title": "set", "tracks": tracks }))
+            .unwrap()
+    }
+
+    /// Fully downloadable track clone with a Go+ (`SNIP`) or geo-block (`BLOCK`) policy.
+    fn with_policy(i: usize, policy: &str) -> ScTrack {
+        let mut track = track_with_plays(i, 0);
+        track.policy = Some(policy.to_string());
+        track
+    }
+
+    #[test]
+    fn sample_track_ids_takes_first_and_last_track() {
+        assert_eq!(sample_track_ids(&set(1, &[10, 11, 12])), vec![10, 12]);
+    }
+
+    #[test]
+    fn sample_track_ids_does_not_duplicate_a_single_track() {
+        assert_eq!(sample_track_ids(&set(1, &[10])), vec![10]);
+    }
+
+    #[test]
+    fn sample_track_ids_is_empty_for_a_set_without_tracks() {
+        assert!(sample_track_ids(&set(1, &[])).is_empty());
+    }
+
+    #[test]
+    fn set_with_preview_first_and_last_tracks_is_blocked() {
+        let first = with_policy(0, "SNIP");
+        let last = with_policy(1, "SNIP");
+        let playlists = [set(7, &[first.id, last.id])];
+        let fetched = [first, last];
+        assert_eq!(blocked_set_ids(&playlists, &fetched), HashSet::from([7u64]));
+    }
+
+    #[test]
+    fn set_with_preview_first_but_downloadable_last_track_is_not_blocked() {
+        let first = with_policy(0, "SNIP");
+        let last = track_with_plays(1, 10);
+        let playlists = [set(7, &[first.id, last.id])];
+        let fetched = [first, last];
+        assert!(blocked_set_ids(&playlists, &fetched).is_empty());
+    }
+
+    #[test]
+    fn set_whose_sampled_tracks_were_not_fetched_is_not_blocked() {
+        let playlists = [set(7, &[900, 901])];
+        let fetched: Vec<ScTrack> = vec![];
+        assert!(blocked_set_ids(&playlists, &fetched).is_empty());
+    }
+
+    #[test]
+    fn set_with_geo_blocked_first_and_last_tracks_is_blocked() {
+        let first = with_policy(0, "BLOCK");
+        let last = with_policy(1, "BLOCK");
+        let playlists = [set(7, &[first.id, last.id])];
+        let fetched = [first, last];
+        assert_eq!(blocked_set_ids(&playlists, &fetched), HashSet::from([7u64]));
+    }
+
+    #[test]
+    fn only_the_unavailable_set_is_reported_as_blocked() {
+        let blocked_first = with_policy(0, "BLOCK");
+        let blocked_last = with_policy(1, "SNIP");
+        let fine_first = track_with_plays(2, 10);
+        let fine_last = track_with_plays(3, 10);
+        let playlists = [
+            set(1, &[blocked_first.id, blocked_last.id]),
+            set(2, &[fine_first.id, fine_last.id]),
+        ];
+        let fetched = [blocked_first, blocked_last, fine_first, fine_last];
+        assert_eq!(blocked_set_ids(&playlists, &fetched), HashSet::from([1u64]));
     }
 }
