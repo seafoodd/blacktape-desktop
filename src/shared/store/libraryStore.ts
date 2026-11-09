@@ -36,6 +36,8 @@ export interface DownloadProgress {
   platform: Platform;
   overallPercent: number;
   tracks: TrackDownloadProgress[];
+  /** A single track filed into a library song: its progress belongs to that song, whatever title the platform gave it. */
+  placement?: TrackPlacement;
 }
 
 export interface StartDownloadParams {
@@ -47,6 +49,16 @@ export interface StartDownloadParams {
   coverUrl?: string;
   /** Album downloads only: page urls of the tracks to download (all tracks when omitted). */
   trackUrls?: string[];
+  /** Single track downloads: the library album and song this track stands for (names and number win over the platform's). */
+  placement?: TrackPlacement;
+}
+
+/** Mirrors the Rust `TrackPlacement` (snake_case on the wire). */
+export interface TrackPlacement {
+  album: string;
+  album_artist: string;
+  title: string;
+  track_number: number | null;
 }
 
 export type ActiveView =
@@ -522,6 +534,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const title = isObject ? paramsOrPlatform.title || "" : "";
     const coverUrl = isObject ? paramsOrPlatform.coverUrl : undefined;
     const trackUrls = isObject ? paramsOrPlatform.trackUrls : undefined;
+    const placement = isObject ? paramsOrPlatform.placement : undefined;
 
     const taskId = crypto.randomUUID();
     const isSingleTrack =
@@ -539,18 +552,19 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           message: "Starting download...",
           artistName,
           // A single track has no album title until its page was read (then "Singles" or its album).
-          albumTitle: isSingleTrack ? "" : title || "Album",
+          albumTitle: placement ? placement.album : isSingleTrack ? "" : title || "Album",
           coverUrl,
           itemType: downloadType as ItemType,
           platform: platform as Platform,
           overallPercent: 0,
+          placement,
           tracks: isSingleTrack
             ? [
                 {
                   title: title || "Track",
                   percent: 0,
                   status: "downloading",
-                  trackNumber: 1,
+                  trackNumber: placement?.track_number ?? 1,
                 },
               ]
             : [],
@@ -568,6 +582,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         title,
         coverUrl,
         trackUrls: trackUrls ?? null,
+        placement: placement ?? null,
       });
     } catch (e) {
       console.error("Download invoke failed:", e);

@@ -5,6 +5,9 @@ import {
   linkAlbumSource,
   type AlbumCandidate,
 } from "@/shared/lib/libraryIndex.ts";
+import { explainFailure } from "@/features/library/model/downloadFailure.ts";
+import { sameUrl } from "@/shared/lib/urlKey.ts";
+import FindAlternativeModal from "@/features/library/ui/FindAlternativeModal.tsx";
 import { useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
 import { candidateMeta } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 import styles from "./find-missing-modal.module.css";
@@ -13,20 +16,37 @@ interface FindMissingModalProps {
   albumArtist: string;
   /** Title of the library album. */
   album: string;
+  /** Page url of the album that is linked now: left out of the list (a change of link needs another one). */
+  excludeUrl?: string;
+  /** A song of the album has no stream on the linked platform: the text says so and offers to find just that song. */
+  failedSong?: {
+    artist: string;
+    title: string;
+    platform: string;
+    trackNumber: number | null;
+    /** The error of the failed download; unknown for a song marked earlier as having no stream. */
+    message?: string;
+    retry?: () => void;
+  };
 }
 
 /** Looks for the platform album of a library album that has no stored source and links the one the user picks. */
-const FindMissingModal = ({ albumArtist, album }: FindMissingModalProps) => {
+const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMissingModalProps) => {
   const closeModal = useModalStore((state) => state.closeModal);
+  const openModal = useModalStore((state) => state.openModal);
   const [candidates, setCandidates] = useState<AlbumCandidate[] | null>(null);
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const explained = failedSong
+    ? explainFailure(failedSong.message ?? "no output file", failedSong.platform)
+    : null;
 
   useEffect(() => {
     let cancelled = false;
     findAlbumCandidates(albumArtist, album)
       .then((found) => {
-        if (!cancelled) setCandidates(found);
+        if (!cancelled) setCandidates(excludeUrl ? found.filter((c) => !sameUrl(c.url, excludeUrl)) : found);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -36,7 +56,7 @@ const FindMissingModal = ({ albumArtist, album }: FindMissingModalProps) => {
     return () => {
       cancelled = true;
     };
-  }, [albumArtist, album]);
+  }, [albumArtist, album, excludeUrl]);
 
   const handlePick = async (candidate: AlbumCandidate) => {
     setLinking(true);
@@ -59,9 +79,16 @@ const FindMissingModal = ({ albumArtist, album }: FindMissingModalProps) => {
         {candidates === null
           ? `Looking for "${album}" on the platforms...`
           : candidates.length > 0
-            ? `Which one is "${album}"?`
+            ? failedSong
+            ? `Pick another version of "${album}":`
+            : `Which one is "${album}"?`
             : "No matching album was found."}
       </span>
+      {failedSong && (
+        <span className={styles.problem}>
+          <strong>"{failedSong.title}" could not be downloaded.</strong> {explained?.reason} {explained?.hint}
+        </span>
+      )}
       {candidates && candidates.length > 0 && (
         <div className={styles.list}>
           {candidates.map((candidate) => (
@@ -87,6 +114,41 @@ const FindMissingModal = ({ albumArtist, album }: FindMissingModalProps) => {
       )}
       {error && <span className={styles.error}>{error}</span>}
       <div className={styles.buttons}>
+        {failedSong?.retry && explained?.kind !== "no-stream" && (
+          <button
+            className={styles.cancelButton}
+            disabled={linking}
+            onClick={() => {
+              failedSong.retry?.();
+              closeModal();
+            }}
+          >
+            Try again
+          </button>
+        )}
+        {failedSong && (
+          <button
+            className={styles.cancelButton}
+            disabled={linking}
+            onClick={() =>
+              openModal(
+                <FindAlternativeModal
+                  artist={failedSong.artist}
+                  title={failedSong.title}
+                  excludePlatform={failedSong.platform.toLowerCase()}
+                  placement={{
+                    album,
+                    album_artist: albumArtist,
+                    title: failedSong.title,
+                    track_number: failedSong.trackNumber,
+                  }}
+                />,
+              )
+            }
+          >
+            Only this song from YouTube / SoundCloud
+          </button>
+        )}
         <button className={styles.cancelButton} onClick={closeModal} disabled={linking}>
           Cancel
         </button>

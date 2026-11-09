@@ -138,15 +138,30 @@ function normalizeTitle(title: string): string {
   return title.trim().toLowerCase();
 }
 
+/** True when a placed single download stands for this missing song (the platform's own title may differ). */
+function isPlacedTrack(
+  placement: { title: string; track_number: number | null },
+  track: Pick<AlbumTrackInfo, "title" | "track_number" | "index">,
+): boolean {
+  if (normalizeTitle(placement.title) === normalizeTitle(track.title)) return true;
+  return placement.track_number !== null && placement.track_number === (track.track_number ?? track.index + 1);
+}
+
 /**
  * Progress (0..100) of a missing song inside the running download of its album: 0 while it waits or when the
  * download does not list it. Tracks are matched by title, then by track number.
  */
 export function missingTrackPercent(
-  download: Pick<DownloadProgress, "tracks"> | undefined,
+  download: Pick<DownloadProgress, "tracks" | "placement"> | undefined,
   track: Pick<AlbumTrackInfo, "title" | "track_number" | "index">,
 ): number {
   if (!download) return 0;
+  if (download.placement) {
+    if (!isPlacedTrack(download.placement, track)) return 0;
+    const only = download.tracks[0];
+    if (!only) return 0;
+    return only.status === "completed" ? 100 : Math.max(0, Math.min(100, Math.round(only.percent)));
+  }
   const title = normalizeTitle(track.title);
   const number = track.track_number ?? track.index + 1;
   const found =
@@ -161,13 +176,14 @@ export function missingTrackPercent(
  * not list its tracks yet (the whole album is on its way).
  */
 export function missingTrackDownloading(
-  download: Pick<DownloadProgress, "tracks" | "status"> | undefined,
+  download: Pick<DownloadProgress, "tracks" | "status" | "placement"> | undefined,
   track: Pick<AlbumTrackInfo, "title" | "track_number" | "index">,
 ): boolean {
   if (!download) return false;
   if (download.status !== "downloading" && download.status !== "idle" && download.status !== "processing") {
     return false;
   }
+  if (download.placement) return isPlacedTrack(download.placement, track);
   if (download.tracks.length === 0) return true;
   const title = normalizeTitle(track.title);
   const number = track.track_number ?? track.index + 1;
@@ -195,11 +211,38 @@ const hasBrackets = (title: string): boolean => /\([^)]*\)|\[[^\]]*\]/.test(titl
  * Same song by title. Brackets are ignored on the song side ("Title(+ Guest)" is "Title"), but not on the remote
  * side: "Title (interlude)" is another track than the song "Title".
  */
-function sameTitle(songTitle: string, trackTitle: string): boolean {
+export function sameTitle(songTitle: string, trackTitle: string): boolean {
   if (songTitle.trim().toLowerCase() === trackTitle.trim().toLowerCase()) return true;
   if (hasBrackets(trackTitle) && !hasBrackets(songTitle)) return false;
   const [x, y] = [looseTitle(songTitle), looseTitle(trackTitle)];
   return x !== "" && x === y;
+}
+
+/**
+ * True when the numbered songs of an album skip a number (1, 2, 4): a sign that songs are missing. Needs at least
+ * two numbered songs; unnumbered songs are ignored.
+ */
+export function albumHasTrackGaps(songs: readonly Pick<Song, "track_number">[]): boolean {
+  const numbers = new Set<number>();
+  for (const s of songs) {
+    if (typeof s.track_number === "number" && s.track_number > 0) numbers.add(s.track_number);
+  }
+  if (numbers.size < 2) return false;
+  return Math.max(...numbers) > numbers.size;
+}
+
+/** A trashed song as far as matching a missing track needs it. */
+export interface TrashedSong {
+  id: number;
+  title: string;
+  album: string;
+}
+
+/** The trashed song that is this missing track of this library album (same album name, same title), if any. */
+export function findTrashItem<T extends TrashedSong>(items: readonly T[], album: string, track: Pick<AlbumTrackInfo, "title">): T | undefined {
+  const a = album.trim().toLowerCase();
+  const title = decodeHtmlEntities(track.title);
+  return items.find((i) => i.album.trim().toLowerCase() === a && sameTitle(i.title, title));
 }
 
 /** True when the library song and the remote track are the same song (same page, else same title). */

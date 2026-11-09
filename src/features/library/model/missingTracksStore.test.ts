@@ -3,6 +3,9 @@ import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
 import type { LibraryAlbumSource, MissingTracks } from "@/shared/lib/libraryIndex.ts";
 import {
   busyAlbumUrls,
+  failedSongs,
+  recoveredSongs,
+  withoutUnavailable,
   missingDownloadParams,
   missingTrackUrls,
   playableMissingTracks,
@@ -13,6 +16,7 @@ import {
   toggleShown,
   useMissingTracksStore,
 } from "./missingTracksStore.ts";
+import { isNoStreamFailure } from "./downloadFailure.ts";
 
 const { getArtistAlbumSourcesMock, getMissingTracksMock, startDownloadMock, subscribeMock } =
   vi.hoisted(() => ({
@@ -533,5 +537,49 @@ describe("downloadMany", () => {
     useMissingTracksStore.setState({ artist: "Artist" });
     await useMissingTracksStore.getState().downloadMany("A", [track(1)]);
     expect(startDownloadMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("no-stream songs", () => {
+  const failed = (id: string, url: string, message: string) => ({ id, url, status: "failed" as const, message });
+  it("recognises the yt-dlp errors of a song without a stream", () => {
+    expect(isNoStreamFailure("ERROR: [Bandcamp] 1: No video formats found!")).toBe(true);
+    expect(isNoStreamFailure("Network is unreachable")).toBe(false);
+  });
+  it("marks the only pending song of a failed album download as having no stream", () => {
+    const pending = new Map([["t1", "album"]]);
+    const { songs } = failedSongs(pending, { a: failed("a", "album", "No video formats found") }, new Set());
+    expect(songs).toEqual([{ url: "t1", album: "album", message: "No video formats found", noStream: true }]);
+  });
+  it("fails every pending song but marks none as having no stream when there are several", () => {
+    const two = new Map([["t1", "album"], ["t2", "album"]]);
+    const { songs } = failedSongs(two, { a: failed("a", "album", "No video formats found") }, new Set());
+    expect(songs.map((s) => [s.url, s.noStream])).toEqual([["t1", false], ["t2", false]]);
+  });
+  it("any other error is a failure of the song, not a missing stream", () => {
+    const { songs } = failedSongs(new Map([["t1", "album"]]), { a: failed("a", "album", "timeout") }, new Set());
+    expect(songs).toEqual([{ url: "t1", album: "album", message: "timeout", noStream: false }]);
+  });
+  it("ignores failed downloads that were handled before (an old failure must not fail a new download)", () => {
+    const { songs, handledIds } = failedSongs(new Map([["t1", "album"]]), { a: failed("a", "album", "x") }, new Set(["a"]));
+    expect(songs).toEqual([]);
+    expect(handledIds).toEqual([]);
+  });
+  it("lowers the missing count by the loaded unavailable songs only", () => {
+    const source = { album: "A", platform: "bandcamp", source_url: "u", cover_url: null, total: 3, owned: 1, missing: 2 } as const;
+    const loaded = { tracks: [{ url: "t1" }, { url: "t2" }] } as never;
+    expect(withoutUnavailable(source, loaded, new Set(["t1"])).missing).toBe(1);
+    expect(withoutUnavailable(source, loaded, new Set(["other"])).missing).toBe(2);
+    expect(withoutUnavailable(source, null, new Set(["t1"])).missing).toBe(2);
+  });
+});
+
+describe("recoveredSongs", () => {
+  it("forgets the failed songs of the album that are not missing any more", () => {
+    const failureAlbum = { t1: "album", t2: "album", t3: "other" };
+    expect(recoveredSongs(failureAlbum, "album", new Set(["t2"]))).toEqual(["t1"]);
+  });
+  it("keeps everything while the song is still missing", () => {
+    expect(recoveredSongs({ t1: "album" }, "album", new Set(["t1"]))).toEqual([]);
   });
 });

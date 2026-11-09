@@ -532,6 +532,7 @@ async fn download(
     title: Option<String>,
     cover_url: Option<String>,
     track_urls: Option<Vec<String>>,
+    placement: Option<crate::download::types::TrackPlacement>,
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
         let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
@@ -555,7 +556,9 @@ async fn download(
         download_type: format!("{:?}", download_type),
         url: url.clone(),
         artist_name: initial_artist,
-        album_title: if is_track {
+        album_title: if let Some(p) = &placement {
+            p.album.clone()
+        } else if is_track {
             String::new() // set once the track page was read
         } else {
             initial_title.clone()
@@ -588,7 +591,10 @@ async fn download(
             _ => DownloadPayload::AlbumURL(url),
         },
         DownloadType::Playlist => return Err("Playlist downloads unimplemented.".into()),
-        DownloadType::Track => DownloadPayload::TrackURL(url),
+        DownloadType::Track => match placement {
+            Some(placement) => DownloadPayload::PlacedTrack { url, placement },
+            None => DownloadPayload::TrackURL(url),
+        },
     };
 
     queue_state

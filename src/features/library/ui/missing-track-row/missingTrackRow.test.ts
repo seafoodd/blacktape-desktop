@@ -15,6 +15,8 @@ import {
   nextGhosts,
   ghostTrack,
   looseTitle,
+  albumHasTrackGaps,
+  findTrashItem,
   GHOST_TTL_MS,
   songMatchesTrack,
   withoutDownloaded,
@@ -548,5 +550,50 @@ describe("missingTrackDownloading", () => {
 
   it("is false for a track the download does not list", () => {
     expect(missingTrackDownloading(dl("downloading", ["Other"]), { ...track, track_number: 99 })).toBe(false);
+  });
+});
+
+describe("findTrashItem", () => {
+  const items = [
+    { id: 1, title: "Взаперти", album: "Альбом" },
+    { id: 2, title: "Other", album: "Another" },
+  ];
+  it("finds a trashed song of the same album and title", () => {
+    expect(findTrashItem(items, " альбом ", { title: "взаперти" })?.id).toBe(1);
+  });
+  it("ignores the same title in another album", () => {
+    expect(findTrashItem(items, "Another", { title: "Взаперти" })).toBeUndefined();
+  });
+  it("does not treat a bracketed variant as the trashed song", () => {
+    expect(findTrashItem(items, "Альбом", { title: "Взаперти (интерлюдия)" })).toBeUndefined();
+  });
+});
+
+describe("albumHasTrackGaps", () => {
+  const n = (...nums: (number | null | undefined)[]) => nums.map((track_number) => ({ track_number }));
+  it("detects a skipped number", () => expect(albumHasTrackGaps(n(1, 2, 4))).toBe(true));
+  it("is false for a complete run", () => expect(albumHasTrackGaps(n(1, 2, 3))).toBe(false));
+  it("is false for a single or unnumbered song", () => {
+    expect(albumHasTrackGaps(n(3))).toBe(false);
+    expect(albumHasTrackGaps(n(null, undefined, 0))).toBe(false);
+  });
+  it("ignores repeated numbers of several discs", () => expect(albumHasTrackGaps(n(1, 2, 1, 2))).toBe(false));
+});
+
+describe("placed single downloads", () => {
+  const placement = { album: "A", album_artist: "X", title: "Not Just What I Needed", track_number: 5 };
+  const download = {
+    status: "downloading" as const,
+    placement,
+    tracks: [{ title: "Not What I Needed", percent: 40, status: "downloading" as const, trackNumber: 1 }],
+  };
+  const row = (title: string, track_number: number, index: number) => ({ title, track_number, index });
+  it("belongs to the song it was started for, whatever title the platform reports", () => {
+    expect(missingTrackDownloading(download, row("Not Just What I Needed", 5, 4))).toBe(true);
+    expect(missingTrackPercent(download, row("Not Just What I Needed", 5, 4))).toBe(40);
+  });
+  it("does not touch the other songs", () => {
+    expect(missingTrackDownloading(download, row("Fill In The Blank", 1, 0))).toBe(false);
+    expect(missingTrackPercent(download, row("Fill In The Blank", 1, 0))).toBe(0);
   });
 });

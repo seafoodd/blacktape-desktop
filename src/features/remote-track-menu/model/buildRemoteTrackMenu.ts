@@ -55,7 +55,9 @@ export function buildRemoteTrackMenu(
   actions: RemoteTrackMenuActions,
 ): MenuItemOption[] {
   const downloaded = options.downloadState === "downloaded";
+  const extra = options.extraItems?.length ? [...options.extraItems, { label: "", separator: true }] : [];
   return [
+    ...extra,
     downloaded
       ? { label: "Downloaded", disabled: true }
       : { label: "Download", action: () => actions.download(track) },

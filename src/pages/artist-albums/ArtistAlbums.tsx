@@ -23,6 +23,9 @@ import { albumMetaLine } from "@/shared/lib/albumMeta.ts";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
 import { setDragGhost } from "@/shared/lib/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
+import { MdWarningAmber } from "react-icons/md";
+import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/trash.ts";
+import { listen } from "@tauri-apps/api/event";
 import { sameUrl } from "@/shared/lib/urlKey.ts";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
@@ -39,6 +42,7 @@ import {
   playableMissingTracks,
   sourceOfAlbum,
   useMissingTracksStore,
+  withoutUnavailable,
 } from "@/features/library/model/missingTracksStore.ts";
 import MissingTrackRow from "@/features/library/ui/missing-track-row/MissingTrackRow.tsx";
 import {
@@ -52,6 +56,8 @@ import {
   missingRemoteTrack,
   missingTrackPercent,
   missingTrackDownloading,
+  findTrashItem,
+  albumHasTrackGaps,
 } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 
 const ArtistAlbums = () => {
@@ -66,6 +72,17 @@ const ArtistAlbums = () => {
 
   const missingArtist = useMissingTracksStore((s) => s.artist);
   const missingSources = useMissingTracksStore((s) => s.sources);
+  const [trashed, setTrashed] = useState<TrashItem[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => void listTrash().then((items) => alive && setTrashed(items)).catch(() => {});
+    load();
+    const unlisten = listen(TRASH_CHANGED_EVENT, load);
+    return () => {
+      alive = false;
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
   const missingShown = useMissingTracksStore((s) => s.shown);
   const missingTracks = useMissingTracksStore((s) => s.tracks);
   const pendingUrls = useMissingTracksStore((s) => s.pendingUrls);
@@ -76,8 +93,12 @@ const ArtistAlbums = () => {
   const downloadMissing = useMissingTracksStore((s) => s.downloadMissing);
   // The store describes one artist at a time: until it has switched to the selected one, show none of its data.
   const missingReady = missingArtist === selectedTab;
-  const sourceOf = (title: string) =>
-    missingReady ? sourceOfAlbum(missingSources, title) : undefined;
+  const unavailable = useMissingTracksStore((s) => s.unavailable);
+  const missingFailures = useMissingTracksStore((s) => s.failures);
+  const sourceOf = (title: string) => {
+    const source = missingReady ? sourceOfAlbum(missingSources, title) : undefined;
+    return source ? withoutUnavailable(source, missingTracks[title], unavailable) : undefined;
+  };
   const isMissingShown = (title: string) =>
     missingReady && missingShown.has(title);
 
@@ -549,6 +570,20 @@ const ArtistAlbums = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDownloads, missingSources, missingReady, albums]);
 
+  // Nothing is missing any more (everything was downloaded): the album closes its list of missing songs.
+  useEffect(() => {
+    if (!missingReady) return;
+    for (const title of missingShown) {
+      const source = sourceOfAlbum(missingSources, title);
+      if (!source || source.missing > 0) continue;
+      const busy = Object.values(activeDownloads).some(
+        (d) => linkedAlbumOf(d) === title && ["downloading", "idle", "processing"].includes(d.status),
+      );
+      if (!busy) toggleMissing(title);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDownloads, missingSources, missingShown, missingReady]);
+
   /** Play from a song row: with missing songs shown the queue goes through them, otherwise it is the songs. */
   function handlePlaySongRow(songId: number) {
     if (missingById.size > 0) void playFromRow(songId);
@@ -753,6 +788,49 @@ const ArtistAlbums = () => {
                     {albumMetaLine(album.songs)}
                   </span>
                 )}
+                {(() => {
+                  const source = sourceOf(album.title);
+                  if (source) {
+                    // songs with no stream are not counted, but they are still listed: the button stays for them
+                    const raw = sourceOfAlbum(missingSources, album.title)?.missing ?? 0;
+                    const shown = isMissingShown(album.title);
+                    if (raw === 0 && !shown) return null;
+                    const noun = (n: number) => `${n} ${n === 1 ? "song" : "songs"}`;
+                    const label =
+                      source.missing > 0
+                        ? `${shown ? "Hide" : "Show"} ${source.missing} missing ${source.missing === 1 ? "song" : "songs"}`
+                        : shown
+                          ? "Hide missing songs"
+                          : `Show ${noun(raw)} with no stream`;
+                    return (
+                      <button
+                        type="button"
+                        className={clsx(
+                          styles.missingButton,
+                          styles.missingToggle,
+                          shown && styles.missingButtonOn,
+                          source.owned * 2 < source.total && styles.missingMostly,
+                        )}
+                        title={label}
+                        aria-pressed={shown}
+                        onClick={() => toggleMissing(album.title)}
+                      >
+                        <span>{label}</span>
+                      </button>
+                    );
+                  }
+                  if (!missingReady || !albumHasTrackGaps(album.songs)) return null;
+                  return (
+                    <button
+                      type="button"
+                      className={styles.missingButton}
+                      title="Some songs may be missing. Find them on the platforms"
+                      onClick={() => openModal(<FindMissingModal albumArtist={selectedTab} album={album.title} />)}
+                    >
+                      <MdWarningAmber size={16} />
+                    </button>
+                  );
+                })()}
               </div>
               <ul className={styles.songs}>
                 {(() => {
@@ -791,6 +869,9 @@ const ArtistAlbums = () => {
                           percent={missingTrackPercent(download, row.track)}
                           downloading={missingTrackDownloading(download, row.track)}
                           ghost={row.track.url === ""}
+                          unavailable={unavailable.has(row.track.url)}
+                          failure={missingFailures[row.track.url]}
+                          trashId={findTrashItem(trashed, album.title, row.track)?.id}
                           selected={selection.selected.has(id)}
                           selectedAbove={selectedAt(i - 1)}
                           selectedBelow={selectedAt(i + 1)}
