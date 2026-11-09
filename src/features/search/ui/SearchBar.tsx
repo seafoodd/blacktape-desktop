@@ -24,6 +24,8 @@ import {
 } from "@/shared/hooks/useDownloadStatus.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
+import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
+import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -62,6 +64,13 @@ const SuggestionStatus = ({ item }: { item: SearchSuggestion }) => {
   // "Downloaded" is shown in place of the download button; only a partial album gets the badge here.
   const state = isAlbum ? albumState : trackState;
   return <DownloadStatusBadge state={state === "partial" ? "partial" : "none"} />;
+};
+
+/** The album a suggestion opens in the album preview: the album itself, or the album of a track (when known). */
+const previewTarget = (item: SearchSuggestion): SearchSuggestion | null => {
+  if (item.item_type === ItemType.Album) return item;
+  if (item.item_type === ItemType.Track) return trackAlbumItem(item);
+  return null;
 };
 
 interface SearchBarProps {
@@ -270,8 +279,23 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                   (d) => d.url === suggestion.item_url_path,
                 );
 
+                const target = previewTarget(suggestion);
+
                 return (
-                  <div key={index} className={styles.suggestion}>
+                  <div
+                    key={index}
+                    className={clsx(styles.suggestion, target && styles.suggestionClickable)}
+                    title={target ? `Open album ${target.name}` : undefined}
+                    onMouseDown={target ? (e) => e.preventDefault() : undefined}
+                    onClick={
+                      target
+                        ? () => {
+                            setShowDropdown(false);
+                            void useAlbumPreviewStore.getState().open(target);
+                          }
+                        : undefined
+                    }
+                  >
                     <img
                       className={clsx(styles.cover, {
                         [styles.artist]:
@@ -323,7 +347,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                       </div>
                     </div>
 
-                    <div className={styles.tools}>
+                    <div className={styles.tools} onClick={(e) => e.stopPropagation()}>
                       {suggestion.item_type !== ItemType.Artist && (
                         <>
                           <InLibrary item={suggestion}>
@@ -344,15 +368,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                                 const rect =
                                   e.currentTarget.getBoundingClientRect();
                                 flyToLibrary(rect, suggestion.img);
-                                startDownload({
-                                  platform: suggestion.platform,
-                                  downloadType: suggestion.item_type,
-                                  url: suggestion.item_url_path,
-                                  artistName:
-                                    suggestion.band_name || suggestion.name,
-                                  title: suggestion.name,
-                                  coverUrl: suggestion.img,
-                                }).catch((err) => {
+                                startDownload(searchItemDownloadParams(suggestion)).catch((err) => {
                                   console.log("Download error: ", err);
                                 });
                               }}

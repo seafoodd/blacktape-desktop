@@ -10,7 +10,7 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import { remoteRefOf, useAlbumStatus, useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
-import { downloadPercent, isDownloadBusy } from "./searchResultsFormat.ts";
+import { downloadPercent, isDownloadBusy, searchItemDownloadParams } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";
 
 interface DownloadButtonProps {
@@ -40,16 +40,7 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     flyToLibrary(rect, item.img);
-    startDownload({
-      platform: item.platform,
-      downloadType: item.item_type,
-      url: item.item_url_path,
-      artistName:
-        item.band_name ||
-        (item.item_type === ItemType.Album ? item.name : "Unknown Artist"),
-      title: item.name,
-      coverUrl: item.img,
-    }).catch((err) => console.error("Download failed", err));
+    startDownload(searchItemDownloadParams(item)).catch((err) => console.error("Download failed", err));
   };
 
   let control: ReactNode;

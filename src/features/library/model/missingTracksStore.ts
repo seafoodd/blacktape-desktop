@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   getArtistAlbumSources,
   getMissingTracks,
+  unlinkAlbumSource,
   type LibraryAlbumSource,
   type MissingTracks,
 } from "@/shared/lib/libraryIndex.ts";
@@ -127,10 +128,16 @@ export interface MissingTracksState {
   loadSources: (artist: string) => Promise<void>;
   /** Shows or hides the missing songs of `album` (loads them when shown). */
   toggle: (album: string) => void;
+  /** Shows the missing songs of `album` (loads them). */
+  show: (album: string) => void;
+  /** Removes the link of `album` to its remote album and forgets its missing songs. */
+  unlink: (artist: string, album: string) => Promise<void>;
   /** Starts one album download of the missing songs of `album` that are not already downloading. */
   downloadMissing: (album: string) => Promise<void>;
   /** Starts the album download of one missing song of `album`. Ignored when it is no longer missing or is downloading. */
   downloadOne: (album: string, track: AlbumTrackInfo) => Promise<void>;
+  /** Starts one album download of the given missing songs of `album` (those no longer missing or pending are skipped). */
+  downloadMany: (album: string, tracks: readonly AlbumTrackInfo[]) => Promise<void>;
 }
 
 // Only the latest answer may update the sources of the artist. The missing songs are guarded per album, so
@@ -218,12 +225,33 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       if (shown.has(album)) void reloadMissing(album);
     },
 
+    unlink: async (artist, album) => {
+      try {
+        await unlinkAlbumSource(artist, album);
+      } catch (e) {
+        console.error("Failed to unlink the album:", e);
+        return;
+      }
+      set({
+        shown: new Set([...get().shown].filter((a) => a !== album)),
+        tracks: { ...get().tracks, [album]: null },
+      });
+      await get().loadSources(artist);
+    },
+
+    show: (album) => {
+      set({ shown: new Set(get().shown).add(album) });
+      void reloadMissing(album);
+    },
+
     downloadMissing: async (album) => {
       const missing = await reloadMissing(album);
       if (!missing) return;
       const pending = get().pendingUrls;
       const urls = missingTrackUrls(missing).filter((url) => !pending.has(url));
       if (urls.length === 0) return;
+      // Show the songs in the album: they get their download percents there.
+      set({ shown: new Set(get().shown).add(album) });
       await startTracked(missing, urls);
     },
 
@@ -233,6 +261,16 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       // Checked after the await: a second click during the read sees the first one's pending entry.
       if (get().pendingUrls.has(track.url)) return;
       await startTracked(missing, [track.url]);
+    },
+
+    downloadMany: async (album, tracks) => {
+      const missing = await reloadMissing(album);
+      if (!missing) return;
+      const wanted = new Set(tracks.map((t) => t.url));
+      const pending = get().pendingUrls;
+      const urls = missingTrackUrls(missing).filter((url) => wanted.has(url) && !pending.has(url));
+      if (urls.length === 0) return;
+      await startTracked(missing, urls);
     },
   };
 });

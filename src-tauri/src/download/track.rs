@@ -23,7 +23,7 @@ pub async fn process_track_url(
         },
     );
 
-    let (track_info, external_cover_url) = match platform {
+    let (mut track_info, external_cover_url) = match platform {
         Platform::Bandcamp => bandcamp::parse_track(url).await?,
         Platform::Youtube => youtube::parse_track(url).await?,
         Platform::Soundcloud => soundcloud::parse_track(url).await?,
@@ -31,6 +31,23 @@ pub async fn process_track_url(
             return Err("Local files cannot be processed via remote URL pipelines.".into());
         }
     };
+
+    // The library already has the album of this track (e.g. downloaded from another platform): file it there.
+    if track_info.track_number.is_none() {
+        if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<crate::db::db::Database>>() {
+            let artist = track_info.artists.first().cloned().unwrap_or_else(|| track_info.album_artist.clone());
+            let db = db_state.lock().await;
+            if let Ok(rows) = db.list_album_sources_for_artist(&artist).await {
+                if let Some((album, album_artist, number)) =
+                    crate::library_index::sources::find_in_sources(&rows, &artist, &track_info.title)
+                {
+                    track_info.album = album;
+                    track_info.album_artist = album_artist;
+                    track_info.track_number = Some(number);
+                }
+            }
+        }
+    }
 
     let album_title = if track_info.album.is_empty() {
         "Singles".to_string()

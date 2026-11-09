@@ -67,6 +67,7 @@ impl From<BandcampResult> for SearchSuggestion {
             album_name: res.album_name,
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             item_url_path: res.item_url_path.unwrap_or_default(),

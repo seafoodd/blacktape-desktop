@@ -30,6 +30,16 @@ export const streamQueue = (requests: StreamRequest[], index: number, shuffle = 
 export const streamAddToQueue = (requests: StreamRequest[], playNext = false): Promise<void> =>
   invoke("stream_add_to_queue", { requests, playNext });
 
+/** An entry of a mixed queue: a library song or a song to stream. */
+export type MixedEntry = { kind: "song"; id: number } | ({ kind: "stream" } & StreamRequest);
+
+/**
+ * Replaces the queue with library songs and streams in the given order and starts `index`. The entries before
+ * it stay in the queue (reachable with "previous").
+ */
+export const startMixedPlayback = (entries: MixedEntry[], index: number): Promise<void> =>
+  invoke("start_mixed_playback", { entries, index });
+
 export interface StreamError {
   url: string;
   message: string;

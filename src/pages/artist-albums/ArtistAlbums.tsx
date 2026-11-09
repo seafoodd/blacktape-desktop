@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
@@ -23,10 +23,17 @@ import { albumMetaLine } from "@/shared/lib/albumMeta.ts";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
 import { setDragGhost } from "@/shared/lib/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
+import { sameUrl } from "@/shared/lib/urlKey.ts";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
+import FindMissingModal from "@/features/library/ui/FindMissingModal.tsx";
 import EditAlbumModal from "@/features/library/ui/EditAlbumModal.tsx";
 import { decodeHtmlEntities } from "@/shared/lib/html.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
+import type { MissingTracks } from "@/shared/lib/libraryIndex.ts";
+import { remoteTrackToStreamItem } from "@/shared/lib/remoteTrack.ts";
+import { toStreamRequest, useStreamStore } from "@/features/preview/model/streamStore.ts";
+import { startMixedPlayback, type MixedEntry } from "@/shared/lib/stream.ts";
 import SongListItem from "@/features/library/ui/song-list-item/SongListItem.tsx";
 import {
   playableMissingTracks,
@@ -34,7 +41,18 @@ import {
   useMissingTracksStore,
 } from "@/features/library/model/missingTracksStore.ts";
 import MissingTrackRow from "@/features/library/ui/missing-track-row/MissingTrackRow.tsx";
-import { missingAlbumMenuItems } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
+import {
+  type Ghost,
+  ghostTrack,
+  GHOST_TTL_MS,
+  mergeAlbumRows,
+  nextGhosts,
+  withoutDownloaded,
+  missingAlbumMenuItems,
+  missingRemoteTrack,
+  missingTrackPercent,
+  missingTrackDownloading,
+} from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 
 const ArtistAlbums = () => {
   const { selectedTab, albums, activeDownloads, cancelDownload } =
@@ -50,8 +68,11 @@ const ArtistAlbums = () => {
   const missingSources = useMissingTracksStore((s) => s.sources);
   const missingShown = useMissingTracksStore((s) => s.shown);
   const missingTracks = useMissingTracksStore((s) => s.tracks);
+  const pendingUrls = useMissingTracksStore((s) => s.pendingUrls);
+  const downloadMissingMany = useMissingTracksStore((s) => s.downloadMany);
   const loadMissingSources = useMissingTracksStore((s) => s.loadSources);
   const toggleMissing = useMissingTracksStore((s) => s.toggle);
+  const unlinkMissing = useMissingTracksStore((s) => s.unlink);
   const downloadMissing = useMissingTracksStore((s) => s.downloadMissing);
   // The store describes one artist at a time: until it has switched to the selected one, show none of its data.
   const missingReady = missingArtist === selectedTab;
@@ -65,9 +86,66 @@ const ArtistAlbums = () => {
     if (selectedTab) void loadMissingSources(selectedTab);
   }, [selectedTab, albums, loadMissingSources]);
 
-  // Songs of all albums in display order (Shift ranges follow it).
+  // Songs of all albums in display order.
   const allSongs = useMemo(() => albums.flatMap((a) => a.songs), [albums]);
-  const orderedIds = useMemo(() => allSongs.map((s) => s.id), [allSongs]);
+
+  // Every row of every album in display order: the songs and the shown missing songs. Missing songs have no
+  // library id, so they get negative ones (-1, -2, ...) to be selectable together with the songs.
+  // Songs just removed from the library stay in place as dimmed placeholders until the missing songs list has
+  // caught up, so deleting (or finishing a download) never makes the rows jump.
+  const prevSongsRef = useRef(new Map<string, Song[]>());
+  const ghostsRef = useRef(new Map<string, Map<number, Ghost>>());
+  const [ghostTick, setGhostTick] = useState(0);
+
+  const { albumViews, orderedIds, missingById } = useMemo(() => {
+    const byId = new Map<number, { album: string; track: AlbumTrackInfo; missing: MissingTracks }>();
+    const ids: number[] = [];
+    let next = -1;
+    const now = Date.now();
+    const views = albums.map((album) => {
+      const key = `${album.album_artist}::${album.title}`;
+      const missing =
+        missingReady && missingShown.has(album.title) ? missingTracks[album.title] ?? null : null;
+      let tracks: AlbumTrackInfo[] = [];
+      if (missing) {
+        tracks = withoutDownloaded(playableMissingTracks(missing), album.songs);
+        const ghosts = nextGhosts(
+          prevSongsRef.current.get(key),
+          album.songs,
+          tracks,
+          ghostsRef.current.get(key) ?? new Map(),
+          now,
+        );
+        ghostsRef.current.set(key, ghosts);
+        tracks = [...tracks, ...[...ghosts.values()].map((g, i) => ghostTrack(g.song, 10_000 + i))];
+      } else {
+        ghostsRef.current.delete(key);
+      }
+      prevSongsRef.current.set(key, album.songs);
+      const rows = mergeAlbumRows(album.songs, tracks).map((row) => {
+        if (row.kind === "song") {
+          ids.push(row.song.id);
+          return { row, id: row.song.id };
+        }
+        const id = next--;
+        ids.push(id);
+        if (missing && row.track.url !== "") byId.set(id, { album: album.title, track: row.track, missing });
+        return { row, id };
+      });
+      return { missing, rows };
+    });
+    return { albumViews: views, orderedIds: ids, missingById: byId };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [albums, missingReady, missingShown, missingTracks, ghostTick]);
+
+  // Placeholders expire: render again once the oldest one is due.
+  useEffect(() => {
+    const any = [...ghostsRef.current.values()].some((g) => g.size > 0);
+    if (!any) return;
+    const timer = setTimeout(() => setGhostTick((t) => t + 1), GHOST_TTL_MS + 100);
+    return () => clearTimeout(timer);
+  }, [albumViews]);
+
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
 
   // Keep only songs that still exist (after delete, refresh or switching artist).
@@ -84,7 +162,7 @@ const ArtistAlbums = () => {
   }, []);
 
   const { getContextMenuItems } = useSongContextMenu({
-    onPlay: (song) => handlePlaySong(song.id),
+    onPlay: (song) => handlePlaySongRow(song.id),
     playbackContext: "library",
     allowDelete: true,
   });
@@ -104,7 +182,7 @@ const ArtistAlbums = () => {
     setSelection((prev) =>
       selectGroup(
         prev,
-        album.songs.map((s) => s.id),
+        (albumViews[albums.indexOf(album)]?.rows.map((r) => r.id)) ?? album.songs.map((s) => s.id),
         e.ctrlKey || e.metaKey,
       ),
     );
@@ -125,7 +203,12 @@ const ArtistAlbums = () => {
   /** Double click on an album's cover or title plays the album. */
   const handlePlayAlbum = (album: Album) => {
     const ids = album.songs.map((s) => s.id);
-    if (ids.length === 0) return;
+    if (ids.length === 0 && !albumViews[albums.indexOf(album)]?.missing) return;
+    // Shown missing songs are part of the album: they are streamed after / between the songs.
+    if (albumViews[albums.indexOf(album)]?.missing) {
+      void playPicks(albumPicks(album));
+      return;
+    }
     startPlayback(ids, 0, "library").catch((e) =>
       console.error("Play Album error: ", e),
     );
@@ -184,13 +267,180 @@ const ArtistAlbums = () => {
     const next = selectionForContextMenu(selection, song.id);
     setSelection(next);
     const selectedSongs = allSongs.filter((s) => next.selected.has(s.id));
+    const selectedMissing = selectedMissingOf(next);
     setMenu({
       position,
       items:
-        selectedSongs.length > 1
-          ? multiSongMenuItems(selectedSongs)
-          : getContextMenuItems(song),
+        selectedMissing.length > 0
+          ? mixedMenuItems(next)
+          : selectedSongs.length > 1
+            ? multiSongMenuItems(selectedSongs)
+            : getContextMenuItems(song),
     });
+  };
+
+  const selectedMissingOf = (state: SelectionState) =>
+    [...state.selected]
+      .filter((id) => id < 0)
+      .map((id) => missingById.get(id))
+      .filter((m): m is NonNullable<typeof m> => !!m);
+
+  type Pick =
+    | { kind: "song"; song: Song }
+    | { kind: "missing"; album: string; track: AlbumTrackInfo; missing: MissingTracks };
+
+  /** The rows with these ids (songs and missing songs) in list order. */
+  const picksOf = (include: (id: number) => boolean): Pick[] => {
+    const songById = new Map(allSongs.map((s) => [s.id, s]));
+    const picks: Pick[] = [];
+    for (const id of orderedIds) {
+      if (!include(id)) continue;
+      const song = songById.get(id);
+      const m = missingById.get(id);
+      if (song) picks.push({ kind: "song", song });
+      else if (m) picks.push({ kind: "missing", ...m });
+    }
+    return picks;
+  };
+
+  const streamOf = (p: Extract<Pick, { kind: "missing" }>) =>
+    remoteTrackToStreamItem(missingRemoteTrack(p.missing, p.track));
+
+  /** Queues a downloaded song from the library or streams a missing one. */
+  const queuePick = (p: Pick, playNext: boolean) =>
+    p.kind === "song"
+      ? playNext
+        ? AddNextToQueue(p.song.id)
+        : AddToQueue(p.song.id)
+      : useStreamStore.getState().enqueue([streamOf(p)], { playNext });
+
+  /** The visible rows of an album: its songs and, while shown, its missing songs, in track order. */
+  const albumPicks = (album: Album): Pick[] => {
+    const ids = new Set(albumViews[albums.indexOf(album)]?.rows.map((r) => r.id) ?? []);
+    return picksOf((id) => ids.has(id));
+  };
+
+  /** The picks as a mixed queue: library songs by id, missing songs as streams. */
+  const mixedEntries = (picks: Pick[]): MixedEntry[] =>
+    picks.map((p) =>
+      p.kind === "song"
+        ? { kind: "song", id: p.song.id }
+        : { kind: "stream", ...toStreamRequest(streamOf(p)) },
+    );
+
+  /** Plays the first of `picks`; all of them are the queue (downloaded from the library, missing streamed). */
+  const playPicks = async (picks: Pick[]) => {
+    try {
+      if (picks.length === 0) return;
+      await startMixedPlayback(mixedEntries(picks), 0);
+    } catch (e) {
+      console.error("Play Album error: ", e);
+    }
+  };
+
+  /**
+   * Plays the row `id` with every row of the page as the queue, in list order: downloaded songs from the
+   * library, shown missing songs streamed. The rows before it stay in the queue (reachable with "previous").
+   */
+  const playFromRow = async (id: number) => {
+    try {
+      const at = orderedIds.indexOf(id);
+      if (at < 0) return;
+      // every row is a pick, so the picks line up with orderedIds
+      await startMixedPlayback(mixedEntries(picksOf(() => true)), at);
+    } catch (e) {
+      console.error("Play error: ", e);
+    }
+  };
+
+  /**
+   * Menu for a selection that contains missing songs. Play, Play Next and Add to Queue take the selected songs in
+   * list order, downloaded ones from the library and missing ones as streams. Download touches only the missing
+   * songs; Add to Playlist and Delete only the downloaded ones (their labels say so).
+   */
+  const mixedMenuItems = (state: SelectionState): MenuItemOption[] => {
+    const picks = picksOf((id) => state.selected.has(id));
+    const songs = picks.flatMap((p) => (p.kind === "song" ? [p.song] : []));
+    const missing = picks.flatMap((p) => (p.kind === "missing" ? [p] : []));
+    const addPick = queuePick;
+
+    const items: MenuItemOption[] = [
+      {
+        label: "Play",
+        action: () => void playPicks(picks),
+      },
+    ];
+    if (missing.length > 0) {
+      items.push({
+        label: `Download ${missing.length} missing song${missing.length === 1 ? "" : "s"}`,
+        action: () => {
+          const byAlbum = new Map<string, AlbumTrackInfo[]>();
+          for (const m of missing) byAlbum.set(m.album, [...(byAlbum.get(m.album) ?? []), m.track]);
+          for (const [album, tracks] of byAlbum) void downloadMissingMany(album, tracks);
+        },
+      });
+    }
+    items.push(
+      {
+        label: "Play Next",
+        action: async () => {
+          try {
+            // Each one is inserted right after the current track, so go backwards to keep the order.
+            for (const p of [...picks].reverse()) await addPick(p, true);
+          } catch (e) {
+            console.error("Play Next error: ", e);
+          }
+        },
+      },
+      {
+        label: "Add to Queue",
+        action: async () => {
+          try {
+            for (const p of picks) await addPick(p, false);
+          } catch (e) {
+            console.error("Add to Queue error: ", e);
+          }
+        },
+      },
+    );
+    if (songs.length > 0) {
+      const ids = songs.map((s) => s.id);
+      const noun = `${songs.length} downloaded track${songs.length === 1 ? "" : "s"}`;
+      items.push(
+        { separator: true, label: "" },
+        {
+          label: "Add to Playlist...",
+          action: () => openModal(<AddToPlaylistModal songIds={ids} />),
+        },
+        { separator: true, label: "" },
+        {
+          label: `Delete ${noun}...`,
+          danger: true,
+          action: () => openModal(<DeleteSongModal songs={songs} />),
+        },
+      );
+    }
+    return items;
+  };
+
+  const handleSelectMissing = (id: number, e: React.MouseEvent) => {
+    setSelection((prev) =>
+      nextSelection(prev, orderedIds, id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }),
+    );
+  };
+
+  /** Right click on a missing song: a multi-selection gets the combined menu, one song its own remote menu. */
+  const handleMissingMenu = (id: number, e: React.MouseEvent): boolean => {
+    const next = selectionForContextMenu(selection, id);
+    setSelection(next);
+    if (next.selected.size < 2) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({
+      position: { x: e.clientX, y: e.clientY },
+      items: mixedMenuItems(next),
+    });
+    return true;
   };
 
   const openMenu = (e: React.MouseEvent, items: MenuItemOption[]) => {
@@ -204,17 +454,17 @@ const ArtistAlbums = () => {
     return [
       {
         label: "Play Album",
-        action: () => {
-          startPlayback(ids, 0, "library").catch((e) =>
-            console.error("Play Album error: ", e),
-          );
-        },
+        action: () => handlePlayAlbum(album),
       },
       {
         label: "Add Album to Queue",
         action: async () => {
           try {
-            for (const id of ids) await AddToQueue(id);
+            if (albumViews[albums.indexOf(album)]?.missing) {
+              for (const p of albumPicks(album)) await queuePick(p, false);
+            } else {
+              for (const id of ids) await AddToQueue(id);
+            }
           } catch (e) {
             console.error("Add Album to Queue error: ", e);
           }
@@ -227,6 +477,9 @@ const ArtistAlbums = () => {
       ...missingAlbumMenuItems(sourceOf(album.title), isMissingShown(album.title), {
         toggle: () => toggleMissing(album.title),
         download: () => void downloadMissing(album.title),
+        find: () =>
+          openModal(<FindMissingModal albumArtist={selectedTab} album={album.title} />),
+        unlink: () => void unlinkMissing(selectedTab, album.title),
       }),
       { separator: true, label: "" },
       {
@@ -255,20 +508,18 @@ const ArtistAlbums = () => {
     ];
   };
 
-  /** Missing songs of an album, listed after its songs while shown. */
-  const renderMissingRows = (album: Album) => {
-    const missing = isMissingShown(album.title)
-      ? missingTracks[album.title]
-      : null;
-    if (!missing) return null;
-    return playableMissingTracks(missing).map((track) => (
-      <MissingTrackRow
-        key={`missing-${track.index}-${track.url}`}
-        album={album.title}
-        missing={missing}
-        track={track}
-      />
-    ));
+  /** Albums whose running download only fetches missing songs: they show up inside the album, not as a new one. */
+  const missingDownloadUrls = useMemo(() => new Set(pendingUrls.values()), [pendingUrls]);
+
+  /** Library albums linked to a remote album: a download of that remote album fills the library album. */
+  const linkedAlbumOf = (d: { url: string; itemType: string; albumTitle: string }): string | undefined => {
+    if (!missingReady) return undefined;
+    const byUrl = Object.entries(missingSources).find(([, source]) => sameUrl(source.source_url, d.url))?.[0];
+    if (byUrl !== undefined) return byUrl;
+    // A single track filed into an album the library has (the download carries that album's title).
+    if (d.itemType !== "Track") return undefined;
+    const title = d.albumTitle.trim().toLowerCase();
+    return albums.find((a) => a.title.trim().toLowerCase() === title)?.title;
   };
 
   const activeArtistDownloads = useMemo(() => {
@@ -278,9 +529,31 @@ const ArtistAlbums = () => {
         (d.status === "downloading" ||
           d.status === "idle" ||
           d.status === "processing") &&
+        !missingDownloadUrls.has(d.url) &&
+        // a single track shows up once its album is known (otherwise it would flash as "Singles" first)
+        !(d.itemType === "Track" && d.albumTitle.trim() === "") &&
+        linkedAlbumOf(d) === undefined &&
         d.artistName.trim().toLowerCase() === selectedTab.trim().toLowerCase(),
     );
-  }, [activeDownloads, selectedTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDownloads, selectedTab, missingDownloadUrls, missingSources, missingReady, albums]);
+
+  // A running download of a linked album shows its songs inside the library album: open that album's rows.
+  useEffect(() => {
+    if (!selectedTab || !missingReady) return;
+    for (const d of Object.values(activeDownloads)) {
+      if (d.status !== "downloading" && d.status !== "idle" && d.status !== "processing") continue;
+      const album = linkedAlbumOf(d);
+      if (album !== undefined && !missingShown.has(album)) toggleMissing(album);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDownloads, missingSources, missingReady, albums]);
+
+  /** Play from a song row: with missing songs shown the queue goes through them, otherwise it is the songs. */
+  function handlePlaySongRow(songId: number) {
+    if (missingById.size > 0) void playFromRow(songId);
+    else handlePlaySong(songId);
+  }
 
   function handlePlaySong(clickedSongId: number) {
     const currentIndex = allSongs.findIndex(
@@ -433,7 +706,8 @@ const ArtistAlbums = () => {
         {albums.map((album, index) => (
           <section
             className={styles.albumBlock}
-            key={index}
+            // Stable key: with the index, every album after an added / removed one was remounted (covers reloaded).
+            key={`${album.album_artist}::${album.title}`}
             onContextMenu={(e) => openMenu(e, albumMenuItems(album))}
           >
             <div
@@ -481,30 +755,53 @@ const ArtistAlbums = () => {
                 )}
               </div>
               <ul className={styles.songs}>
-                {album.songs.map((song: Song, songIndex: number) => (
-                  <SongListItem
-                    key={song.id}
-                    selectedAbove={
-                      songIndex > 0 &&
-                      selection.selected.has(album.songs[songIndex - 1].id)
-                    }
-                    selectedBelow={
-                      songIndex < album.songs.length - 1 &&
-                      selection.selected.has(album.songs[songIndex + 1].id)
-                    }
-                    dragIds={
-                      selection.selected.has(song.id)
-                        ? orderedIds.filter((id) => selection.selected.has(id))
-                        : [song.id]
-                    }
-                    song={song}
-                    onPlay={handlePlaySong}
-                    onSelect={handleSelectSong}
-                    onOpenMenu={handleOpenSongMenu}
-                    selected={selection.selected.has(song.id)}
-                  />
-                ))}
-                {renderMissingRows(album)}
+                {(() => {
+                  const { missing, rows } = albumViews[index];
+                  const download = missing
+                    ? Object.values(activeDownloads).find((d) => linkedAlbumOf(d) === album.title)
+                    : undefined;
+                  const selectedAt = (i: number) => {
+                    const r = rows[i];
+                    return !!r && selection.selected.has(r.id);
+                  };
+                  return rows.map(({ row, id }, i) =>
+                    row.kind === "song" ? (
+                      <SongListItem
+                        key={row.song.id}
+                        selectedAbove={selectedAt(i - 1)}
+                        selectedBelow={selectedAt(i + 1)}
+                        dragIds={
+                          selection.selected.has(row.song.id)
+                            ? orderedIds.filter((x) => x > 0 && selection.selected.has(x))
+                            : [row.song.id]
+                        }
+                        song={row.song}
+                        onPlay={handlePlaySongRow}
+                        onSelect={handleSelectSong}
+                        onOpenMenu={handleOpenSongMenu}
+                        selected={selection.selected.has(row.song.id)}
+                      />
+                    ) : (
+                      missing && (
+                        <MissingTrackRow
+                          key={`missing-${row.track.index}-${row.track.url}`}
+                          album={album.title}
+                          missing={missing}
+                          track={row.track}
+                          percent={missingTrackPercent(download, row.track)}
+                          downloading={missingTrackDownloading(download, row.track)}
+                          ghost={row.track.url === ""}
+                          selected={selection.selected.has(id)}
+                          selectedAbove={selectedAt(i - 1)}
+                          selectedBelow={selectedAt(i + 1)}
+                          onPlay={() => void playFromRow(id)}
+                          onSelect={(e) => handleSelectMissing(id, e)}
+                          onMenu={(e) => handleMissingMenu(id, e)}
+                        />
+                      )
+                    ),
+                  );
+                })()}
               </ul>
             </div>
           </section>

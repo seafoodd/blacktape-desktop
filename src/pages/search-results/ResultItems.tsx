@@ -17,6 +17,7 @@ import {
   formatDurationCell,
   formatPlays,
   formatAudience,
+  trackAlbumItem,
   trackSubline,
 } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";
@@ -54,6 +55,7 @@ interface TrackRowProps {
 
 export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProps) => {
   const subline = trackSubline(item.band_name, item.album_name);
+  const albumItem = trackAlbumItem(item);
   const { openMenu } = useRemoteTrackMenu();
   return (
     <div
@@ -73,7 +75,25 @@ export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProp
           </p>
         </div>
         <p className={clsx(styles.subline, styles.ellipsis)} title={subline}>
-          {subline}
+          {albumItem ? (
+            <>
+              {trackSubline(item.band_name, "")}
+              {item.band_name.trim() !== "" && " - "}
+              <button
+                type="button"
+                className={styles.albumLink}
+                title={`Open album ${albumItem.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void useAlbumPreviewStore.getState().open(albumItem);
+                }}
+              >
+                {albumItem.name}
+              </button>
+            </>
+          ) : (
+            subline
+          )}
         </p>
       </div>
       {/* Columns keep their width when the value is missing, so the rows line up. */}

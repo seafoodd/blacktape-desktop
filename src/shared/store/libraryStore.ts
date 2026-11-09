@@ -71,6 +71,8 @@ export type SearchSuggestion = {
   band_name: string;
   album_name?: string;
   item_url_path: string;
+  /** Page url of the album a track belongs to (YouTube Music); lets the UI open the album from the track. */
+  album_url?: string | null;
   img: string;
   subscriber_count?: number;
   /** What `subscriber_count` counts (YouTube artist rows): followers or monthly listeners. */
@@ -416,6 +418,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       "download-task-completed",
       async (event) => {
         const taskId = event.payload.task_id;
+        const downloadedArtist = get().activeDownloads[taskId]?.artistName;
         set((state) => {
           const existing = state.activeDownloads[taskId];
           if (!existing) return {};
@@ -449,6 +452,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             set({ albums });
           } catch (e) {
             console.error("Auto-fetch albums failed", taskId, e);
+          }
+        }
+
+        // Streams of the songs that were just downloaded (playing or queued) switch to the files.
+        if (downloadedArtist) {
+          try {
+            const songs = (await getArtistAlbums(downloadedArtist))
+              .flatMap((album) => album.songs)
+              .filter((song) => !!song.source_url);
+            if (songs.length > 0) await invoke("swap_streams_for_downloads", { songs });
+          } catch (e) {
+            console.error("swap_streams_for_downloads failed", taskId, e);
           }
         }
 
@@ -523,7 +538,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           total: isSingleTrack ? 1 : (trackUrls?.length ?? 0),
           message: "Starting download...",
           artistName,
-          albumTitle: isSingleTrack ? "Singles" : title || "Album",
+          // A single track has no album title until its page was read (then "Singles" or its album).
+          albumTitle: isSingleTrack ? "" : title || "Album",
           coverUrl,
           itemType: downloadType as ItemType,
           platform: platform as Platform,

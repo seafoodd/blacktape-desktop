@@ -69,6 +69,33 @@ export const getMissingTracks = (
 ): Promise<MissingTracks | null> =>
   invoke<MissingTracks | null>("get_missing_tracks", { albumArtist, album, refresh });
 
+/** A platform album that may be the library album (best match first). Mirrors `library_index/candidates.rs`. */
+export interface AlbumCandidate {
+  platform: Platform;
+  url: string;
+  title: string;
+  artist: string;
+  cover_url: string | null;
+  year: number | null;
+  score: number;
+}
+
+/** Platform albums that may be the library album, for an album that has no stored source. */
+export const findAlbumCandidates = (albumArtist: string, album: string): Promise<AlbumCandidate[]> =>
+  invoke<AlbumCandidate[]>("find_album_candidates", { albumArtist, album });
+
+/** Links the library album to the platform album at `url` (stores its track list as the album's source). */
+export const linkAlbumSource = (
+  albumArtist: string,
+  album: string,
+  platform: Platform,
+  url: string,
+): Promise<void> => invoke<void>("link_album_source", { albumArtist, album, platform, url });
+
+/** Removes the link of the library album to its platform album (it can be linked again afterwards). */
+export const unlinkAlbumSource = (albumArtist: string, album: string): Promise<void> =>
+  invoke<void>("unlink_album_source", { albumArtist, album });
+
 /** none / partial / downloaded from the states of an album's tracks. No tracks -> "none". Pure. */
 export function albumStateFromTracks(states: readonly DownloadState[]): DownloadState {
   if (states.length === 0) return "none";

@@ -50,6 +50,32 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
     })
 }
 
+/// Page url of the album a track page belongs to (json-ld `inAlbum` id/url, else the first `/album/` link of the
+/// page), or None for a single. Relative links are resolved against the track page.
+pub fn extract_album_url(html: &str, track_url: &str) -> Option<String> {
+    static IN_ALBUM: OnceLock<Regex> = OnceLock::new();
+    static LINK: OnceLock<Regex> = OnceLock::new();
+    let in_album = IN_ALBUM.get_or_init(|| {
+        Regex::new(r#""inAlbum"\s*:\s*\{[^}]*"(?:@id|url)"\s*:\s*"([^"]+/album/[^"]+)""#).unwrap()
+    });
+    let link = LINK.get_or_init(|| Regex::new(r#"href="((?:https?://[^"/]+)?/album/[^"?#]+)""#).unwrap());
+    let found = in_album
+        .captures(html)
+        .or_else(|| link.captures(html))
+        .map(|c| c[1].to_string())?;
+    if found.starts_with('/') {
+        Some(format!("{}{}", extract_base_url(track_url).ok()?, found))
+    } else {
+        Some(found)
+    }
+}
+
+/// Fetches the track page and returns its album url (see `extract_album_url`).
+pub async fn find_album_url(track_url: &str) -> Option<String> {
+    let html = Client::new().get(track_url).send().await.ok()?.text().await.ok()?;
+    extract_album_url(&html, track_url)
+}
+
 pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<String>), String> {
     let client = Client::new();
     let html = client
@@ -535,6 +561,25 @@ fn extract_single_track_duration_ms(html: &str, track_url: &str) -> Option<u64> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn album_url_from_json_ld_in_album() {
+        let html = r#"{"inAlbum":{"@type":"MusicAlbum","@id":"https://a.bandcamp.com/album/one","name":"One"}}"#;
+        assert_eq!(
+            extract_album_url(html, "https://a.bandcamp.com/track/x").as_deref(),
+            Some("https://a.bandcamp.com/album/one")
+        );
+    }
+
+    #[test]
+    fn album_url_from_a_relative_link_and_none_for_singles() {
+        let html = r#"<a href="/album/one">One</a>"#;
+        assert_eq!(
+            extract_album_url(html, "https://a.bandcamp.com/track/x").as_deref(),
+            Some("https://a.bandcamp.com/album/one")
+        );
+        assert_eq!(extract_album_url("<p>none</p>", "https://a.bandcamp.com/track/x"), None);
+    }
+
     use super::*;
 
     #[test]

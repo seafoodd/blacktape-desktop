@@ -129,20 +129,27 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    width: 32px;
+    width: 24px;
     margin-left: 4px;
+    /* pull the button closer to the row's right edge (the row has 12px padding) */
+    margin-right: -6px;
 }
 
 .downloadBtn {
     display: flex;
     flex-shrink: 0;
-    padding: 2px;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 3px;
+    box-sizing: border-box;
     background: none;
     border: none;
     border-radius: 50%;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: color 150ms ease;
+    transition: color 150ms ease, background-color 100ms linear;
 }
 
 .trackRow:hover .downloadBtn,
@@ -152,6 +159,7 @@
 
 .downloadBtn:hover {
     color: var(--color-primaryLight);
+    background-color: rgba(255, 255, 255, 0.1);
 }
 
 .percent {

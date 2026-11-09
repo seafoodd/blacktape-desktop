@@ -482,3 +482,56 @@ describe("prunePending", () => {
     expect(pending.size).toBe(2);
   });
 });
+
+describe("downloadMany", () => {
+  it("starts ONE download containing only the requested tracks that are still missing", async () => {
+    getMissingTracksMock.mockResolvedValue(missing({ tracks: [track(1), track(2), track(3)] }));
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMany("A", [track(1), track(2)]);
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/1",
+      "https://example.test/track/2",
+    ]);
+  });
+
+  it("skips tracks already pending (pendingUrls)", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({
+      artist: "Artist",
+      pendingUrls: new Map([["https://example.test/track/1", "https://example.test/album/A"]]),
+    });
+    await useMissingTracksStore.getState().downloadMany("A", [track(1), track(2)]);
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/2",
+    ]);
+  });
+
+  it("skips tracks that are no longer missing", async () => {
+    getMissingTracksMock.mockResolvedValue(missing({ tracks: [track(1)] }));
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMany("A", [track(1), track(2)]);
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/1",
+    ]);
+  });
+
+  it("does nothing when nothing remains to download", async () => {
+    getMissingTracksMock.mockResolvedValue(missing({ tracks: [track(1)] }));
+    useMissingTracksStore.setState({
+      artist: "Artist",
+      pendingUrls: new Map([["https://example.test/track/1", "https://example.test/album/A"]]),
+    });
+    await useMissingTracksStore.getState().downloadMany("A", [track(1), track(2)]);
+    expect(startDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the album has no missing data", async () => {
+    getMissingTracksMock.mockResolvedValue(null);
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMany("A", [track(1)]);
+    expect(startDownloadMock).not.toHaveBeenCalled();
+  });
+});

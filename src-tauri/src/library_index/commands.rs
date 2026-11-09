@@ -3,7 +3,7 @@
 //! its rows under the lock, drops the guard and computes on plain values (the pure helpers below and in
 //! `sources.rs` are what the tests cover).
 
-use crate::db::album_sources::{AlbumSongSourceRef, AlbumSourceRow, SongSourceRef};
+use crate::db::album_sources::{AlbumSongSourceRef, AlbumSourceRow, SongMeta, SongSourceRef};
 use crate::db::db::Database;
 use crate::download::album_preview::{album_preview, AlbumPreview, AlbumTrackInfo};
 use crate::library_index::normalize::normalize_url_key;
@@ -62,8 +62,19 @@ pub fn track_states(items: &[RemoteRef], index: &LibraryIndex) -> HashMap<String
 /// Status of one stored album source against the library. Pure.
 fn source_status(row: &AlbumSourceRow, fallback: Platform, index: &LibraryIndex) -> AlbumStatus {
     let platform = platform_from_str(&row.platform).unwrap_or(fallback);
-    let (owned, total) = count_owned(platform, &row_tracks(row), index);
+    let (owned, total) = count_owned(platform, &row.album_artist, &row_tracks(row), index);
     AlbumStatus { state: album_state(owned, total), owned, total }
+}
+
+/// `base` (url keys of the whole library) plus the names of the songs of one library album only. A song with the
+/// same artist and title in ANOTHER album (a live or compilation version) must not make this album's track
+/// "owned": url keys are exact, names are not. Pure.
+pub fn scoped_index(base: &LibraryIndex, meta: &[SongMeta], album_artist: &str, album: &str) -> LibraryIndex {
+    let same = |a: &str, b: &str| a.trim().to_lowercase() == b.trim().to_lowercase();
+    let own = || meta.iter().filter(|(artist, alb, _, _)| same(artist, album_artist) && same(alb, album));
+    base.clone()
+        .with_slugs(own().map(|(_, _, _, slug)| slug.clone()))
+        .with_titles(own().map(|(artist, _, title, _)| (artist.clone(), title.clone())))
 }
 
 /// Status of every requested album url from the stored sources (`sources` is keyed by `album_key`); albums
@@ -110,7 +121,7 @@ pub async fn get_album_status(
     keys.sort();
     keys.dedup();
 
-    let (sources, refs) = {
+    let (sources, refs, meta) = {
         let guard = db.lock().await;
         let mut sources = HashMap::new();
         for key in keys {
@@ -119,14 +130,27 @@ pub async fn get_album_status(
             }
         }
         // Without any known album there is nothing to compare, skip the library scan.
-        let refs = if sources.is_empty() {
-            Vec::new()
+        let (refs, meta) = if sources.is_empty() {
+            (Vec::new(), Vec::new())
         } else {
-            guard.list_song_source_refs().await.map_err(db_error)?
+            (
+                guard.list_song_source_refs().await.map_err(db_error)?,
+                guard.list_song_meta().await.map_err(db_error)?,
+            )
         };
-        (sources, refs)
+        (sources, refs, meta)
     };
-    Ok(album_statuses(&items, &sources, &LibraryIndex::from_rows(&refs)))
+    let base = LibraryIndex::from_rows(&refs);
+    // every album is compared with the songs of its own library album
+    let mut out = HashMap::new();
+    for item in &items {
+        let index = match normalize_url_key(&item.url).and_then(|key| sources.get(&key)) {
+            Some(row) => scoped_index(&base, &meta, &row.album_artist, &row.album),
+            None => base.clone(),
+        };
+        out.extend(album_statuses(std::slice::from_ref(item), &sources, &index));
+    }
+    Ok(out)
 }
 
 /// One library album of an artist that has a known source (db only, no network).
@@ -176,7 +200,7 @@ pub fn artist_album_sources(
         .filter_map(|(title, refs)| {
             let row = match_source(sources, album_artist, &title, &refs)?;
             let platform = platform_from_str(&row.platform)?;
-            let (owned, total) = count_owned(platform, &row_tracks(row), index);
+            let (owned, total) = count_owned(platform, &row.album_artist, &row_tracks(row), index);
             (total > 0).then(|| LibraryAlbumSource {
                 album: title,
                 platform,
@@ -197,7 +221,7 @@ pub async fn get_artist_album_sources(
     db: State<'_, tokio::sync::Mutex<Database>>,
     album_artist: String,
 ) -> Result<Vec<LibraryAlbumSource>, String> {
-    let (sources, songs, refs) = {
+    let (sources, songs, refs, meta) = {
         let guard = db.lock().await;
         let sources = guard.list_album_sources_for_artist(&album_artist).await.map_err(db_error)?;
         if sources.is_empty() {
@@ -205,9 +229,23 @@ pub async fn get_artist_album_sources(
         }
         let songs = guard.list_artist_song_source_refs(&album_artist).await.map_err(db_error)?;
         let refs = guard.list_song_source_refs().await.map_err(db_error)?;
-        (sources, songs, refs)
+        let meta = guard.list_song_meta().await.map_err(db_error)?;
+        (sources, songs, refs, meta)
     };
-    Ok(artist_album_sources(&album_artist, &sources, &songs, &LibraryIndex::from_rows(&refs)))
+    let base = LibraryIndex::from_rows(&refs);
+    // one album at a time, each with the names of its own songs only
+    let mut albums: Vec<String> = songs.iter().map(|s| s.album.clone()).collect();
+    albums.sort_by_key(|a| a.to_lowercase());
+    albums.dedup_by_key(|a| a.to_lowercase());
+    let mut out = Vec::new();
+    for album in albums {
+        let of_album: Vec<AlbumSongSourceRef> =
+            songs.iter().filter(|s| s.album.to_lowercase() == album.to_lowercase()).cloned().collect();
+        let index = scoped_index(&base, &meta, &album_artist, &album);
+        out.extend(artist_album_sources(&album_artist, &sources, &of_album, &index));
+    }
+    out.sort_by_key(|a| a.album.to_lowercase());
+    Ok(out)
 }
 
 /// The tracks of a library album that are not in the library.
@@ -237,7 +275,7 @@ pub fn build_missing(
         album_title: row.album.clone(),
         album_artist: row.album_artist.clone(),
         cover_url,
-        tracks: compute_missing(platform, tracks, index),
+        tracks: compute_missing(platform, &row.album_artist, tracks, index),
     })
 }
 
@@ -259,6 +297,38 @@ async fn cached_preview(platform: Platform, url: &str) -> Result<AlbumPreview, S
     Ok(preview)
 }
 
+/// Links the library album (`album_artist`, `album`) to the platform album at `url` (picked from
+/// `find_album_candidates`): its whole track list is stored as the album's source.
+#[command]
+pub async fn link_album_source(
+    db: State<'_, tokio::sync::Mutex<Database>>,
+    album_artist: String,
+    album: String,
+    platform: Platform,
+    url: String,
+) -> Result<(), String> {
+    // network: no lock held here
+    let preview = cached_preview(platform, &url).await?;
+    let source = crate::library_index::sources::linked_source(&preview, &url, &album, &album_artist, unix_now())
+        .ok_or_else(|| "The platform returned no downloadable tracks for this album.".to_string())?;
+    let guard = db.lock().await;
+    // one platform album per library album: the previous link (if any) goes
+    guard.delete_album_sources_for(&album_artist, &album).await.map_err(db_error)?;
+    guard.upsert_album_source(&source).await.map_err(db_error)
+}
+
+/// Removes the link of the library album (`album_artist`, `album`) to its platform album.
+#[command]
+pub async fn unlink_album_source(
+    db: State<'_, tokio::sync::Mutex<Database>>,
+    album_artist: String,
+    album: String,
+) -> Result<(), String> {
+    let guard = db.lock().await;
+    guard.delete_album_sources_for(&album_artist, &album).await.map_err(db_error)?;
+    Ok(())
+}
+
 /// Missing tracks of the library album (`album_artist`, `album`); None when the album has no source.
 /// `refresh = true` re-reads the album from the platform (`album_preview`, cached in memory for 1 h) and
 /// updates the stored source; otherwise the stored track list is used.
@@ -269,7 +339,7 @@ pub async fn get_missing_tracks(
     album: String,
     refresh: Option<bool>,
 ) -> Result<Option<MissingTracks>, String> {
-    let (sources, album_songs, library_refs) = {
+    let (sources, album_songs, library_refs, meta) = {
         let guard = db.lock().await;
         let sources = guard.list_album_sources_for_artist(&album_artist).await.map_err(db_error)?;
         if sources.is_empty() {
@@ -280,12 +350,13 @@ pub async fn get_missing_tracks(
             .await
             .map_err(db_error)?;
         let library_refs = guard.list_song_source_refs().await.map_err(db_error)?;
-        (sources, album_songs, library_refs)
+        let meta = guard.list_song_meta().await.map_err(db_error)?;
+        (sources, album_songs, library_refs, meta)
     };
     let Some(row) = match_source(&sources, &album_artist, &album, &album_songs).cloned() else {
         return Ok(None);
     };
-    let index = LibraryIndex::from_rows(&library_refs);
+    let index = scoped_index(&LibraryIndex::from_rows(&library_refs), &meta, &album_artist, &album);
 
     if refresh == Some(true) {
         let platform = platform_from_str(&row.platform)
@@ -313,6 +384,20 @@ pub async fn get_missing_tracks(
 mod tests {
     use super::*;
     use crate::library_index::status::platform_to_str;
+    use crate::utils::make_canonical_slug;
+
+    #[test]
+    fn scoped_index_only_knows_the_names_of_its_own_album() {
+        let meta: Vec<SongMeta> = vec![
+            ("Artist".into(), "Other Album".into(), "Big Jacket".into(), make_canonical_slug("Artist", "Big Jacket")),
+            ("Artist".into(), "The Album".into(), "Good Sunday".into(), make_canonical_slug("Artist", "Good Sunday")),
+        ];
+        let index = scoped_index(&LibraryIndex::default(), &meta, "artist", "the album");
+        assert!(index.contains_by_meta("Artist", "Good Sunday"));
+        assert!(!index.contains_by_meta("Artist", "Big Jacket"));
+        assert!(!index.contains_by_fuzzy_title("Artist", "Big Jacket"));
+        assert!(index.contains_by_fuzzy_title("Artist", "Good Sunday"));
+    }
 
     fn remote(platform: Platform, url: &str) -> RemoteRef {
         RemoteRef { platform, url: url.to_string(), artist: None, title: None }
@@ -520,6 +605,54 @@ mod tests {
         let sources = vec![row(1, "A", "X", Platform::Bandcamp, &[])];
         let out = artist_album_sources("A", &sources, &[album_song("X", "bandcamp", T1)], &LibraryIndex::default());
         assert!(out.is_empty());
+    }
+
+    /// A stored source whose tracks have titles (the slug fallback needs them).
+    fn titled_row(artist: &str, album: &str, tracks: &[(&str, &str)]) -> AlbumSourceRow {
+        let urls: Vec<&str> = tracks.iter().map(|(_, u)| *u).collect();
+        let infos: Vec<AlbumTrackInfo> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, (title, url))| AlbumTrackInfo { title: title.to_string(), ..info(i, url) })
+            .collect();
+        let mut r = row(1, artist, album, Platform::Bandcamp, &urls);
+        r.tracks_json = Some(serde_json::to_string(&infos).unwrap());
+        r
+    }
+
+    #[test]
+    fn artist_album_sources_list_an_album_whose_songs_have_no_source_refs() {
+        let sources = vec![titled_row("Artist", "Album", &[("Track One", T1), ("Track Two", T2)])];
+        let songs = vec![AlbumSongSourceRef {
+            album: "Album".to_string(),
+            source: "local".to_string(),
+            source_url: None,
+            source_item_id: None,
+        }];
+        let out = artist_album_sources("Artist", &sources, &songs, &LibraryIndex::default());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].album, "Album");
+        assert_eq!(out[0].source_url, "https://src.test/1");
+        assert_eq!((out[0].total, out[0].owned, out[0].missing), (2, 0, 2));
+    }
+
+    #[test]
+    fn artist_album_sources_count_tracks_owned_by_slug_only() {
+        let sources = vec![titled_row(
+            "Artist",
+            "Album",
+            &[("Track One", T1), ("Track Two", T2), ("Track Three", T3)],
+        )];
+        let songs = vec![AlbumSongSourceRef {
+            album: "Album".to_string(),
+            source: "local".to_string(),
+            source_url: None,
+            source_item_id: None,
+        }];
+        let index = LibraryIndex::default().with_slugs([make_canonical_slug("Artist", "Track One")]);
+        let out = artist_album_sources("Artist", &sources, &songs, &index);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].total, out[0].owned, out[0].missing), (3, 1, 2));
     }
 
     // ---- build_missing

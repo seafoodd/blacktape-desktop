@@ -25,6 +25,99 @@ pub fn is_stream_song(song: &Song) -> bool {
     song.path.is_empty() && song.source_url.as_deref().is_some_and(|u| !u.is_empty())
 }
 
+fn source_key(song: &Song) -> Option<String> {
+    song.source_url.as_deref().and_then(crate::library_index::normalize::normalize_url_key)
+}
+
+/// The downloaded file (id and path set) of the same track as the stream song `song`, matched by normalized
+/// source url.
+pub fn file_for_stream<'a>(song: &Song, files: &'a [Song]) -> Option<&'a Song> {
+    if !is_stream_song(song) {
+        return None;
+    }
+    let url = source_key(song)?;
+    files
+        .iter()
+        .find(|f| f.id.is_some() && !f.path.is_empty() && source_key(f).as_deref() == Some(url.as_str()))
+}
+
+/// A seek fraction from the UI, forced into 0..=1 (`Duration::mul_f32` panics on NaN or a negative factor).
+pub fn clamp_fraction(fraction: f32) -> f32 {
+    if fraction.is_nan() { 0.0 } else { fraction.clamp(0.0, 1.0) }
+}
+
+/// How far from the target a position may be after a seek and still count as having landed there.
+const SEEK_TOLERANCE: Duration = Duration::from_millis(1500);
+
+/// Ok when the playing position `landed` is within `SEEK_TOLERANCE` of `target`; else why not.
+pub fn check_seek_landed(target: Duration, landed: Duration) -> Result<(), String> {
+    let off = if landed > target { landed - target } else { target - landed };
+    if off <= SEEK_TOLERANCE {
+        Ok(())
+    } else {
+        Err(format!("the position is {landed:?} instead of {target:?}"))
+    }
+}
+
+/// True when a downloaded file (id and path set) has the same normalized source url as `url`.
+fn file_for_stream_url(url: &str, files: &[Song]) -> bool {
+    let Some(key) = crate::library_index::normalize::normalize_url_key(url) else {
+        return false;
+    };
+    files.iter().any(|f| f.id.is_some() && !f.path.is_empty() && source_key(f).as_deref() == Some(key.as_str()))
+}
+
+/// The stream version of a library song whose file is gone, when it has a source page to stream from.
+pub fn stream_fallback(song: &Song, file_exists: bool) -> Option<Song> {
+    if is_stream_song(song) || file_exists || song.source_url.as_deref().map_or(true, str::is_empty) {
+        return None;
+    }
+    let mut stream = song.clone();
+    stream.id = None;
+    stream.path = String::new();
+    Some(stream)
+}
+
+/// Turns queued library songs that were deleted into stream songs of the same track, so the queue keeps its
+/// order and the track plays from its page. Positions in `keep` (the current song) and songs without a source url
+/// are left alone. Returns how many were replaced.
+pub fn streamify_deleted(queue: &mut [Song], keep: &[usize], deleted: &[Song]) -> usize {
+    let mut replaced = 0;
+    for (i, queued) in queue.iter_mut().enumerate() {
+        if keep.contains(&i) || is_stream_song(queued) {
+            continue;
+        }
+        let Some(id) = queued.id else { continue };
+        let Some(gone) = deleted.iter().find(|d| d.id == Some(id)) else { continue };
+        if gone.source_url.as_deref().map_or(true, str::is_empty) {
+            continue;
+        }
+        let mut stream = gone.clone();
+        stream.id = None;
+        stream.path = String::new();
+        *queued = stream;
+        replaced += 1;
+    }
+    replaced
+}
+
+/// Replaces queued stream songs by the downloaded files of the same track (matched by normalized source url).
+/// Queue positions listed in `keep` (a stream that is opening or prepared) are left alone. Returns how many were
+/// swapped.
+pub fn swap_streams_for_files(queue: &mut [Song], keep: &[usize], files: &[Song]) -> usize {
+    let mut swapped = 0;
+    for (i, queued) in queue.iter_mut().enumerate() {
+        if keep.contains(&i) {
+            continue;
+        }
+        if let Some(file) = file_for_stream(queued, files) {
+            *queued = file.clone();
+            swapped += 1;
+        }
+    }
+    swapped
+}
+
 /// Appends queue index `new_idx` at the end of the play order. An empty player starts at cursor 0.
 fn order_push(order: &mut Option<Vec<usize>>, cursor: &mut Option<usize>, new_idx: usize) {
     if let Some(order) = order {
@@ -91,6 +184,9 @@ pub struct AudioPlayer {
     preparing: Option<String>,
     /// Duration of a prepared stream that was appended for a gapless transition.
     appended_duration: Option<Duration>,
+    /// Id of the current song when it was swapped for its downloaded file while its stream keeps playing: the UI
+    /// sees a local song, the audio is still the stream.
+    stream_backing_id: Option<i64>,
 }
 
 /// Playback position saved while the current song's file is released for a tag edit.
@@ -142,6 +238,7 @@ impl AudioPlayer {
             play_order: None,
             cursor: None,
             stream_loading: None,
+            stream_backing_id: None,
             stream_generation: 0,
             prepared: None,
             preparing: None,
@@ -201,7 +298,7 @@ impl AudioPlayer {
                         let mut advanced = false;
 
                         let stream_ran_out = player.player.empty()
-                            && player.current_song.as_ref().is_some_and(is_stream_song);
+                            && player.current_is_stream_audio();
                         if stream_ran_out {
                             // A stream ended before its announced duration (or nothing was buffered).
                             if let Some(next_cursor) = player.get_next_cursor() {
@@ -211,7 +308,8 @@ impl AudioPlayer {
                             }
                             sleep_time = Duration::ZERO;
                             advanced = true;
-                        } else if let Some(duration) = player.duration {
+                        } else if let Some(duration) = player.duration.filter(|d| !d.is_zero()) {
+                            // (an unknown duration is not "already over": a stream of unknown length ends by running dry)
                             if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
                                 println!("start seamless transition");
 
@@ -250,7 +348,8 @@ impl AudioPlayer {
                             player.duration = player
                                 .appended_duration
                                 .take()
-                                .or(Some(Duration::from_millis(next_song.duration_ms)));
+                                .or(Some(Duration::from_millis(next_song.duration_ms)))
+                                .filter(|d| !d.is_zero());
                             player.seek_offset = Duration::ZERO;
                             player.adopt_stream_duration();
                             player.prepare_next();
@@ -287,8 +386,20 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
+        self.stream_backing_id = None;
         if is_stream_song(&song) {
             return self.play_stream_song(song);
+        }
+        // the file is gone (deleted): play the same track from its page and fix the queue entry
+        if let Some(stream) = stream_fallback(&song, Path::new(&song.path).exists()) {
+            if let Some(slot) = self.play_order.as_ref().zip(self.cursor).and_then(|(o, c)| o.get(c).copied()) {
+                if let Some(entry) = self.queue.get_mut(slot) {
+                    if entry.id == song.id {
+                        *entry = stream.clone();
+                    }
+                }
+            }
+            return self.play_stream_song(stream);
         }
         self.stream_loading = None;
         let source = match Self::decode_source(&song.path) {
@@ -507,12 +618,16 @@ impl AudioPlayer {
     /// Returns `true` if the player advanced, or `false` if the queue was empty.
     fn advance_to_next_in_queue(&mut self, next_cursor: usize) -> bool {
         self.cursor = Some(next_cursor);
+        self.stream_missing_file_at(next_cursor);
 
         if let Some(next_song) = self.get_song_at_cursor() {
             if is_stream_song(&next_song) {
                 self.play(next_song);
                 return true;
             }
+            // a stream that was still opening is abandoned (its late result is ignored)
+            self.stream_loading = None;
+            self.stream_backing_id = None;
             self.buffer_next_silent(&next_song);
             self.current_song = Some(next_song.clone());
             self.duration = Some(Duration::from_millis(next_song.duration_ms));
@@ -527,9 +642,24 @@ impl AudioPlayer {
     /// Appends the song at `next_cursor` for a gapless transition. Returns the song and whether audio was
     /// appended (a stream song that is not prepared yet is not).
     fn buffer_next_in_queue(&mut self, next_cursor: usize) -> Option<(Song, bool)> {
+        self.stream_missing_file_at(next_cursor);
         let next_song = self.song_at(next_cursor)?;
         let appended = self.buffer_next_silent(&next_song);
         Some((next_song, appended))
+    }
+
+    /// If the library song at play-order position `cursor` has no file any more (deleted), its queue entry becomes
+    /// a stream of the same track (when it has a source page).
+    fn stream_missing_file_at(&mut self, cursor: usize) {
+        let Some(slot) = self.play_order.as_ref().and_then(|o| o.get(cursor).copied()) else {
+            return;
+        };
+        let Some(song) = self.queue.get(slot) else {
+            return;
+        };
+        if let Some(stream) = stream_fallback(song, Path::new(&song.path).exists()) {
+            self.queue[slot] = stream;
+        }
     }
 
     /// Song at play-order position `cursor`.
@@ -744,75 +874,108 @@ impl AudioPlayer {
         }
     }
 
-    pub fn seek(&mut self, fraction: f32) {
-        println!("[SEEK LOG] Triggered seek with fraction: {fraction}");
+    /// Seeks the current song to `fraction` (0..=1) of its length. The result says whether the position really
+    /// moved there: rodio reports `Ok` also when nothing was playing (the request is only stored), so the position
+    /// is read back and compared with the target. Every step is logged with the `[seek]` prefix.
+    pub fn seek(&mut self, fraction: f32) -> Result<(), String> {
+        let started = Instant::now();
+        let fraction = clamp_fraction(fraction);
+        let kind = self.current_source_kind();
+        let before = self.seek_offset + self.player.get_pos();
+        println!(
+            "[seek] request fraction={fraction:.4} song={:?} kind={kind} paused={} queued_sources={} pos_before={before:?} stream_loading={:?}",
+            self.current_song.as_ref().map(|s| s.title.as_str()),
+            self.player.is_paused(),
+            self.player.len(),
+            self.stream_loading,
+        );
 
-        let duration = self.duration.or_else(|| {
+        let duration = self.duration.filter(|d| !d.is_zero()).or_else(|| {
             self.current_song
                 .as_ref()
                 .map(|s| Duration::from_millis(s.duration_ms))
+                .filter(|d| !d.is_zero())
         });
-
         let Some(duration) = duration else {
-            eprintln!("[SEEK LOG] Error: Duration is None and no current song available.");
-            return;
+            let msg = "seek ignored: the song's length is unknown".to_string();
+            eprintln!("[seek] FAILED: {msg}");
+            return Err(msg);
         };
-
         self.duration = Some(duration);
         let target = duration.mul_f32(fraction);
         let remaining = duration.saturating_sub(target);
 
-        println!(
-            "[SEEK LOG] Duration: {duration:?}, Target: {target:?}, Remaining: {remaining:?}, Player Queue Len: {}",
-            self.player.len()
-        );
-
         if self.player.len() < 1 && self.stream_loading.is_some() {
-            return;
+            let msg = "seek ignored: the stream is still loading".to_string();
+            eprintln!("[seek] FAILED: {msg}");
+            return Err(msg);
         }
         if self.player.len() < 1 {
-            println!("[SEEK LOG] Queue empty. Reloading current song...");
+            println!("[seek] nothing is queued in the player: reloading the current song");
             if let Some(song) = self.current_song.clone() {
                 self.play(song);
-                return;
+                return Ok(());
             }
+            let msg = "seek ignored: nothing is playing".to_string();
+            eprintln!("[seek] FAILED: {msg}");
+            return Err(msg);
         }
 
         if remaining < Duration::from_secs(1) {
-            println!("[SEEK LOG] Near end of track (<1s remaining). Skipping to next track.");
+            println!("[seek] target {target:?} is within 1 s of the end ({duration:?}): skipping to the next song");
             let Some(next_cursor) = self.get_next_cursor() else {
-                return self.next();
+                self.next();
+                return Ok(());
             };
 
             self.player.skip_one();
             self.advance_to_next_in_queue(next_cursor);
             self.emit_state();
             self.update_current_metadata();
-            return;
+            return Ok(());
         }
 
-        println!("[SEEK LOG] Attempting rodio player.try_seek({target:?})...");
-        match self.player.try_seek(target) {
-            Ok(()) => {
-                println!("[SEEK LOG] try_seek succeeded natively.");
-                self.seek_offset = Duration::ZERO;
-            }
-            Err(e) => {
-                eprintln!("[SEEK LOG] Error: try_seek failed natively: {e:?}");
-            }
+        let seek_started = Instant::now();
+        let result = self.player.try_seek(target);
+        let seek_took = seek_started.elapsed();
+        if let Err(e) = result {
+            let msg = format!("the source cannot seek to {target:?} ({kind}): {e:?}");
+            eprintln!("[seek] FAILED: {msg} (try_seek took {seek_took:?})");
+            return Err(msg);
         }
 
-        let raw_pos = self.player.get_pos();
-        let calculated_progress = (raw_pos.as_secs_f32() / duration.as_secs_f32()).min(1.0);
-
+        // rodio's tracker is absolute after a seek
+        let landed = self.player.get_pos();
+        if let Err(msg) = check_seek_landed(target, landed) {
+            eprintln!(
+                "[seek] FAILED: try_seek returned Ok but {msg} ({kind}, queued_sources={}, try_seek took {seek_took:?})",
+                self.player.len()
+            );
+            return Err(msg);
+        }
+        self.seek_offset = Duration::ZERO;
         println!(
-            "[SEEK LOG] Position state after seek -> Raw rodio pos: {raw_pos:?}, Calculated fraction: {calculated_progress}"
+            "[seek] ok: target={target:?} landed={landed:?} duration={duration:?} try_seek={seek_took:?} total={:?}",
+            started.elapsed()
         );
 
         let target_ms = i64::try_from(target.as_millis()).unwrap_or(0);
         self.update_discord_song(Some(target_ms));
         self.update_current_metadata();
         self.emit_state();
+        Ok(())
+    }
+
+    /// What the audio of the current song comes from, for the logs.
+    fn current_source_kind(&self) -> &'static str {
+        match self.current_song.as_ref() {
+            None => "none",
+            Some(s) if self.current_is_stream_audio() => {
+                if is_stream_song(s) { "stream" } else { "stream(shown as file)" }
+            }
+            Some(s) if s.path.to_ascii_lowercase().ends_with(".opus") => "opus-file",
+            Some(_) => "file",
+        }
     }
     pub fn position(&self) -> f32 {
         if let Some(duration) = self.duration {
@@ -1074,6 +1237,75 @@ impl AudioPlayer {
         Ok(())
     }
 
+    /// Library songs were deleted: the ones in the queue (except the current one) become streams of the same
+    /// track. Returns how many were replaced.
+    pub fn streamify_deleted(&mut self, deleted: &[Song]) -> usize {
+        let current = self
+            .play_order
+            .as_ref()
+            .zip(self.cursor)
+            .and_then(|(order, c)| order.get(c).copied());
+        let keep: Vec<usize> = current.into_iter().collect();
+        let replaced = streamify_deleted(&mut self.queue, &keep, deleted);
+        if replaced > 0 {
+            self.prepare_next();
+            self.emit_state();
+        }
+        replaced
+    }
+
+    /// True when the audio of the current song is a stream: a stream song, or a song swapped for its file while
+    /// the stream keeps playing.
+    fn current_is_stream_audio(&self) -> bool {
+        self.current_song
+            .as_ref()
+            .is_some_and(|s| is_stream_song(s) || (s.id.is_some() && s.id == self.stream_backing_id))
+    }
+
+    /// Swaps stream songs for their downloaded files: the queued ones, and the current one in the UI only (the
+    /// stream keeps playing underneath, see `stream_backing_id`; it is not reopened from the file). A stream that is
+    /// opening or prepared as the next song stays as it is. Returns how many songs were swapped.
+    pub fn swap_streams_for_downloads(&mut self, files: &[Song]) -> usize {
+        // only the stream that is opening right now stays; a prepared / preparing next song is swapped too
+        let busy: Vec<String> = self.stream_loading.clone().into_iter().collect();
+        let keep: Vec<usize> = self
+            .queue
+            .iter()
+            .enumerate()
+            .filter(|(_, queued)| queued.source_url.as_ref().is_some_and(|u| busy.contains(u)))
+            .map(|(i, _)| i)
+            .collect();
+        let mut swapped = swap_streams_for_files(&mut self.queue, &keep, files);
+        if swapped > 0 {
+            // a stream prepared for a song that is a file now is no longer the next one
+            let gone = |url: &str| file_for_stream_url(url, files);
+            if self.prepared.as_ref().is_some_and(|(u, _, _)| gone(u)) {
+                self.prepared = None;
+            }
+            if self.preparing.as_deref().is_some_and(gone) {
+                self.preparing = None;
+            }
+        }
+
+        if self.stream_loading.is_none() {
+            let file = self
+                .current_song
+                .as_ref()
+                .and_then(|current| file_for_stream(current, files))
+                .cloned();
+            if let Some(file) = file {
+                self.stream_backing_id = file.id;
+                self.current_song = Some(file);
+                self.update_current_metadata();
+                swapped += 1;
+            }
+        }
+        if swapped > 0 {
+            self.emit_state();
+        }
+        swapped
+    }
+
     pub fn set_queue(&mut self, songs: Vec<Song>) {
         println!("SETTING QUEUE: {songs:?}");
         self.queue = songs;
@@ -1266,7 +1498,8 @@ impl AudioPlayer {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_song_edit, is_stream_song, order_insert_next, order_push, source_index_at, AudioPlayer,
+        apply_song_edit, check_seek_landed, clamp_fraction, file_for_stream, is_stream_song, order_insert_next,
+        order_push, source_index_at, stream_fallback, streamify_deleted, swap_streams_for_files, AudioPlayer,
     };
     use crate::types::{Platform, QualityTier, Song};
     use rodio::Source;
@@ -1436,6 +1669,301 @@ mod tests {
         assert!(!is_stream_song(&file), "downloaded songs keep their source url but play from the file");
     }
 
+    const STREAM_URL: &str = "https://soundcloud.com/artist/track";
+
+    fn stream_song(url: &str) -> Song {
+        let mut song = make_song(None, "stream");
+        song.path = String::new();
+        song.source_url = Some(url.to_string());
+        song
+    }
+
+    fn library_file(id: i64, path: &str, url: Option<&str>) -> Song {
+        let mut song = make_song(Some(id), "file");
+        song.path = path.to_string();
+        song.source_url = url.map(str::to_string);
+        song
+    }
+
+    #[test]
+    fn swap_streams_for_files_replaces_stream_with_file_of_same_source_url() {
+        let mut queue = vec![stream_song(STREAM_URL)];
+        let files = vec![library_file(5, "C:/music/track.mp3", Some(STREAM_URL))];
+
+        let swapped = swap_streams_for_files(&mut queue, &[], &files);
+
+        assert_eq!(swapped, 1);
+        assert_eq!(queue[0].path, "C:/music/track.mp3");
+        assert_eq!(queue[0].id, Some(5));
+        assert!(!is_stream_song(&queue[0]));
+    }
+
+    #[test]
+    fn swap_streams_for_files_matches_urls_that_differ_only_by_host_prefix_scheme_or_query() {
+        let file = library_file(1, "C:/music/a.opus", Some("https://www.youtube.com/watch?v=abc"));
+
+        let mut queue = vec![stream_song("https://music.youtube.com/watch?v=abc&list=x")];
+        assert_eq!(swap_streams_for_files(&mut queue, &[], std::slice::from_ref(&file)), 1);
+        assert_eq!(queue[0].path, "C:/music/a.opus");
+
+        let mut queue = vec![stream_song("http://youtube.com/watch?v=abc")];
+        assert_eq!(swap_streams_for_files(&mut queue, &[], std::slice::from_ref(&file)), 1);
+        assert_eq!(queue[0].path, "C:/music/a.opus");
+    }
+
+    #[test]
+    fn swap_streams_for_files_does_not_match_a_different_track() {
+        let mut queue = vec![stream_song("https://www.youtube.com/watch?v=other")];
+        let files = vec![library_file(1, "C:/music/a.opus", Some("https://www.youtube.com/watch?v=abc"))];
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[], &files), 0);
+        assert!(is_stream_song(&queue[0]));
+    }
+
+    #[test]
+    fn swap_streams_for_files_returns_the_number_of_swapped_streams() {
+        let one = "https://soundcloud.com/artist/one";
+        let two = "https://soundcloud.com/artist/two";
+        let three = "https://soundcloud.com/artist/three";
+        let mut queue = vec![stream_song(one), stream_song(two), stream_song(three)];
+        let files = vec![
+            library_file(1, "C:/music/one.mp3", Some(one)),
+            library_file(2, "C:/music/three.mp3", Some(three)),
+        ];
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[], &files), 2);
+        assert_eq!(queue[0].path, "C:/music/one.mp3");
+        assert!(is_stream_song(&queue[1]));
+        assert_eq!(queue[2].path, "C:/music/three.mp3");
+    }
+
+    #[test]
+    fn swap_streams_for_files_leaves_kept_positions_alone() {
+        let mut queue = vec![stream_song(STREAM_URL), stream_song(STREAM_URL)];
+        let files = vec![library_file(5, "C:/music/track.mp3", Some(STREAM_URL))];
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[0], &files), 1);
+        assert!(is_stream_song(&queue[0]), "kept position must stay a stream");
+        assert_eq!(queue[1].path, "C:/music/track.mp3");
+    }
+
+    #[test]
+    fn swap_streams_for_files_never_touches_local_songs() {
+        let mut local = make_song(Some(9), "local");
+        local.source_url = Some(STREAM_URL.to_string());
+        let mut queue = vec![local];
+        let files = vec![library_file(5, "C:/music/track.mp3", Some(STREAM_URL))];
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[], &files), 0);
+        assert_eq!(queue[0].path, "/music/track.opus");
+        assert_eq!(queue[0].id, Some(9));
+    }
+
+    #[test]
+    fn swap_streams_for_files_ignores_files_without_id_or_path() {
+        let mut queue = vec![stream_song(STREAM_URL)];
+        let mut without_id = library_file(1, "C:/music/track.mp3", Some(STREAM_URL));
+        without_id.id = None;
+        let without_path = library_file(2, "", Some(STREAM_URL));
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[], &[without_id, without_path]), 0);
+        assert!(is_stream_song(&queue[0]));
+    }
+
+    #[test]
+    fn swap_streams_for_files_without_a_matching_file_leaves_queue_unchanged() {
+        let mut queue = vec![stream_song(STREAM_URL)];
+        let files = vec![library_file(1, "C:/music/other.mp3", Some("https://soundcloud.com/artist/other"))];
+
+        assert_eq!(swap_streams_for_files(&mut queue, &[], &files), 0);
+        assert!(is_stream_song(&queue[0]));
+        assert_eq!(queue[0].source_url.as_deref(), Some(STREAM_URL));
+    }
+
+    fn library_song_with_url(id: i64, title: &str, url: Option<&str>) -> Song {
+        let mut song = make_song(Some(id), title);
+        song.path = format!("C:/music/{id}.mp3");
+        song.source_url = url.map(str::to_string);
+        song
+    }
+
+    #[test]
+    fn streamify_deleted_turns_a_deleted_library_song_into_a_stream_of_the_same_track() {
+        let mut queue = vec![library_song_with_url(5, "Gone", Some(STREAM_URL))];
+        let deleted = vec![library_song_with_url(5, "Gone", Some(STREAM_URL))];
+
+        let replaced = streamify_deleted(&mut queue, &[], &deleted);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(queue[0].id, None);
+        assert!(queue[0].path.is_empty());
+        assert_eq!(queue[0].title, "Gone");
+        assert_eq!(queue[0].source_url.as_deref(), Some(STREAM_URL));
+        assert!(is_stream_song(&queue[0]));
+    }
+
+    #[test]
+    fn streamify_deleted_leaves_kept_positions_alone() {
+        let mut queue = vec![library_song_with_url(5, "Playing", Some(STREAM_URL)), library_song_with_url(5, "Next", Some(STREAM_URL))];
+        let deleted = vec![library_song_with_url(5, "Playing", Some(STREAM_URL))];
+
+        let replaced = streamify_deleted(&mut queue, &[0], &deleted);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(queue[0].id, Some(5), "kept position must stay a library song");
+        assert_eq!(queue[0].path, "C:/music/5.mp3");
+        assert!(is_stream_song(&queue[1]));
+    }
+
+    #[test]
+    fn streamify_deleted_keeps_deleted_songs_without_a_source_url() {
+        let mut queue = vec![library_song_with_url(5, "No url", None), library_song_with_url(6, "Empty url", Some(""))];
+        let deleted = vec![library_song_with_url(5, "No url", None), library_song_with_url(6, "Empty url", Some(""))];
+
+        let replaced = streamify_deleted(&mut queue, &[], &deleted);
+
+        assert_eq!(replaced, 0);
+        assert_eq!(queue[0].id, Some(5));
+        assert_eq!(queue[0].path, "C:/music/5.mp3");
+        assert_eq!(queue[1].id, Some(6));
+        assert_eq!(queue[1].path, "C:/music/6.mp3");
+    }
+
+    #[test]
+    fn streamify_deleted_leaves_queued_songs_that_were_not_deleted_untouched() {
+        let mut queue = vec![library_song_with_url(3, "Kept", Some(STREAM_URL))];
+        let deleted = vec![library_song_with_url(4, "Other", Some(STREAM_URL))];
+
+        let replaced = streamify_deleted(&mut queue, &[], &deleted);
+
+        assert_eq!(replaced, 0);
+        assert_eq!(queue[0].id, Some(3));
+        assert_eq!(queue[0].path, "C:/music/3.mp3");
+        assert!(!is_stream_song(&queue[0]));
+    }
+
+    #[test]
+    fn streamify_deleted_leaves_existing_stream_songs_untouched() {
+        let mut queue = vec![stream_song(STREAM_URL)];
+        let deleted = vec![library_song_with_url(5, "Gone", Some(STREAM_URL))];
+
+        let replaced = streamify_deleted(&mut queue, &[], &deleted);
+
+        assert_eq!(replaced, 0);
+        assert!(is_stream_song(&queue[0]));
+        assert_eq!(queue[0].id, None);
+        assert_eq!(queue[0].title, "stream");
+        assert_eq!(queue[0].source_url.as_deref(), Some(STREAM_URL));
+    }
+
+    #[test]
+    fn streamify_deleted_returns_the_count_and_preserves_queue_order() {
+        let one = "https://soundcloud.com/artist/one";
+        let two = "https://soundcloud.com/artist/two";
+        let mut queue = vec![
+            library_song_with_url(1, "First", Some(one)),
+            library_song_with_url(2, "Second", Some(two)),
+            library_song_with_url(3, "Third", Some(one)),
+            stream_song(STREAM_URL),
+        ];
+        let deleted = vec![library_song_with_url(1, "First", Some(one)), library_song_with_url(3, "Third", Some(one))];
+
+        let replaced = streamify_deleted(&mut queue, &[], &deleted);
+
+        assert_eq!(replaced, 2);
+        assert_eq!(queue.len(), 4);
+        assert_eq!(queue[0].title, "First");
+        assert!(is_stream_song(&queue[0]));
+        assert_eq!(queue[1].id, Some(2));
+        assert_eq!(queue[1].title, "Second");
+        assert_eq!(queue[2].title, "Third");
+        assert!(is_stream_song(&queue[2]));
+        assert_eq!(queue[3].source_url.as_deref(), Some(STREAM_URL));
+    }
+
+    #[test]
+    fn stream_fallback_turns_a_missing_library_song_into_a_stream_of_the_same_track() {
+        let song = library_song_with_url(5, "Gone", Some(STREAM_URL));
+
+        let stream = stream_fallback(&song, false).expect("missing file with a source page should stream");
+
+        assert_eq!(stream.id, None);
+        assert!(stream.path.is_empty());
+        assert_eq!(stream.title, "Gone");
+        assert_eq!(stream.source_url.as_deref(), Some(STREAM_URL));
+        assert!(is_stream_song(&stream));
+    }
+
+    #[test]
+    fn stream_fallback_keeps_a_library_song_whose_file_exists() {
+        let song = library_song_with_url(5, "Here", Some(STREAM_URL));
+
+        assert!(stream_fallback(&song, true).is_none());
+    }
+
+    #[test]
+    fn stream_fallback_needs_a_source_url() {
+        let no_url = library_song_with_url(5, "No url", None);
+        let empty_url = library_song_with_url(6, "Empty url", Some(""));
+
+        assert!(stream_fallback(&no_url, false).is_none());
+        assert!(stream_fallback(&empty_url, false).is_none());
+    }
+
+    #[test]
+    fn stream_fallback_leaves_existing_stream_songs_alone() {
+        let stream = stream_song(STREAM_URL);
+
+        assert!(stream_fallback(&stream, false).is_none());
+    }
+
+    #[test]
+    fn file_for_stream_returns_the_file_with_the_same_normalized_url() {
+        let file = library_file(1, "C:/music/a.opus", Some("https://www.youtube.com/watch?v=abc"));
+        let stream = stream_song("https://music.youtube.com/watch?v=abc&list=x");
+        let files = vec![file];
+
+        let found = file_for_stream(&stream, &files).expect("same track should match");
+
+        assert_eq!(found.id, Some(1));
+        assert_eq!(found.path, "C:/music/a.opus");
+    }
+
+    #[test]
+    fn file_for_stream_returns_none_for_a_local_song() {
+        let mut local = make_song(Some(9), "local");
+        local.source_url = Some("https://www.youtube.com/watch?v=abc".to_string());
+        let files = vec![library_file(1, "C:/music/a.opus", Some("https://www.youtube.com/watch?v=abc"))];
+
+        assert!(file_for_stream(&local, &files).is_none());
+    }
+
+    #[test]
+    fn file_for_stream_ignores_files_without_id_or_path() {
+        let stream = stream_song(STREAM_URL);
+        let mut without_id = library_file(1, "C:/music/track.mp3", Some(STREAM_URL));
+        without_id.id = None;
+        let without_path = library_file(2, "", Some(STREAM_URL));
+        let files = vec![without_id, without_path];
+
+        assert!(file_for_stream(&stream, &files).is_none());
+    }
+
+    #[test]
+    fn file_for_stream_returns_none_for_a_different_track() {
+        let stream = stream_song("https://www.youtube.com/watch?v=other");
+        let files = vec![library_file(1, "C:/music/a.opus", Some("https://www.youtube.com/watch?v=abc"))];
+
+        assert!(file_for_stream(&stream, &files).is_none());
+    }
+
+    #[test]
+    fn file_for_stream_returns_none_for_empty_files() {
+        let stream = stream_song(STREAM_URL);
+
+        assert!(file_for_stream(&stream, &[]).is_none());
+    }
+
     #[test]
     fn order_push_on_an_empty_player_starts_at_cursor_zero() {
         let (mut order, mut cursor) = (None, None);
@@ -1535,5 +2063,65 @@ mod tests {
         for cursor in 0..5 {
             assert_eq!(source_index_at(Some(&order), Some(cursor)), Some(cursor));
         }
+    }
+
+    #[test]
+    fn seek_clamp_fraction_nan_becomes_zero() {
+        assert_eq!(clamp_fraction(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn seek_clamp_fraction_negative_becomes_zero() {
+        assert_eq!(clamp_fraction(-0.5), 0.0);
+        assert_eq!(clamp_fraction(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn seek_clamp_fraction_above_one_becomes_one() {
+        assert_eq!(clamp_fraction(1.5), 1.0);
+        assert_eq!(clamp_fraction(f32::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn seek_clamp_fraction_inside_range_is_unchanged() {
+        assert_eq!(clamp_fraction(0.25), 0.25);
+        assert_eq!(clamp_fraction(0.999), 0.999);
+    }
+
+    #[test]
+    fn seek_clamp_fraction_bounds_are_unchanged() {
+        assert_eq!(clamp_fraction(0.0), 0.0);
+        assert_eq!(clamp_fraction(1.0), 1.0);
+    }
+
+    #[test]
+    fn seek_check_landed_exact_match_is_ok() {
+        assert!(check_seek_landed(Duration::from_secs(120), Duration::from_secs(120)).is_ok());
+    }
+
+    #[test]
+    fn seek_check_landed_within_tolerance_before_or_after_is_ok() {
+        let target = Duration::from_secs(120);
+        assert!(check_seek_landed(target, Duration::from_millis(121_500)).is_ok());
+        assert!(check_seek_landed(target, Duration::from_millis(118_500)).is_ok());
+    }
+
+    #[test]
+    fn seek_check_landed_just_outside_tolerance_is_err() {
+        let target = Duration::from_secs(120);
+        assert!(check_seek_landed(target, Duration::from_millis(121_501)).is_err());
+        assert!(check_seek_landed(target, Duration::from_millis(118_499)).is_err());
+    }
+
+    #[test]
+    fn seek_check_landed_seek_that_did_not_move_is_err_with_both_durations() {
+        let err = check_seek_landed(Duration::from_secs(120), Duration::from_secs(5)).unwrap_err();
+        assert!(err.contains("5s"), "message should contain landed position: {err}");
+        assert!(err.contains("120s"), "message should contain target position: {err}");
+    }
+
+    #[test]
+    fn seek_check_landed_far_after_target_is_err() {
+        assert!(check_seek_landed(Duration::from_secs(10), Duration::from_secs(60)).is_err());
     }
 }

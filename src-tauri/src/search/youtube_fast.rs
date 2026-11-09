@@ -298,6 +298,8 @@ struct Segment {
     text: String,
     /// Texts of runs that carry a navigationEndpoint (linked artist names).
     linked: Vec<String>,
+    /// `browseId` of an album link ("MPREb_...") among the runs of the segment.
+    album_id: Option<String>,
 }
 
 /// Everything needed to build one suggestion, extracted from either a card or a list row.
@@ -425,6 +427,10 @@ fn entry_to_suggestion(entry: Entry<'_>, shelf: bool) -> Option<SearchSuggestion
                 img,
                 subscriber_count: None,
                 audience_kind: None,
+                album_url: non_duration
+                    .get(1)
+                    .and_then(|s| s.album_id.as_ref())
+                    .map(|id| format!("{ALBUM_URL_PREFIX}{id}")),
                 view_count: parse_count(&entry.plays),
                 year: None,
                 duration,
@@ -449,6 +455,7 @@ fn entry_to_suggestion(entry: Entry<'_>, shelf: bool) -> Option<SearchSuggestion
                 img,
                 subscriber_count: None,
                 audience_kind: None,
+                album_url: None,
                 view_count: None,
                 year,
                 duration: None,
@@ -468,6 +475,7 @@ fn entry_to_suggestion(entry: Entry<'_>, shelf: bool) -> Option<SearchSuggestion
                 img,
                 subscriber_count,
                 audience_kind,
+                album_url: None,
                 view_count: None,
                 year: None,
                 duration: None,
@@ -495,6 +503,7 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
     let mut current = Segment {
         text: String::new(),
         linked: Vec::new(),
+        album_id: None,
     };
     for run in runs {
         let text = run.get("text").and_then(Value::as_str).unwrap_or("");
@@ -504,6 +513,7 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
                 Segment {
                     text: String::new(),
                     linked: Vec::new(),
+                    album_id: None,
                 },
             ));
             continue;
@@ -512,6 +522,9 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
         let trimmed = text.trim();
         if !trimmed.is_empty() && run.get("navigationEndpoint").is_some() {
             current.linked.push(trimmed.to_string());
+        }
+        if current.album_id.is_none() {
+            current.album_id = album_browse_id(run);
         }
     }
     out.push(current);
@@ -526,6 +539,14 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
 }
 
 /// Several linked artists are joined with ", "; otherwise the segment text is shown as-is.
+/// `browseId` of an album link run ("MPREb_..."), None for artist links and plain text.
+fn album_browse_id(run: &Value) -> Option<String> {
+    run.pointer("/navigationEndpoint/browseEndpoint/browseId")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("MPRE"))
+        .map(str::to_string)
+}
+
 fn display_artist(segment: &Segment) -> String {
     if segment.linked.len() >= 2 {
         segment.linked.join(", ")
@@ -669,6 +690,7 @@ mod tests {
             img: String::new(),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             duration: None,
@@ -1374,6 +1396,29 @@ mod tests {
             Ok(vec![sugg(ItemType::Track, "s1", "https://youtube.com/watch?v=vid1")]);
         let merged = combine_outcomes(unfiltered, songs).expect("ok");
         assert_eq!(names(&merged), ["Al", "s1"]);
+    }
+
+    #[test]
+    fn album_browse_id_only_accepts_album_links() {
+        let album = serde_json::json!({"text": "Album", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPREb_abc"}}});
+        let artist = serde_json::json!({"text": "Artist", "navigationEndpoint": {"browseEndpoint": {"browseId": "UCxyz"}}});
+        let plain = serde_json::json!({"text": "plain"});
+        assert_eq!(album_browse_id(&album).as_deref(), Some("MPREb_abc"));
+        assert_eq!(album_browse_id(&artist), None);
+        assert_eq!(album_browse_id(&plain), None);
+    }
+
+    #[test]
+    fn segments_remember_the_album_link() {
+        let runs = vec![
+            serde_json::json!({"text": "Artist", "navigationEndpoint": {"browseEndpoint": {"browseId": "UCxyz"}}}),
+            serde_json::json!({"text": " \u{2022} "}),
+            serde_json::json!({"text": "My Album", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPREb_abc"}}}),
+        ];
+        let segs = segments(&runs);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].album_id, None);
+        assert_eq!(segs[1].album_id.as_deref(), Some("MPREb_abc"));
     }
 
     #[test]

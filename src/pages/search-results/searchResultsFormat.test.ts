@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildDownloadMap,
+  searchItemDownloadParams,
   CLEARED_FILTERS,
   downloadPercent,
   formatCountLabel,
@@ -16,10 +17,11 @@ import {
   parseDurationInput,
   parseYearInput,
   platformLabel,
+  trackAlbumItem,
   trackSubline,
   uniqueWarnings,
 } from "./searchResultsFormat.ts";
-import type { DownloadProgress } from "@/shared/store/libraryStore.ts";
+import { ItemType, type DownloadProgress } from "@/shared/store/libraryStore.ts";
 
 const download = (url: string, status: DownloadProgress["status"]): DownloadProgress =>
   ({ url, status }) as DownloadProgress;
@@ -294,5 +296,85 @@ describe("trackSubline", () => {
     expect(trackSubline("Band", null)).toBe("Band");
     expect(trackSubline("", "Album")).toBe("Album");
     expect(trackSubline("  ", "")).toBe("");
+  });
+});
+
+describe("trackAlbumItem", () => {
+  const track = {
+    name: "Song",
+    band_name: "Artist",
+    album_name: "Album",
+    album_url: "https://example.com/album",
+    img: "https://example.com/img.jpg",
+    platform: "youtube" as const,
+  };
+
+  it("returns null when the album url is missing, empty or blank", () => {
+    expect(trackAlbumItem({ ...track, album_url: undefined })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_url: null })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_url: "" })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_url: "   " })).toBeNull();
+  });
+
+  it("returns null when the album name is missing, empty or blank", () => {
+    expect(trackAlbumItem({ ...track, album_name: undefined })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_name: null })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_name: "" })).toBeNull();
+    expect(trackAlbumItem({ ...track, album_name: "  " })).toBeNull();
+  });
+
+  it("maps a track with an album to an album search item", () => {
+    expect(trackAlbumItem(track)).toEqual({
+      item_type: ItemType.Album,
+      name: "Album",
+      band_name: "Artist",
+      item_url_path: "https://example.com/album",
+      img: "https://example.com/img.jpg",
+      platform: "youtube",
+    });
+  });
+
+  it("trims the album name and url", () => {
+    const item = trackAlbumItem({
+      ...track,
+      album_name: "  Album  ",
+      album_url: "  https://example.com/album  ",
+    });
+    expect(item?.name).toBe("Album");
+    expect(item?.item_url_path).toBe("https://example.com/album");
+  });
+
+  it("uses the first credited artist when several are listed", () => {
+    const item = trackAlbumItem({ ...track, band_name: "A,  B, C" });
+    expect(item?.band_name).toBe("A");
+  });
+});
+
+describe("searchItemDownloadParams", () => {
+  const base = {
+    name: "Cesare",
+    band_name: "Car Seat Headrest, Guest",
+    item_url_path: "https://a.test/track/cesare",
+    img: "i.jpg",
+    platform: "bandcamp" as never,
+  };
+
+  it("sends a track with a known album through the album pipeline", () => {
+    const p = searchItemDownloadParams({
+      ...base,
+      item_type: ItemType.Track,
+      album_name: "1",
+      album_url: "https://a.test/album/1",
+    });
+    expect(p.downloadType).toBe(ItemType.Album);
+    expect(p.url).toBe("https://a.test/album/1");
+    expect(p.trackUrls).toEqual(["https://a.test/track/cesare"]);
+    expect(p.artistName).toBe("Car Seat Headrest");
+  });
+
+  it("downloads a track without an album as a track", () => {
+    const p = searchItemDownloadParams({ ...base, item_type: ItemType.Track });
+    expect(p.downloadType).toBe(ItemType.Track);
+    expect(p.trackUrls).toBeUndefined();
   });
 });

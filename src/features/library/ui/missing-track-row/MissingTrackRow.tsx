@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import clsx from "clsx";
-import { MdFileDownload, MdHourglassEmpty, MdPause, MdPlayArrow } from "react-icons/md";
+import { BiDownload } from "react-icons/bi";
+import { HiOutlineMusicNote } from "react-icons/hi";
+import { HiMiniPause } from "react-icons/hi2";
+import { MdPause, MdPlayArrow } from "react-icons/md";
 import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
 import type { MissingTracks } from "@/shared/lib/libraryIndex.ts";
 import { formatTrackDuration } from "@/shared/lib/trackDuration.ts";
@@ -23,6 +26,21 @@ interface MissingTrackRowProps {
   album: string;
   missing: MissingTracks;
   track: AlbumTrackInfo;
+  /** Progress of the song's download (0..100), shown instead of the download button while it runs. */
+  percent?: number;
+  /** A running download (started elsewhere, e.g. from the search) fetches this song. */
+  downloading?: boolean;
+  /** A song that was just removed: shown dimmed in its place, no actions. */
+  ghost?: boolean;
+  selected?: boolean;
+  /** Whether the rows above/below are selected too (one frame per run of selected rows). */
+  selectedAbove?: boolean;
+  selectedBelow?: boolean;
+  /** Starts playback of the song (the page queues the other visible rows after it). Default: streams the album's missing songs. */
+  onPlay?: () => void;
+  onSelect?: (e: React.MouseEvent) => void;
+  /** Right click: the page updates the selection; true when it opened its own (multi-selection) menu. */
+  onMenu?: (e: React.MouseEvent) => boolean;
 }
 
 /**
@@ -30,11 +48,25 @@ interface MissingTrackRowProps {
  * streams a preview, the download button starts the album download of this song, and the right-click menu is
  * the shared remote-track menu.
  */
-const MissingTrackRow = ({ album, missing, track }: MissingTrackRowProps) => {
+const MissingTrackRow = ({
+  album,
+  missing,
+  track,
+  percent = 0,
+  downloading = false,
+  ghost = false,
+  selected = false,
+  selectedAbove = false,
+  selectedBelow = false,
+  onPlay,
+  onSelect,
+  onMenu,
+}: MissingTrackRowProps) => {
   const { openMenu } = useRemoteTrackMenu();
   const downloadOne = useMissingTracksStore((s) => s.downloadOne);
   // The song's album download is running or queued: a second one would download it twice.
-  const busy = useMissingTracksStore((s) => s.pendingUrls.has(track.url));
+  const pending = useMissingTracksStore((s) => s.pendingUrls.has(track.url));
+  const busy = pending || downloading;
   const currentSong = useAudioStore((s) => s.currentSong);
   const isStreaming = useAudioStore((s) => s.isStreaming);
   const isPlaying = useAudioStore((s) => s.isPlaying);
@@ -46,19 +78,42 @@ const MissingTrackRow = ({ album, missing, track }: MissingTrackRowProps) => {
   const title = decodeHtmlEntities(track.title);
 
   const play = () => {
+    if (onPlay) return onPlay();
     void useStreamStore.getState().play(remoteTrackToStreamItem(remote), missingStreamItems(missing));
   };
 
   return (
     <li
-      className={styles.row}
+      className={clsx(styles.row, {
+        [styles.ghost]: ghost,
+        [styles.playing]: isCurrent,
+        [styles.selected]: selected,
+        [styles.selectedTop]: selected && !selectedAbove,
+        [styles.selectedBottom]: selected && !selectedBelow,
+      })}
+      data-song-row
+      aria-selected={selected}
+      onClick={(e) => onSelect?.(e)}
       onDoubleClick={play}
-      onContextMenu={(e) => openMenu(e, remote, { list: queue, downloadState: "none" })}
+      onContextMenu={(e) => {
+        if (onMenu?.(e)) return;
+        openMenu(e, remote, { list: queue, downloadState: "none" });
+      }}
     >
       <div className={styles.left}>
-        <div className={styles.numSlot}>
+        <div className={clsx(styles.numSlot, isCurrent && styles.numSlotCurrent)}>
           {/* Hidden on hover: the play button takes its place. */}
-          <div className={styles.number}>{missingTrackNumber(track)}</div>
+          <div className={styles.number}>
+            {isCurrent ? (
+              playing ? (
+                <HiOutlineMusicNote className={styles.playingIcon} />
+              ) : (
+                <HiMiniPause className={styles.pauseIcon} />
+              )
+            ) : (
+              missingTrackNumber(track)
+            )}
+          </div>
           <button
             type="button"
             className={styles.playButton}
@@ -76,20 +131,33 @@ const MissingTrackRow = ({ album, missing, track }: MissingTrackRowProps) => {
         <div className={clsx(styles.title, "truncate")}>{title}</div>
       </div>
       <div className={styles.right}>
-        <span className={styles.duration}>{formatTrackDuration(track.duration_ms)}</span>
-        <button
-          type="button"
-          className={clsx(styles.downloadButton, busy && styles.busy)}
-          title={busy ? "Downloading" : "Download"}
-          aria-label={busy ? "Downloading song" : "Download song"}
-          disabled={busy}
-          onClick={(e) => {
-            e.stopPropagation();
-            void downloadOne(album, track);
-          }}
-        >
-          {busy ? <MdHourglassEmpty size={16} /> : <MdFileDownload size={18} />}
-        </button>
+        {!busy && (
+          <span className={styles.duration}>{formatTrackDuration(track.duration_ms)}</span>
+        )}
+        {busy ? (
+          <span
+            className={clsx(
+              styles.percent,
+              percent >= 100 ? styles.percentCompleted : percent > 0 ? styles.percentActive : styles.percentPending,
+            )}
+            aria-live="polite"
+          >
+            {percent}%
+          </span>
+        ) : (
+          <button
+            type="button"
+            className={styles.downloadButton}
+            title="Download"
+            aria-label="Download song"
+            onClick={(e) => {
+              e.stopPropagation();
+              void downloadOne(album, track);
+            }}
+          >
+            <BiDownload size={18} />
+          </button>
+        )}
       </div>
     </li>
   );

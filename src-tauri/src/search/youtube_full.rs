@@ -387,6 +387,8 @@ struct Segment {
     text: String,
     /// Texts of runs that carry a navigationEndpoint (linked artist names).
     linked: Vec<String>,
+    /// `browseId` of an album link ("MPREb_...") among the runs of the segment.
+    album_id: Option<String>,
 }
 
 fn http_client() -> &'static reqwest::Client {
@@ -483,6 +485,7 @@ fn parse_row(row: &Value, kind: SearchKind) -> Option<SearchSuggestion> {
                 img,
                 subscriber_count: None,
                 audience_kind: None,
+                album_url: None,
                 view_count: None,
                 year,
                 duration: None,
@@ -501,6 +504,7 @@ fn parse_row(row: &Value, kind: SearchKind) -> Option<SearchSuggestion> {
                 img,
                 subscriber_count,
                 audience_kind,
+                album_url: None,
                 view_count: None,
                 year: None,
                 duration: None,
@@ -534,6 +538,10 @@ fn track(
         img,
         subscriber_count: None,
         audience_kind: None,
+        album_url: non_duration
+            .get(1)
+            .and_then(|s| s.album_id.as_ref())
+            .map(|id| format!("{ALBUM_URL_PREFIX}{id}")),
         view_count,
         year: None,
         duration: rest.iter().find_map(|s| parse_duration(&s.text)),
@@ -568,6 +576,7 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
     let mut current = Segment {
         text: String::new(),
         linked: Vec::new(),
+        album_id: None,
     };
     for run in runs {
         let text = run.get("text").and_then(Value::as_str).unwrap_or("");
@@ -577,6 +586,7 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
                 Segment {
                     text: String::new(),
                     linked: Vec::new(),
+                    album_id: None,
                 },
             ));
             continue;
@@ -585,6 +595,9 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
         let trimmed = text.trim();
         if !trimmed.is_empty() && run.get("navigationEndpoint").is_some() {
             current.linked.push(trimmed.to_string());
+        }
+        if current.album_id.is_none() {
+            current.album_id = album_browse_id(run);
         }
     }
     out.push(current);
@@ -599,6 +612,14 @@ fn segments(runs: &[Value]) -> Vec<Segment> {
 }
 
 /// Several linked artists are joined with ", "; otherwise the segment text is shown as-is.
+/// `browseId` of an album link run ("MPREb_..."), None for artist links and plain text.
+fn album_browse_id(run: &Value) -> Option<String> {
+    run.pointer("/navigationEndpoint/browseEndpoint/browseId")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("MPRE"))
+        .map(str::to_string)
+}
+
 fn display_artist(segment: &Segment) -> String {
     if segment.linked.len() >= 2 {
         segment.linked.join(", ")
@@ -745,6 +766,10 @@ fn parse_top_songs(shelf: &Value, fallback_artist: &str) -> Vec<SearchSuggestion
             .filter(|artist| !artist.is_empty())
             .unwrap_or_else(|| fallback_artist.to_string());
         let album = runs_text(column_runs(row, 3)).trim().to_string();
+        let album_url = column_runs(row, 3)
+            .iter()
+            .find_map(album_browse_id)
+            .map(|id| format!("{ALBUM_URL_PREFIX}{id}"));
         out.push(SearchSuggestion {
             item_type: ItemType::Track,
             name: title.to_string(),
@@ -754,6 +779,7 @@ fn parse_top_songs(shelf: &Value, fallback_artist: &str) -> Vec<SearchSuggestion
             img: best_thumbnail(row.get("thumbnail")),
             subscriber_count: None,
             audience_kind: None,
+            album_url,
             view_count: parse_count(&runs_text(column_runs(row, 2))),
             year: None,
             duration: None,
@@ -800,6 +826,7 @@ fn parse_carousel(carousel: &Value, fallback_artist: &str) -> Vec<SearchSuggesti
             img: best_thumbnail(two_row.get("thumbnailRenderer")),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year,
             duration: None,
@@ -854,6 +881,7 @@ mod tests {
             img: String::new(),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             duration: None,
@@ -1416,6 +1444,11 @@ mod tests {
         assert_eq!(first.duration, None);
         assert_eq!(first.item_url_path, "https://youtube.com/watch?v=khnokW3Mw24");
         assert_eq!(profile.top_songs[3].album_name.as_deref(), Some("Homework"));
+        // The album run of a top song links to its album, so the UI can open it from the track.
+        for song in &profile.top_songs {
+            let url = song.album_url.as_deref().unwrap_or("");
+            assert!(url.starts_with("https://music.youtube.com/browse/MPRE"), "{}: {url:?}", song.name);
+        }
     }
 
     #[test]

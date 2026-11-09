@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Result<(), String> {
     let task_id = task.id.clone();
-    let is_album = task.payload.is_album();
+    let mut is_album = task.payload.is_album();
 
     emit_event(
         &app_handle,
@@ -42,7 +42,42 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
             .await
         }
         DownloadPayload::TrackURL(url) => {
-            process_track_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await
+            // A Bandcamp track of an album goes through the album pipeline: album folder, cover, track number.
+            let album_url = if task.platform == crate::types::Platform::Bandcamp {
+                crate::download::bandcamp::find_album_url(&url).await
+            } else {
+                None
+            };
+            let via_album = match album_url {
+                Some(album_url) => {
+                    match process_album_url(
+                        task.platform,
+                        &album_url,
+                        Some(std::slice::from_ref(&url)),
+                        &task.output_dir,
+                        &app_handle,
+                        &task_id,
+                    )
+                    .await
+                    {
+                        Ok(res) => Some(res),
+                        Err(e) => {
+                            eprintln!("[download] album route of {url} failed ({e}); downloading it as a single");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            match via_album {
+                Some(res) => {
+                    is_album = true;
+                    Ok(res)
+                }
+                None => {
+                    process_track_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await
+                }
+            }
         }
         DownloadPayload::Single(track) => {
             ytdlp::download_batch(&app_handle, &[track], &task.output_dir, &task_id)
@@ -72,7 +107,31 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     let mut new_songs = Vec::new();
     let total = downloaded_files.len();
 
-    for (i, (temp_file, track)) in downloaded_files.iter().enumerate() {
+    // A single track whose album the library already has (other platform): number and album come from it.
+    let mut placed: Vec<Option<(String, String, i32)>> = vec![None; downloaded_files.len()];
+    if !is_album {
+        if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() {
+            let db = db_state.lock().await;
+            for (i, (_, track)) in downloaded_files.iter().enumerate() {
+                if track.track_number.is_some() {
+                    continue;
+                }
+                let artist = track.artists.first().cloned().unwrap_or_else(|| track.album_artist.clone());
+                if let Ok(rows) = db.list_album_sources_for_artist(&artist).await {
+                    placed[i] = crate::library_index::sources::find_in_sources(&rows, &artist, &track.title);
+                }
+            }
+        }
+    }
+
+    for (i, (temp_file, original)) in downloaded_files.iter().enumerate() {
+        let mut owned_track = original.clone();
+        if let Some((album, album_artist, number)) = placed[i].take() {
+            owned_track.album = album;
+            owned_track.album_artist = album_artist;
+            owned_track.track_number = Some(number);
+        }
+        let track = &owned_track;
         let _ = app_handle.emit(
             "download-task-progress",
             ProgressEvent {

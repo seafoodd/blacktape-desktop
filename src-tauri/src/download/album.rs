@@ -16,8 +16,62 @@ use tauri::{AppHandle, Emitter, Manager};
 pub fn select_tracks(tracks: Vec<TrackDownload>, selected: &[String]) -> Vec<TrackDownload> {
     tracks
         .into_iter()
-        .filter(|t| selected.iter().any(|url| *url == t.url))
+        .filter(|t| selected.iter().any(|url| same_page(url, &t.url)))
         .collect()
+}
+
+fn same_page(a: &str, b: &str) -> bool {
+    use crate::library_index::normalize::normalize_url_key;
+    a == b || matches!((normalize_url_key(a), normalize_url_key(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// The tracks that are not in the library yet (by page url, artist + title or a near title), in album order.
+/// Pure: `index` is the library.
+pub fn without_owned(
+    platform: Platform,
+    album_artist: &str,
+    tracks: Vec<TrackDownload>,
+    index: &crate::library_index::status::LibraryIndex,
+) -> Vec<TrackDownload> {
+    use crate::download::album_preview::AlbumTrackInfo;
+    let infos: Vec<AlbumTrackInfo> = tracks
+        .iter()
+        .enumerate()
+        .map(|(index, t)| AlbumTrackInfo {
+            index,
+            title: t.title.clone(),
+            artists: t.artists.clone(),
+            track_number: t.track_number,
+            url: t.url.clone(),
+            available: true,
+            note: None,
+            duration_ms: None,
+        })
+        .collect();
+    let missing: Vec<String> = crate::library_index::sources::compute_missing(platform, album_artist, &infos, index)
+        .into_iter()
+        .map(|t| t.url)
+        .collect();
+    tracks.into_iter().filter(|t| missing.contains(&t.url)).collect()
+}
+
+/// Builds the library index (songs of the library) from the database.
+async fn library_index(
+    app_handle: &AppHandle,
+    album_artist: &str,
+    album: &str,
+) -> Option<crate::library_index::status::LibraryIndex> {
+    let db_state = app_handle.try_state::<tokio::sync::Mutex<Database>>()?;
+    let db = db_state.lock().await;
+    let refs = db.list_song_source_refs().await.ok()?;
+    let meta = db.list_song_meta().await.ok()?;
+    // names are compared with the songs of this album only (another album may have a song of the same name)
+    Some(crate::library_index::commands::scoped_index(
+        &crate::library_index::status::LibraryIndex::from_rows(&refs),
+        &meta,
+        album_artist,
+        album,
+    ))
 }
 
 /// Stores the whole track list of the album in `album_sources` (library-sync D5) so the library can tell
@@ -104,6 +158,12 @@ pub async fn process_album_url(
         if tracks.is_empty() {
             return Err("None of the selected tracks was found in the album.".into());
         }
+    } else if let Some(index) = library_index(app_handle, &album_info.album_artist, &album_info.title).await {
+        // A whole-album download only fetches what the library does not have yet.
+        tracks = without_owned(platform, &album_info.album_artist, tracks, &index);
+        if tracks.is_empty() {
+            return Err("All tracks of this album are already in your library.".into());
+        }
     }
 
     let _ = app_handle.emit(
@@ -128,6 +188,10 @@ pub async fn process_album_url(
         .join(sanitize_fs(&album_info.album_artist))
         .join(sanitize_fs(&album_info.title));
 
+    // Only a folder this download creates may be deleted again on cancel or failure: an existing album folder
+    // holds songs of the library.
+    let folder_created = target_library_dir != root_library_dir && !target_library_dir.exists();
+
     if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
         registry
             .update_metadata(
@@ -141,13 +205,15 @@ pub async fn process_album_url(
                     .collect(),
             )
             .await;
-        registry
-            .set_target_dir(
-                task_id,
-                target_library_dir.clone(),
-                root_library_dir.clone(),
-            )
-            .await;
+        if folder_created {
+            registry
+                .set_target_dir(
+                    task_id,
+                    target_library_dir.clone(),
+                    root_library_dir.clone(),
+                )
+                .await;
+        }
         if let Some(note) = &skipped_note {
             registry
                 .update_task_progress(task_id, 0, tracks.len(), note)
@@ -167,8 +233,7 @@ pub async fn process_album_url(
         );
     }
 
-    let folder_created = target_library_dir != root_library_dir;
-    if folder_created {
+    if target_library_dir != root_library_dir {
         tokio::fs::create_dir_all(&target_library_dir)
             .await
             .map_err(|e| format!("Failed creating album path: {e}"))?;
@@ -312,6 +377,28 @@ mod tests {
         let urls: Vec<&str> = picked.iter().map(|t| t.url.as_str()).collect();
         assert_eq!(urls, vec!["a", "c"], "album order, not selection order");
         assert_eq!(picked[1].track_number, Some(3), "numbers of the whole album are kept");
+    }
+
+    #[test]
+    fn select_tracks_matches_urls_that_differ_only_in_form() {
+        let picked = select_tracks(
+            vec![track("https://a.bandcamp.com/track/x", 1)],
+            &["https://a.bandcamp.com/track/x/?from=search".to_string()],
+        );
+        assert_eq!(picked.len(), 1);
+    }
+
+    #[test]
+    fn without_owned_keeps_only_the_missing_tracks() {
+        let tracks = vec![
+            TrackDownload { title: "One".into(), ..track("https://u/1", 1) },
+            TrackDownload { title: "Two".into(), ..track("https://u/2", 2) },
+        ];
+        let index = crate::library_index::status::LibraryIndex::default()
+            .with_titles([("Artist".to_string(), "One".to_string())]);
+        let left = without_owned(Platform::Bandcamp, "Artist", tracks, &index);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].url, "https://u/2");
     }
 
     #[test]

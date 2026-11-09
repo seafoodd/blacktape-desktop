@@ -205,6 +205,7 @@ pub fn track_suggestion(track: &ScTrack) -> Option<SearchSuggestion> {
         img: track_artwork(track).unwrap_or_default(),
         subscriber_count: None,
         audience_kind: None,
+        album_url: None,
         view_count: track.playback_count,
         year: year_from_dates(&[track.release_date.as_deref()]),
         duration: track
@@ -233,6 +234,7 @@ pub fn playlist_suggestion(playlist: &ScPlaylist) -> Option<SearchSuggestion> {
         img: playlist_artwork(playlist).unwrap_or_default(),
         subscriber_count: None,
         audience_kind: None,
+        album_url: None,
         view_count: None,
         year: year_from_dates(&[
             playlist.release_date.as_deref(),
@@ -259,6 +261,7 @@ pub fn user_suggestion(user: &ScUser) -> Option<SearchSuggestion> {
             .unwrap_or_default(),
         subscriber_count: user.followers_count,
         audience_kind: Some("followers"),
+        album_url: None,
         view_count: None,
         year: None,
         duration: None,

@@ -20,7 +20,8 @@ pub mod utils;
 use crate::audio::commands::{
     add_next_to_queue, add_to_queue, fetch_state, get_is_paused, get_position, get_volume,
     move_in_queue, next, pause, play_song_in_queue, previous, remove_from_queue, resume, seek,
-    set_repeat_mode, set_volume, start_playback, stop, toggle, toggle_shuffle,
+    set_repeat_mode, set_volume, start_playback, stop, swap_streams_for_downloads, toggle,
+    toggle_shuffle,
 };
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_login};
@@ -481,6 +482,7 @@ async fn update_album_info(
 #[command]
 async fn delete_songs(
     state: State<'_, tokio::sync::Mutex<Database>>,
+    player: State<'_, std::sync::Mutex<crate::audio::player::AudioPlayer>>,
     ids: Vec<i64>,
     delete_file: bool,
 ) -> Result<(), String> {
@@ -491,9 +493,19 @@ async fn delete_songs(
         .map_err(|e| e.to_string())?;
 
     let outcome = song_edit::delete_song_files(&songs, delete_file);
-    db.delete_songs(outcome.deleted_ids)
+    db.delete_songs(outcome.deleted_ids.clone())
         .await
         .map_err(|e| e.to_string())?;
+
+    // deleted songs in the queue keep their place as streams
+    let removed: Vec<Song> = songs
+        .iter()
+        .filter(|s| s.id.is_some_and(|id| outcome.deleted_ids.contains(&id)))
+        .cloned()
+        .collect();
+    if let Ok(mut p) = player.lock() {
+        p.streamify_deleted(&removed);
+    }
 
     if outcome.failures.is_empty() {
         Ok(())
@@ -544,7 +556,7 @@ async fn download(
         url: url.clone(),
         artist_name: initial_artist,
         album_title: if is_track {
-            "Singles".to_string()
+            String::new() // set once the track page was read
         } else {
             initial_title.clone()
         },
@@ -774,11 +786,15 @@ pub fn run() {
             preview::commands::stream_queue,
             preview::commands::stream_prefetch,
             preview::commands::stream_add_to_queue,
+            preview::commands::start_mixed_playback,
             // Library index (status of remote items, missing tracks)
             library_index::commands::get_download_status,
             library_index::commands::get_album_status,
             library_index::commands::get_artist_album_sources,
             library_index::commands::get_missing_tracks,
+            library_index::commands::link_album_source,
+            library_index::commands::unlink_album_source,
+            library_index::candidates::find_album_candidates,
             get_stream_lyrics,
             get_album_preview,
             // Player Commands
@@ -801,6 +817,7 @@ pub fn run() {
             add_next_to_queue,
             play_song_in_queue,
             remove_from_queue,
+            swap_streams_for_downloads,
             move_in_queue,
             // Scan
             scan_music,

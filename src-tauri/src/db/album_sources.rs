@@ -38,6 +38,9 @@ pub struct NewAlbumSource {
     pub fetched_at: i64,
 }
 
+/// Name data of one library song (see `Database::list_song_meta`).
+pub type SongMeta = (String, String, String, String);
+
 /// The three columns of a library song that identify it on a platform.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct SongSourceRef {
@@ -130,6 +133,30 @@ impl Database {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    /// (album artist, album, title, canonical slug) of every library song: what a library album owns by name.
+    pub async fn list_song_meta(&self) -> Result<Vec<SongMeta>, sqlx::Error> {
+        sqlx::query_as("SELECT album_artist, album, title, canonical_track_slug FROM songs")
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    /// (album artist, title) of every library song, for the fuzzy title match.
+    pub async fn list_song_artist_titles(&self) -> Result<Vec<(String, String)>, sqlx::Error> {
+        sqlx::query_as("SELECT album_artist, title FROM songs").fetch_all(&self.pool).await
+    }
+
+    /// Removes the stored sources of a library album (an album is linked to one platform album at a time).
+    pub async fn delete_album_sources_for(&self, album_artist: &str, album: &str) -> Result<u64, sqlx::Error> {
+        let done = sqlx::query(
+            "DELETE FROM album_sources WHERE album_artist = ? COLLATE NOCASE AND album = ? COLLATE NOCASE",
+        )
+        .bind(album_artist.trim())
+        .bind(album.trim())
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// Source refs of ALL library songs that have a source_url or a source_item_id (the library index).
     pub async fn list_song_source_refs(&self) -> Result<Vec<SongSourceRef>, sqlx::Error> {
         sqlx::query_as::<_, SongSourceRef>(concat!(
@@ -158,15 +185,15 @@ impl Database {
         .await
     }
 
-    /// Source refs (with their library album) of every song of one artist that has a remote reference.
+    /// Source refs (with their library album) of every song of one artist, also songs without a remote reference
+    /// (albums added from local files are listed so they can be linked to a platform album).
     pub async fn list_artist_song_source_refs(
         &self,
         album_artist: &str,
     ) -> Result<Vec<AlbumSongSourceRef>, sqlx::Error> {
         sqlx::query_as::<_, AlbumSongSourceRef>(concat!(
             "SELECT COALESCE(album, '') AS album, source, source_url, source_item_id FROM songs
-             WHERE album_artist = ? COLLATE NOCASE AND ",
-            has_source_ref!()
+             WHERE album_artist = ? COLLATE NOCASE"
         ))
         .bind(album_artist.trim())
         .fetch_all(&self.pool)
@@ -340,10 +367,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn artist_song_refs_include_songs_without_a_remote_reference() {
+        let db = db().await;
+        add_song(&db, "p1", "Artist", Some("Local Album"), "local", None, None).await;
+        add_song(&db, "p2", "Artist", Some("Local Album"), "bandcamp", Some("https://a/1"), None).await;
+        add_song(&db, "p3", "Other", Some("Local Album"), "local", None, None).await;
+
+        let refs = db.list_artist_song_source_refs("ARTIST").await.unwrap();
+        assert_eq!(refs.len(), 2, "the other artist's song is left out");
+        let local = refs.iter().find(|r| r.source == "local").expect("local song is listed");
+        assert_eq!(local.album, "Local Album");
+        assert_eq!(local.source_url, None);
+        assert_eq!(local.source_item_id, None);
+    }
+
+    #[tokio::test]
     async fn ensure_schema_is_idempotent() {
         let db = db().await;
         db.upsert_album_source(&source("k", "A", "X")).await.unwrap();
         db.ensure_album_sources_schema().await.unwrap();
         assert!(db.get_album_source_by_key("k").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_album_sources_removes_only_that_album_case_insensitively() {
+        let db = db().await;
+        db.upsert_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        db.upsert_album_source(&source("k2", "artist", "ALBUM")).await.unwrap();
+        db.upsert_album_source(&source("k3", "Artist", "Other")).await.unwrap();
+        db.upsert_album_source(&source("k4", "Other Artist", "Album")).await.unwrap();
+
+        let deleted = db.delete_album_sources_for("  ARTIST ", " album ").await.unwrap();
+        assert_eq!(deleted, 2);
+        assert!(db.get_album_source_by_key("k1").await.unwrap().is_none());
+        assert!(db.get_album_source_by_key("k2").await.unwrap().is_none());
+        assert!(db.get_album_source_by_key("k3").await.unwrap().is_some());
+        assert!(db.get_album_source_by_key("k4").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_album_sources_returns_zero_when_nothing_matches() {
+        let db = db().await;
+        db.upsert_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        assert_eq!(db.delete_album_sources_for("Artist", "Missing").await.unwrap(), 0);
+        assert_eq!(db.delete_album_sources_for("Nobody", "Album").await.unwrap(), 0);
+        assert!(db.get_album_source_by_key("k1").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn list_song_artist_titles_returns_album_artist_and_title_pairs() {
+        let db = db().await;
+        assert!(db.list_song_artist_titles().await.unwrap().is_empty());
+
+        for (path, title, artist) in [("p1", "One", "Artist"), ("p2", "Two", "Other Artist")] {
+            sqlx::query(
+                "INSERT INTO songs (path, title, album_artist, album, duration_ms, source)
+                 VALUES (?, ?, ?, 'Album', 1000, 'local')",
+            )
+            .bind(path)
+            .bind(title)
+            .bind(artist)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        }
+
+        let mut pairs = db.list_song_artist_titles().await.unwrap();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("Artist".to_string(), "One".to_string()),
+                ("Other Artist".to_string(), "Two".to_string()),
+            ]
+        );
     }
 }

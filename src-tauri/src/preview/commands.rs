@@ -276,6 +276,66 @@ pub fn stream_queue(
     Ok(())
 }
 
+/// One entry of a mixed queue: a library song (by id) or a song to stream.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MixedEntry {
+    Song { id: i64 },
+    Stream(StreamRequest),
+}
+
+/// Index in the resolved queue of the entry at `index` of the requested one. `resolved[i]` tells whether entry
+/// `i` could be built (a library song that is gone is dropped). When the requested entry was dropped, the next
+/// resolved one is used (or the last).
+pub fn mixed_start_index(resolved: &[bool], index: usize) -> usize {
+    let before = resolved.iter().take(index).filter(|r| **r).count();
+    let total = resolved.iter().filter(|r| **r).count();
+    before.min(total.saturating_sub(1))
+}
+
+/// Replaces the queue with library songs and streams in the given order and starts `index`. The whole list is
+/// the queue, so the entries before `index` stay reachable with "previous".
+#[command]
+pub async fn start_mixed_playback(
+    entries: Vec<MixedEntry>,
+    index: usize,
+    db_state: State<'_, tokio::sync::Mutex<crate::db::db::Database>>,
+    player: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let ids: Vec<i64> = entries
+        .iter()
+        .filter_map(|e| if let MixedEntry::Song { id } = e { Some(*id) } else { None })
+        .collect();
+    let mut by_id: std::collections::HashMap<i64, Song> = if ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        let db = db_state.lock().await;
+        db.get_songs_by_ids(&ids)
+            .await
+            .map_err(|e| format!("SQLx failed to fetch songs: {e:?}"))?
+            .into_iter()
+            .filter_map(|s| s.id.map(|id| (id, s)))
+            .collect()
+    };
+    let built: Vec<Option<Song>> = entries
+        .iter()
+        .map(|e| match e {
+            MixedEntry::Song { id } => by_id.get(id).cloned(),
+            MixedEntry::Stream(r) => Some(stream_song(r, r.duration_ms)),
+        })
+        .collect();
+    by_id.clear();
+    let resolved: Vec<bool> = built.iter().map(Option::is_some).collect();
+    let songs: Vec<Song> = built.into_iter().flatten().collect();
+    if songs.is_empty() {
+        return Err("nothing to play".to_string());
+    }
+    let start = mixed_start_index(&resolved, index);
+    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    p.start_playback(songs, start);
+    Ok(())
+}
+
 /// Adds stream songs to the queue WITHOUT replacing it: right after the current song (in the given order)
 /// when `play_next` is true, at the end otherwise. When nothing is queued it starts playing them (part B).
 #[command]
@@ -374,6 +434,65 @@ mod tests {
     fn start_index_with_shuffle_never_leaves_the_list() {
         assert_eq!(start_index(3, 0, true, |_| 10), 2);
         assert_eq!(start_index(1, 0, true, |n| n), 0);
+    }
+
+    #[test]
+    fn mixed_start_index_keeps_the_index_when_everything_resolved() {
+        assert_eq!(mixed_start_index(&[true; 4], 0), 0);
+        assert_eq!(mixed_start_index(&[true; 4], 2), 2);
+        assert_eq!(mixed_start_index(&[true; 4], 3), 3);
+    }
+
+    #[test]
+    fn mixed_start_index_shifts_down_for_unresolved_entries_before_it() {
+        assert_eq!(mixed_start_index(&[false, true, true, true], 2), 1);
+        assert_eq!(mixed_start_index(&[true, false, true], 2), 1);
+        assert_eq!(mixed_start_index(&[false, false, true], 2), 0);
+    }
+
+    #[test]
+    fn mixed_start_index_uses_the_next_resolved_entry_when_the_requested_one_is_gone() {
+        assert_eq!(mixed_start_index(&[true, false, true], 1), 1);
+        assert_eq!(mixed_start_index(&[true, true, false, true], 2), 2);
+    }
+
+    #[test]
+    fn mixed_start_index_clamps_to_the_last_resolved_when_past_the_end() {
+        assert_eq!(mixed_start_index(&[true, true, true], 99), 2);
+        assert_eq!(mixed_start_index(&[true, false, false], 5), 0);
+    }
+
+    #[test]
+    fn mixed_start_index_is_zero_when_nothing_resolved_or_empty() {
+        assert_eq!(mixed_start_index(&[false, false], 1), 0);
+        assert_eq!(mixed_start_index(&[], 0), 0);
+        assert_eq!(mixed_start_index(&[], 5), 0);
+    }
+
+    #[test]
+    fn mixed_entry_deserializes_a_library_song() {
+        let e: MixedEntry = serde_json::from_str(r#"{"kind":"song","id":7}"#).unwrap();
+        match e {
+            MixedEntry::Song { id } => assert_eq!(id, 7),
+            other => panic!("expected Song, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mixed_entry_deserializes_a_stream() {
+        let e: MixedEntry = serde_json::from_str(
+            r#"{"kind":"stream","platform":"youtube","url":"u","title":"t","artist":"a"}"#,
+        )
+        .unwrap();
+        match e {
+            MixedEntry::Stream(r) => {
+                assert_eq!(r.platform, Platform::Youtube);
+                assert_eq!(r.url, "u");
+                assert_eq!(r.title, "t");
+                assert_eq!(r.artist, "a");
+            }
+            other => panic!("expected Stream, got {other:?}"),
+        }
     }
 
     #[test]

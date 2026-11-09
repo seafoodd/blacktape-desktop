@@ -2,6 +2,7 @@ import clsx from "clsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
+import { sameUrl } from "@/shared/lib/urlKey.ts";
 import { MdPause, MdPlayArrow } from "react-icons/md";
 import { formatDuration } from "@/shared/lib/time.ts";
 import React from "react";
@@ -38,8 +39,12 @@ const SongListItem = ({
   dragIds,
   index,
 }: SongListItemProps) => {
-  const { currentSong, isPlaying, togglePlay } = useAudioStore();
-  const isCurrent = !!currentSong && song.id === currentSong.id;
+  const { currentSong, isPlaying, isStreaming, togglePlay } = useAudioStore();
+  // A song that was streamed (before it was downloaded) is the current one too while its stream plays.
+  const isCurrent =
+    !!currentSong &&
+    (song.id === currentSong.id ||
+      (isStreaming && sameUrl(song.source_url, currentSong.source_url)));
 
   const handleOpenContextMenu = (
     e: React.MouseEvent,

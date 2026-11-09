@@ -622,6 +622,7 @@ mod tests {
             img: String::new(),
             subscriber_count: None,
             audience_kind: None,
+            album_url: None,
             view_count: None,
             year: None,
             duration: None,
@@ -981,6 +982,7 @@ mod tests {
                 view_count: Some(u64::MAX),
                 subscriber_count: Some(u64::MAX),
                 audience_kind: None,
+                album_url: None,
                 ..track("Song Forever", "X")
             },
             "song",
@@ -998,6 +1000,7 @@ mod tests {
                 view_count: Some(u64::MAX),
                 subscriber_count: Some(u64::MAX),
                 audience_kind: None,
+                album_url: None,
                 ..track("Song", "X")
             },
             "song",
@@ -1112,6 +1115,7 @@ mod tests {
                                         view_count: v,
                                         subscriber_count: v,
                                         audience_kind: None,
+                                        album_url: None,
                                         duration: d,
                                         ..make(t.clone(), name, band)
                                     };
@@ -1163,6 +1167,7 @@ mod tests {
         let artist_hit = SearchSuggestion {
             subscriber_count: Some(5_000_000),
             audience_kind: None,
+            album_url: None,
             ..artist("Daft Punk")
         };
         let out = rank(vec![popular, artist_hit], "daft punk");

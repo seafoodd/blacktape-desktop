@@ -36,9 +36,14 @@ export const resume = (): Promise<void> => invoke("resume");
 
 export const toggle = (): Promise<void> => invoke("toggle");
 
-export const seek = (fraction: number): Promise<void> => {
-  invoke("seek", { fraction });
-  return resume();
+export const seek = async (fraction: number): Promise<void> => {
+  try {
+    await invoke("seek", { fraction });
+  } catch (e) {
+    // the backend says why the position did not move (see the [seek] lines of its log)
+    console.warn("[seek] failed:", e);
+  }
+  await resume();
 };
 
 export const next = (): Promise<void> => invoke("next");

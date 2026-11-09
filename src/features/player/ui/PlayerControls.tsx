@@ -79,7 +79,7 @@ export const PlayerControls = () => {
         style={{
           background: `linear-gradient(to right, var(--color-primary) ${progress * 100}%, #555 0)`,
         }}
-        disabled={!currentSong}
+        disabled={!currentSong || streamLoading}
         min={0}
         max={1000}
         value={progress * 1000}

@@ -6,7 +6,7 @@ use crate::library_index::normalize::{item_id_key, normalize_url_key};
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 use crate::utils::make_canonical_slug;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// A remote item the frontend asks about.
 #[derive(Debug, Clone, Deserialize)]
@@ -38,12 +38,46 @@ pub struct AlbumStatus {
 }
 
 /// Set of normalized keys of every library song (url keys and youtube item-id keys).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LibraryIndex {
     pub keys: HashSet<String>,
     /// `canonical_track_slug` of every library song (artist + title), also songs without a remote reference.
     pub slugs: HashSet<String>,
+    /// Normalized titles (see `candidates::normalize_text`) of the library songs by normalized album artist,
+    /// for the fuzzy title match of songs that have no page url.
+    pub titles: HashMap<String, Vec<String>>,
 }
+
+/// 0..=1 similarity of two strings by edit distance (1 = equal).
+pub fn edit_similarity(a: &str, b: &str) -> f32 {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let longest = a.len().max(b.len());
+    if longest == 0 {
+        return 1.0;
+    }
+    if a.len().abs_diff(b.len()) * 5 > longest {
+        return 0.0; // lengths too different to be a typo
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    1.0 - prev[b.len()] as f32 / longest as f32
+}
+
+/// True when both strings have the same digits in the same order: "Track 1" and "Track 2" are different songs
+/// however similar they look.
+fn same_digits(a: &str, b: &str) -> bool {
+    a.chars().filter(char::is_ascii_digit).eq(b.chars().filter(char::is_ascii_digit))
+}
+
+/// Titles at least this similar (after normalizing) count as the same song.
+const TITLE_MATCH: f32 = 0.85;
 
 impl LibraryIndex {
     pub fn from_rows(rows: &[SongSourceRef]) -> Self {
@@ -60,13 +94,41 @@ impl LibraryIndex {
                 }
             }
         }
-        Self { keys, slugs: HashSet::new() }
+        Self { keys, slugs: HashSet::new(), titles: HashMap::new() }
     }
 
     /// Adds the track slugs of the library (see `contains_by_meta`).
     pub fn with_slugs(mut self, slugs: impl IntoIterator<Item = String>) -> Self {
         self.slugs.extend(slugs.into_iter().filter(|s| !s.is_empty()));
         self
+    }
+
+    /// Adds the (album artist, title) of the library songs (see `contains_by_fuzzy_title`).
+    pub fn with_titles(mut self, rows: impl IntoIterator<Item = (String, String)>) -> Self {
+        use crate::library_index::candidates::normalize_text;
+        for (artist, title) in rows {
+            let title = normalize_text(&title);
+            if !title.is_empty() {
+                self.titles.entry(normalize_text(&artist)).or_default().push(title);
+            }
+        }
+        self
+    }
+
+    /// True when a song of this artist has (almost) this title: equal once text in brackets, punctuation and case
+    /// are ignored, or a typo away. Songs named "Title(+ Guest)" in the library match the platform's "Title".
+    pub fn contains_by_fuzzy_title(&self, artist: &str, title: &str) -> bool {
+        use crate::library_index::candidates::normalize_text;
+        let wanted = normalize_text(title);
+        if wanted.chars().count() < 3 {
+            return false;
+        }
+        let first = artist.split(',').next().unwrap_or(artist);
+        [artist, first].iter().any(|a| {
+            self.titles
+                .get(&normalize_text(a))
+                .is_some_and(|titles| titles.iter().any(|t| *t == wanted || (same_digits(t, &wanted) && edit_similarity(t, &wanted) >= TITLE_MATCH)))
+        })
     }
 
     /// True when the library has a song with this artist and title (slug of `artist title`). A track credited to
@@ -240,5 +302,84 @@ mod tests {
         let r: RemoteRef = serde_json::from_str(r#"{"platform":"soundcloud","url":"https://x"}"#).unwrap();
         assert_eq!(r.platform, Platform::Soundcloud);
         assert_eq!(r.url, "https://x");
+    }
+
+    // ---- edit_similarity
+
+    #[test]
+    fn edit_similarity_equal_and_empty_strings_are_identical() {
+        assert_eq!(edit_similarity("abc", "abc"), 1.0);
+        assert_eq!(edit_similarity("", ""), 1.0);
+    }
+
+    #[test]
+    fn edit_similarity_one_typo_in_a_long_title_is_still_similar() {
+        let a = "abcdefghijklmnopqrstuvwxy";
+        assert_eq!(a.chars().count(), 25);
+        let b = "abcdefghijklmnopqrstuvwxz"; // one substitution
+        assert!(edit_similarity(a, b) >= 0.85, "got {}", edit_similarity(a, b));
+    }
+
+    #[test]
+    fn edit_similarity_of_completely_different_strings_is_low() {
+        assert!(edit_similarity("abcdef", "uvwxyz") < 0.5);
+    }
+
+    #[test]
+    fn edit_similarity_of_very_different_lengths_is_zero() {
+        assert_eq!(edit_similarity("a", "abcdefghij"), 0.0);
+    }
+
+    // ---- contains_by_fuzzy_title
+
+    #[test]
+    fn fuzzy_title_matches_a_library_title_with_a_guest_suffix() {
+        let index = LibraryIndex::default().with_titles([(
+            "Артист".to_string(),
+            "Бля, Сосны Танцуют Вальс!(+ Демидовский Што?)".to_string(),
+        )]);
+        assert!(index.contains_by_fuzzy_title("Артист", "Бля, Сосны Танцуют Вальс!"));
+    }
+
+    #[test]
+    fn fuzzy_title_tolerates_a_typo() {
+        let index = LibraryIndex::default().with_titles([(
+            "Артист".to_string(),
+            "Небуторуеная Палочка Коха(+ Гость)".to_string(),
+        )]);
+        assert!(index.contains_by_fuzzy_title("Артист", "Небутоуреная Палочка Коха"));
+    }
+
+    #[test]
+    fn fuzzy_title_rejects_a_different_title() {
+        let index = LibraryIndex::default()
+            .with_titles([("Артист".to_string(), "Небуторуеная Палочка Коха".to_string())]);
+        assert!(!index.contains_by_fuzzy_title("Артист", "Совсем Другая Песня"));
+    }
+
+    #[test]
+    fn fuzzy_title_rejects_another_artist() {
+        let index = LibraryIndex::default()
+            .with_titles([("Артист".to_string(), "Небуторуеная Палочка Коха".to_string())]);
+        assert!(!index.contains_by_fuzzy_title("Другой Артист", "Небутоуреная Палочка Коха"));
+    }
+
+    #[test]
+    fn fuzzy_title_never_matches_a_title_shorter_than_three_characters() {
+        let index = LibraryIndex::default().with_titles([
+            ("Artist".to_string(), "Ab".to_string()),
+            ("Artist".to_string(), "!!".to_string()),
+        ]);
+        assert!(!index.contains_by_fuzzy_title("Artist", "Ab"));
+        assert!(!index.contains_by_fuzzy_title("Artist", "!!"));
+        assert!(!index.contains_by_fuzzy_title("Artist", ""));
+    }
+
+    #[test]
+    fn fuzzy_title_also_tries_the_first_of_several_artists() {
+        let index = LibraryIndex::default()
+            .with_titles([("A".to_string(), "Song Title".to_string())]);
+        assert!(index.contains_by_fuzzy_title("A, B", "Song Title"));
+        assert!(!index.contains_by_fuzzy_title("B, C", "Song Title"));
     }
 }

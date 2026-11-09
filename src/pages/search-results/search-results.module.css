@@ -362,6 +362,13 @@
     min-width: 0;
 }
 
+/* Side by side with the top songs there is room for bigger tiles: the row then fills the height of the songs. */
+@container profile (min-width: 761px) {
+    .discoItem {
+        flex-basis: 184px;
+    }
+}
+
 /* ---------- sections ---------- */
 
 .section {
@@ -726,7 +733,7 @@
     border-radius: 50%;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: color 150ms ease;
+    transition: color 150ms ease, background-color 100ms linear;
 }
 
 .trackRow:hover .rowDownloadBtn,
@@ -736,6 +743,7 @@
 
 .rowDownloadBtn:hover {
     color: var(--color-primaryLight);
+    background-color: rgba(255, 255, 255, 0.1);
 }
 
 .libraryMark {
@@ -923,4 +931,21 @@
     left: 8px;
     background-color: rgba(0, 0, 0, 0.6);
     border-radius: 50%;
+}
+
+/* album name inside the subline of a track: a link that opens the album */
+.albumLink {
+    display: inline;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.albumLink:hover,
+.albumLink:focus-visible {
+    color: var(--color-text);
+    text-decoration: underline;
 }

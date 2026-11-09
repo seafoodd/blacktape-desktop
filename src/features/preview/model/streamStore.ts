@@ -160,3 +160,5 @@ if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
     (e) => console.log(e),
   );
 }
+
+import "./streamSwap.ts";
