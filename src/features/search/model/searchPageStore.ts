@@ -38,6 +38,7 @@ import {
   type LatestGuard,
 } from "@/shared/lib/searchGuard.ts";
 import type { Platform } from "@/shared/types.ts";
+import { usePreviewStore } from "@/features/preview/model/previewStore.ts";
 import {
   DEFAULT_FILTERS,
   DEFAULT_SORT,
@@ -111,6 +112,17 @@ const loadMoreGuards: Record<SearchKind, LatestGuard> = {
   [ItemType.Album]: createLatestGuard(),
   [ItemType.Artist]: createLatestGuard(),
 };
+
+/** YouTube stream urls take seconds to resolve: warm the first few so their preview starts right away. */
+const WARM_YOUTUBE_TRACKS = 2;
+
+function warmPreviewStreams(tracks: SearchSuggestion[]): void {
+  const { prefetch } = usePreviewStore.getState();
+  tracks
+    .filter((t) => t.platform === "youtube")
+    .slice(0, WARM_YOUTUBE_TRACKS)
+    .forEach(prefetch);
+}
 
 const loadingSection = (): SectionState => ({
   ...emptySection(),
@@ -196,6 +208,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, readySection(page));
       if (kind === ItemType.Artist) startProfile(query, page.items ?? []);
+      if (kind === ItemType.Track) warmPreviewStreams(page.items ?? []);
     } catch (err) {
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, {

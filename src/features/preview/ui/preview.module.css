@@ -1,0 +1,131 @@
+.button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+*:hover > .button,
+.button:focus-visible,
+.button.active {
+    opacity: 1;
+}
+
+.button:hover {
+    background-color: var(--color-primary);
+    transform: scale(1.08);
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: previewSpin 700ms linear infinite;
+}
+
+@keyframes previewSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* floating mini player */
+
+.bar {
+    position: fixed;
+    left: 50%;
+    bottom: 88px;
+    z-index: 40;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: min(560px, calc(100vw - 32px));
+    padding: 8px 10px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.barCover {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.barInfo {
+    flex: 1 1 120px;
+    min-width: 0;
+}
+
+.barTitle,
+.barSub {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.barTitle {
+    font-weight: 600;
+}
+
+.barSub {
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+}
+
+.barBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: white;
+    cursor: pointer;
+}
+
+.barBtn:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.barTime {
+    flex-shrink: 0;
+    min-width: 34px;
+    color: var(--color-muted);
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.barSeek {
+    flex: 2 1 100px;
+    min-width: 60px;
+    accent-color: white;
+}
+
+@media (max-width: 640px) {
+    .barSeek,
+    .barTime {
+        display: none;
+    }
+}

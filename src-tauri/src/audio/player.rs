@@ -32,7 +32,7 @@ pub enum RepeatMode {
     Queue,
 }
 
-type BoxedSource = Box<dyn Source<Item = f32> + Send>;
+pub type BoxedSource = Box<dyn Source<Item = f32> + Send>;
 
 pub struct AudioPlayer {
     sink: MixerDeviceSink,
@@ -48,6 +48,10 @@ pub struct AudioPlayer {
     repeat_mode: RepeatMode,
     play_order: Option<Vec<usize>>,
     cursor: Option<usize>,
+    /// Streaming preview (separate rodio player on the same mixer); see `preview`.
+    preview: Option<Player>,
+    /// The library player was playing when the preview started and is resumed when it ends.
+    resume_after_preview: bool,
 }
 
 /// Playback position saved while the current song's file is released for a tag edit.
@@ -98,6 +102,8 @@ impl AudioPlayer {
             repeat_mode: RepeatMode::Off,
             play_order: None,
             cursor: None,
+            preview: None,
+            resume_after_preview: false,
         }
     }
 
@@ -215,6 +221,7 @@ impl AudioPlayer {
     }
 
     pub fn play(&mut self, song: Song) {
+        self.preview_cancel_for_library();
         let source = match Self::decode_source(&song.path) {
             Ok(s) => s,
             Err(e) => {
@@ -271,6 +278,7 @@ impl AudioPlayer {
     }
 
     pub fn resume(&mut self) {
+        self.preview_cancel_for_library();
         if self.player.len() < 1 {
             if let Some(song) = self.current_song.clone() {
                 return self.play(song);
@@ -921,6 +929,9 @@ impl AudioPlayer {
 
         self.sink = new_sink;
         self.player = new_player;
+        // The preview player belonged to the old mixer.
+        self.preview = None;
+        self.resume_after_preview = false;
 
         if let Some(song) = prev_song {
             if let Ok(mut source) = Self::decode_source(&song.path) {
@@ -953,8 +964,91 @@ impl AudioPlayer {
         self.queue = songs;
     }
 
+    // ----- streaming preview -----
+
+    /// Starts `source` on the preview player. The library player is paused meanwhile and resumed by
+    /// `preview_stop` when it was playing.
+    pub fn preview_start(&mut self, source: BoxedSource) {
+        if !self.resume_after_preview {
+            self.resume_after_preview = self.current_song.is_some() && !self.player.is_paused() && self.player.len() > 0;
+        }
+        if self.resume_after_preview {
+            self.player.pause();
+            self.emit_state();
+            self.update_current_metadata();
+        }
+        let player = Player::connect_new(self.sink.mixer());
+        player.set_volume(self.player.volume());
+        player.append(source);
+        player.play();
+        self.preview = Some(player);
+    }
+
+    /// The library player takes over: drop the preview WITHOUT resuming the library player (it is about to play).
+    pub fn preview_cancel_for_library(&mut self) {
+        if let Some(p) = self.preview.take() {
+            p.stop();
+        }
+        self.resume_after_preview = false;
+    }
+
+    pub fn preview_is_active(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    /// True once the preview player ran out of audio.
+    pub fn preview_finished(&self) -> bool {
+        self.preview.as_ref().is_some_and(|p| p.empty())
+    }
+
+    pub fn preview_is_paused(&self) -> bool {
+        self.preview.as_ref().is_some_and(|p| p.is_paused())
+    }
+
+    pub fn preview_toggle(&mut self) {
+        if let Some(p) = &self.preview {
+            if p.is_paused() {
+                p.play();
+            } else {
+                p.pause();
+            }
+        }
+    }
+
+    pub fn preview_position(&self) -> Duration {
+        self.preview.as_ref().map(|p| p.get_pos()).unwrap_or_default()
+    }
+
+    pub fn preview_seek(&mut self, pos: Duration) -> Result<(), String> {
+        match &self.preview {
+            Some(p) => p.try_seek(pos).map_err(|e| e.to_string()),
+            None => Err("no preview is playing".to_string()),
+        }
+    }
+
+    /// Stops the preview and resumes the library player if the preview interrupted it.
+    pub fn preview_stop(&mut self) {
+        if let Some(p) = self.preview.take() {
+            p.stop();
+        }
+        if self.resume_after_preview {
+            self.resume_after_preview = false;
+            self.player.play();
+            self.emit_state();
+            self.update_current_metadata();
+        }
+    }
+
+    /// Keeps the preview volume in step with the library volume.
+    fn sync_preview_volume(&self, fraction: f32) {
+        if let Some(p) = &self.preview {
+            p.set_volume(fraction);
+        }
+    }
+
     pub fn set_volume(&mut self, fraction: f32) {
         self.player.set_volume(fraction);
+        self.sync_preview_volume(fraction);
     }
 
     pub fn get_volume(&mut self) -> f32 {

@@ -842,3 +842,18 @@
     width: 36px;
     height: 36px;
 }
+
+/* preview button over a track cover */
+.trackCoverBox {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+}
+
+.trackPreview {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 28px;
+    height: 28px;
+}

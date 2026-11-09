@@ -6,6 +6,7 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import type { SearchKind } from "@/shared/lib/searchFull.ts";
 import { DownloadButton } from "./DownloadButton.tsx";
+import { PreviewButton } from "@/features/preview/ui/PreviewButton.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
   formatDurationSecs,
@@ -49,7 +50,10 @@ export const TrackRow = ({ item, progress, compact = false }: TrackRowProps) => 
   const subline = trackSubline(item.band_name, item.album_name);
   return (
     <div className={styles.trackRow}>
-      <Cover src={item.img} alt={item.name} className={styles.trackCover} />
+      <div className={styles.trackCoverBox}>
+        <Cover src={item.img} alt={item.name} className={styles.trackCover} />
+        <PreviewButton item={item} className={styles.trackPreview} />
+      </div>
       <div className={styles.trackInfo}>
         <p className={styles.ellipsis} title={item.name}>
           {item.name}
