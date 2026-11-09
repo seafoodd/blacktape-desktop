@@ -98,7 +98,7 @@
 
     &:focus-visible {
         color: white;
-        background-color: var(--color-primary-light);
+        background-color: var(--color-primaryLight);
         outline: none;
 
         .playlistName {
@@ -111,7 +111,7 @@
     }
 
     &.dragOver {
-        background-color: var(--color-primary-light, rgba(255, 255, 255, 0.15));
+        background-color: var(--color-primaryLight, rgba(255, 255, 255, 0.15));
         border-color: var(--color-primary);
         transform: scale(1.02);
 

@@ -8,6 +8,7 @@ export interface ThemePalette {
     text: string;
     muted: string;
     primary: string;
+    primaryLight: string;
     secondary: string;
     border: string;
   };
@@ -24,6 +25,7 @@ export const builtinThemes: Record<string, ThemePalette> = {
       text: "#F1F2F6",
       muted: "#8E92A6",
       primary: "#005FCC",
+      primaryLight: "#459AFB",
       secondary: "#006DE4",
       border: "#1F2230",
     },
@@ -38,6 +40,7 @@ export const builtinThemes: Record<string, ThemePalette> = {
       text: "#F5F5F5",
       muted: "#8F8F9C",
       primary: "#8C80F5",
+      primaryLight: "#9B91EA",
       secondary: "#8BE9FD",
       border: "#444547",
     },
@@ -50,10 +53,11 @@ export const builtinThemes: Record<string, ThemePalette> = {
       background: "#21222C",
       surface: "#282A36",
       text: "#F8F8F2",
-      muted: "#6272A4",
+      muted: "#7E8EBF",
       primary: "#BD93F9",
+      primaryLight: "#CFAFFA",
       secondary: "#A29BFB",
-      border: "#434f77",
+      border: "#383A55",
     },
   },
   // Add Catppuccin, Nord, Light themes, etc.

@@ -50,7 +50,7 @@
 
     & svg {
         flex-shrink: 0;
-        color: var(--color-primary-light);
+        color: var(--color-primaryLight);
     }
 }
 
@@ -96,8 +96,8 @@
     border-color: var(--color-primary);
 
     &:hover:not(:disabled) {
-        background-color: var(--color-primary-light);
-        border-color: var(--color-primary-light);
+        background-color: var(--color-primaryLight);
+        border-color: var(--color-primaryLight);
     }
 }
 
