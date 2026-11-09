@@ -22,9 +22,18 @@ export interface PlatformWarning {
   message: string;
 }
 
+/** The same album / song / artist as a listed item, on another platform. */
+export interface PlatformCopy {
+  /** `item_url_path` of the item of `items` this is a copy of. */
+  of: string;
+  item: SearchSuggestion;
+}
+
 /** One page of ranked, deduplicated results of ONE kind. `has_more === (next_cursor !== null)`. */
 export interface FullSearchPage {
   items: SearchSuggestion[];
+  /** Copies of `items` on other platforms; shown instead of the item when the page is filtered by platform. */
+  copies?: PlatformCopy[];
   next_cursor: SearchCursor | null;
   has_more: boolean;
   warnings: PlatformWarning[];

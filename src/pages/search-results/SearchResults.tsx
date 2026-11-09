@@ -49,9 +49,9 @@ const SearchResults = () => {
 
   const visible: Record<SearchKind, SearchSuggestion[]> = useMemo(
     () => ({
-      [ItemType.Track]: visibleSectionItems(sections[ItemType.Track].items, filters, sort, ItemType.Track),
-      [ItemType.Album]: visibleSectionItems(sections[ItemType.Album].items, filters, sort, ItemType.Album),
-      [ItemType.Artist]: visibleSectionItems(sections[ItemType.Artist].items, filters, sort, ItemType.Artist),
+      [ItemType.Track]: visibleSectionItems(sections[ItemType.Track].items, filters, sort, ItemType.Track, sections[ItemType.Track].copies),
+      [ItemType.Album]: visibleSectionItems(sections[ItemType.Album].items, filters, sort, ItemType.Album, sections[ItemType.Album].copies),
+      [ItemType.Artist]: visibleSectionItems(sections[ItemType.Artist].items, filters, sort, ItemType.Artist, sections[ItemType.Artist].copies),
     }),
     [sections, filters, sort],
   );

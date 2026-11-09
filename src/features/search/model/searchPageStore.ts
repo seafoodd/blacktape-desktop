@@ -43,6 +43,7 @@ import {
   DEFAULT_FILTERS,
   DEFAULT_SORT,
   mergePages,
+  type ItemCopy,
   pickProfileArtist,
   type SearchPageFilters,
   type SearchPageSort,
@@ -57,6 +58,8 @@ export type SectionStatus =
 
 export interface SectionState {
   items: SearchSuggestion[];
+  /** Copies of `items` on other platforms (see `itemsForPlatform`). */
+  copies: ItemCopy[];
   status: SectionStatus;
   error: string | null;
   nextCursor: SearchCursor | null;
@@ -94,6 +97,7 @@ export interface SearchPageState {
 
 export const emptySection = (): SectionState => ({
   items: [],
+  copies: [],
   status: "idle",
   error: null,
   nextCursor: null,
@@ -159,6 +163,7 @@ const readySection = (page: FullSearchPage): SectionState => {
   const nextCursor = page.next_cursor ?? null;
   return {
     items: page.items ?? [],
+    copies: page.copies ?? [],
     status: "ready",
     error: null,
     nextCursor,
@@ -280,6 +285,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         setSection(kind, {
           ...next,
           items: mergePages(current.items, next.items),
+          copies: [...current.copies, ...next.copies],
           // keep the first page's platform warnings (e.g. "Bandcamp unavailable")
           warnings: [...new Set([...current.warnings, ...next.warnings])],
         });

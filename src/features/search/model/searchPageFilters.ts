@@ -92,6 +92,32 @@ function matchesText(item: SearchSuggestion, text: string): boolean {
   return normalizeText(fields).includes(needle);
 }
 
+/** A copy of a listed item on another platform (mirrors `PlatformCopy` of `searchFull.ts`). */
+export interface ItemCopy {
+  of: string;
+  item: SearchSuggestion;
+}
+
+/**
+ * The list as it looks for one platform: an item of another platform is replaced, in place, by its copy on
+ * `platform` when there is one (the search merges the same album from several platforms into one item, so without
+ * this the YouTube filter would hide an album that is also on Bandcamp). "All" returns `items` unchanged. Pure.
+ */
+export function itemsForPlatform(
+  items: SearchSuggestion[],
+  copies: ItemCopy[],
+  platform: PlatformChoice,
+): SearchSuggestion[] {
+  if (platform === "All" || copies.length === 0) return items;
+  const byOrigin = new Map<string, SearchSuggestion>();
+  for (const copy of copies) {
+    if (copy.item.platform === platform && !byOrigin.has(copy.of)) byOrigin.set(copy.of, copy.item);
+  }
+  return items.map((item) =>
+    item.platform === platform ? item : (byOrigin.get(item.item_url_path) ?? item),
+  );
+}
+
 /** Applies platform / year / duration / text filters (NOT the tab; the tab selects which section list is shown). */
 export function applyFilters(
   items: SearchSuggestion[],
