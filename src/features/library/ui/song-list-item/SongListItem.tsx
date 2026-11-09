@@ -3,45 +3,44 @@ import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { formatDuration } from "@/shared/lib/time.ts";
-import React, { useState } from "react";
-import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
+import React from "react";
+import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { Song } from "@/shared/types.ts";
-import { ContextMenu, ContextMenuPosition } from "@/shared/ui/context-menu";
-import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
+import { ContextMenuPosition } from "@/shared/ui/context-menu";
+import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
 
 interface SongListItemProps {
   song: Song;
+  /** Double click: start playing this song. */
   onPlay: (clickedSongId: number) => void;
-  playbackContext: PlaybackContext;
-  contextId?: number;
+  /** Single click: the parent updates the selection (Ctrl/Shift aware). */
+  onSelect: (song: Song, e: React.MouseEvent) => void;
+  /** Right click or the three-dots button: the parent builds and shows the menu. */
+  onOpenMenu: (song: Song, position: ContextMenuPosition) => void;
+  selected: boolean;
+  /** Whether the neighbours above/below are selected too (to draw one frame per group). */
+  selectedAbove?: boolean;
+  selectedBelow?: boolean;
+  /** Songs a drag from this row carries: the whole selection if the row is part of it. */
+  dragIds: number[];
   index?: number;
-  allowDelete?: boolean;
 }
 
 const SongListItem = ({
   song,
   onPlay,
-  playbackContext,
-  contextId,
+  onSelect,
+  onOpenMenu,
+  selected,
+  selectedAbove,
+  selectedBelow,
+  dragIds,
   index,
-  allowDelete,
 }: SongListItemProps) => {
   const { currentSong, isPlaying } = useAudioStore();
-  const { getContextMenuItems } = useSongContextMenu({
-    onPlay: (song) => onPlay(song.id),
-    playbackContext,
-    contextId,
-    allowDelete,
-  });
-
-  const [activeMenu, setActiveMenu] = useState<{
-    position: ContextMenuPosition;
-    song: Song;
-  } | null>(null);
 
   const handleOpenContextMenu = (
     e: React.MouseEvent,
-    song: Song,
     fromThreeDots = false,
   ) => {
     e.preventDefault();
@@ -56,17 +55,11 @@ const SongListItem = ({
       y = rect.bottom + 4;
     }
 
-    setActiveMenu({
-      position: { x, y },
-      song,
-    });
+    onOpenMenu(song, { x, y });
   };
 
   const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData(
-      "application/json",
-      JSON.stringify({ songId: song.id }),
-    );
+    e.dataTransfer.setData(SONG_DRAG_MIME, encodeSongDrag(dragIds));
     e.dataTransfer.effectAllowed = "copy";
 
     const ghost = document.createElement("div");
@@ -109,7 +102,8 @@ const SongListItem = ({
     textContainer.style.flex = "1";
 
     const titleEl = document.createElement("span");
-    titleEl.textContent = song.title;
+    titleEl.textContent =
+      dragIds.length > 1 ? `${dragIds.length} tracks` : song.title;
     titleEl.style.fontSize = "13px";
     titleEl.style.fontWeight = "600";
     titleEl.style.whiteSpace = "nowrap";
@@ -138,9 +132,15 @@ const SongListItem = ({
     <div
       className={clsx(styles.song, {
         [styles.playing]: currentSong && song.id == currentSong.id,
+        [styles.selected]: selected,
+        [styles.selectedTop]: selected && !selectedAbove,
+        [styles.selectedBottom]: selected && !selectedBelow,
       })}
-      onClick={() => onPlay(song.id)}
-      onContextMenu={(e) => handleOpenContextMenu(e, song)}
+      data-song-row
+      aria-selected={selected}
+      onClick={(e) => onSelect(song, e)}
+      onDoubleClick={() => onPlay(song.id)}
+      onContextMenu={(e) => handleOpenContextMenu(e)}
       onDragStart={handleDragStart}
       draggable
       key={song.id}
@@ -169,19 +169,12 @@ const SongListItem = ({
         </div>
         <button
           className={styles.threeDotButton}
-          onClick={(e) => handleOpenContextMenu(e, song, true)}
+          onClick={(e) => handleOpenContextMenu(e, true)}
           aria-label="Song options"
         >
           <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
         </button>
       </div>
-      {activeMenu && (
-        <ContextMenu
-          position={activeMenu.position}
-          items={getContextMenuItems(activeMenu.song)}
-          onClose={() => setActiveMenu(null)}
-        />
-      )}
     </div>
   );
 };
