@@ -110,6 +110,10 @@
     font-size: var(--font-sm);
 }
 
+.numHidden {
+    visibility: hidden;
+}
+
 .alwaysShown {
     display: flex !important;
 }

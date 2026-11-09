@@ -68,7 +68,7 @@ const TrackRow = ({
     >
       <div className={rowStyles.songLeft}>
         <div className={rowStyles.numSlot}>
-          <div className={rowStyles.numContent}>
+          <div className={clsx(rowStyles.numContent, (active || loading) && styles.numHidden)}>
             <div className={rowStyles.songTrackNumber}>
               {String(track.track_number ?? position + 1).padStart(2, "0")}
             </div>
