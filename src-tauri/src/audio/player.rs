@@ -1,4 +1,5 @@
 use crate::discord_presence::DiscordRpcClient;
+use crate::audio::queue_ops;
 use crate::download::opus_source::OpusSource;
 use crate::{
     audio::media_controls::MediaControls,
@@ -341,6 +342,55 @@ impl AudioPlayer {
             }
         }
 
+        self.emit_state();
+    }
+
+    /// Removes the songs at `positions` (positions in the play order). Removing the
+    /// current song moves on to the song after it, or stops if there is none.
+    pub fn remove_from_queue(&mut self, positions: &[usize]) {
+        let Some(order) = self.play_order.clone() else {
+            return;
+        };
+        let removal = queue_ops::remove_positions(&order, self.cursor, positions);
+        if removal.keep.len() == order.len() {
+            return; // nothing valid to remove
+        }
+
+        let new_queue: Vec<Song> = removal
+            .keep
+            .iter()
+            .filter_map(|&i| self.queue.get(i).cloned())
+            .collect();
+        self.queue = new_queue;
+        self.play_order = Some(removal.order);
+        self.cursor = removal.cursor;
+
+        if removal.removed_current {
+            match self.get_song_at_cursor() {
+                Some(next) => {
+                    self.play(next);
+                    return;
+                }
+                None => {
+                    self.stop();
+                    self.current_song = None;
+                    self.cursor = None;
+                }
+            }
+        }
+        self.emit_state();
+    }
+
+    /// Moves the songs at `positions` as a block to before `insert_before` (an index
+    /// in the current play order). The current song keeps playing.
+    pub fn move_in_queue(&mut self, positions: &[usize], insert_before: usize) {
+        let Some(order) = self.play_order.as_ref() else {
+            return;
+        };
+        let (new_order, new_cursor) =
+            queue_ops::move_positions(order, self.cursor, positions, insert_before);
+        self.play_order = Some(new_order);
+        self.cursor = new_cursor;
         self.emit_state();
     }
 

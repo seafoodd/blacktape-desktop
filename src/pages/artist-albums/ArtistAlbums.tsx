@@ -14,6 +14,7 @@ import {
   EMPTY_SELECTION,
   nextSelection,
   pruneSelection,
+  selectGroup,
   selectionForContextMenu,
   type SelectionState,
 } from "@/shared/lib/selection.ts";
@@ -65,6 +66,27 @@ const ArtistAlbums = () => {
         ctrl: e.ctrlKey || e.metaKey,
         shift: e.shiftKey,
       }),
+    );
+  };
+
+  /** Click on an album's cover or title selects all its tracks (Ctrl/Cmd adds). */
+  const handleSelectAlbum = (album: Album, e: React.MouseEvent) => {
+    e.stopPropagation(); // the page background would clear the selection
+    setSelection((prev) =>
+      selectGroup(
+        prev,
+        album.songs.map((s) => s.id),
+        e.ctrlKey || e.metaKey,
+      ),
+    );
+  };
+
+  /** Double click on an album's cover or title plays the album. */
+  const handlePlayAlbum = (album: Album) => {
+    const ids = album.songs.map((s) => s.id);
+    if (ids.length === 0) return;
+    startPlayback(ids, 0, "library").catch((e) =>
+      console.error("Play Album error: ", e),
     );
   };
 
@@ -353,7 +375,11 @@ const ArtistAlbums = () => {
             key={index}
             onContextMenu={(e) => openMenu(e, albumMenuItems(album))}
           >
-            <div className={styles.albumBlockLeft}>
+            <div
+              className={clsx(styles.albumBlockLeft, styles.albumHeader)}
+              onClick={(e) => handleSelectAlbum(album, e)}
+              onDoubleClick={() => handlePlayAlbum(album)}
+            >
               <img loading="lazy" decoding="async"
                 src={
                   album.cover_url
@@ -371,7 +397,11 @@ const ArtistAlbums = () => {
               />
             </div>
             <div className={styles.albumBlockRight}>
-              <h2 className={clsx(styles.albumTitle, "truncate")}>
+              <h2
+                className={clsx(styles.albumTitle, styles.albumHeader, "truncate")}
+                onClick={(e) => handleSelectAlbum(album, e)}
+                onDoubleClick={() => handlePlayAlbum(album)}
+              >
                 {album.title}
               </h2>
               <ul className={styles.songs}>

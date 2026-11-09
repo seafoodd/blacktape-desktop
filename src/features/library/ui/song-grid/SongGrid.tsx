@@ -12,6 +12,7 @@ import {
 } from "@/shared/ui/context-menu";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
+import { MdPause, MdPlayArrow } from "react-icons/md";
 import { coverSrc } from "@/shared/lib/cover";
 import {
   EMPTY_SELECTION,
@@ -49,7 +50,7 @@ export const SongGrid = ({
   onReorderSongs,
   onMoveSelection,
 }: SongGridProps) => {
-  const { isPlaying, startPlayback } = useAudioStore();
+  const { isPlaying, startPlayback, togglePlay } = useAudioStore();
   const { openModal } = useModalStore();
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{
@@ -272,9 +273,18 @@ export const SongGrid = ({
             selectedBelow={selection.selected.has(index + 1)}
             onSelect={handleSelect}
             onPlay={onPlay}
+            onTogglePlay={() =>
+              togglePlay().catch((e) => console.error("togglePlay error: ", e))
+            }
             onOpenMenu={handleOpenMenu}
             draggable={!!onReorderSongs}
-            isDragged={draggedIndex === index}
+            isDragged={
+              draggedIndex !== null &&
+              (draggedIndex === index ||
+                (selection.selected.has(index) &&
+                  selection.selected.size > 1 &&
+                  selection.selected.has(draggedIndex)))
+            }
             dropTarget={dropTarget}
             onDragStart={(e) => handleDragStart(e, index)}
             onDragOver={(e) => handleDragOver(e, index)}
@@ -304,6 +314,7 @@ interface SongGridRowProps {
   selectedBelow: boolean;
   onSelect: (index: number, e: React.MouseEvent) => void;
   onPlay: (index: number) => void;
+  onTogglePlay: () => void;
   onOpenMenu: (index: number, position: ContextMenuPosition) => void;
   draggable?: boolean;
   isDragged?: boolean;
@@ -324,6 +335,7 @@ const SongGridRow = ({
   selectedBelow,
   onSelect,
   onPlay,
+  onTogglePlay,
   onOpenMenu,
   draggable,
   isDragged,
@@ -377,15 +389,35 @@ const SongGridRow = ({
       tabIndex={0}
     >
       <div className={clsx(styles.cell, styles.cellNum)}>
-        {isCurrent ? (
-          isPlaying ? (
-            <HiOutlineMusicNote className={styles.playingIcon} size={18} />
+        {/* Hidden on hover: the play button takes its place. */}
+        <span className={styles.numContent}>
+          {isCurrent ? (
+            isPlaying ? (
+              <HiOutlineMusicNote className={styles.playingIcon} size={18} />
+            ) : (
+              <HiMiniPause className={styles.pauseIcon} size={18} />
+            )
           ) : (
-            <HiMiniPause className={styles.pauseIcon} size={18} />
-          )
-        ) : (
-          String(index + 1).padStart(2, "0")
-        )}
+            String(index + 1).padStart(2, "0")
+          )}
+        </span>
+        <button
+          className={styles.rowPlayButton}
+          title={isCurrent && isPlaying ? "Pause" : "Play"}
+          aria-label={isCurrent && isPlaying ? "Pause" : "Play"}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isCurrent) onTogglePlay();
+            else onPlay(index);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          {isCurrent && isPlaying ? (
+            <MdPause size={22} />
+          ) : (
+            <MdPlayArrow size={22} className={styles.playIcon} />
+          )}
+        </button>
       </div>
 
       <div className={clsx(styles.cell, styles.cellTitle)}>
