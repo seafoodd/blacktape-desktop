@@ -1,3 +1,4 @@
+import { SONG_DRAG_MIME, decodeSongDrag } from "@/shared/lib/dragSongs.ts";
 import styles from "./playlists.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
 import { useEffect, useState } from "react";
@@ -61,12 +62,13 @@ export const Playlists = ({ className }: PlaylistsProps) => {
   const handleDrop = async (e: React.DragEvent, playlistId: number) => {
     e.preventDefault();
     setDragOverPlaylistId(null);
-    const data = e.dataTransfer.getData("application/json");
+    const data = e.dataTransfer.getData(SONG_DRAG_MIME);
     if (!data) return;
 
     try {
-      const { songId } = JSON.parse(data);
-      await addSongs(playlistId, [songId]);
+      const songIds = decodeSongDrag(data);
+      if (songIds.length === 0) return;
+      await addSongs(playlistId, songIds);
       await fetchPlaylists();
     } catch (err) {
       console.error("Failed to add song to playlist via drag and drop:", err);

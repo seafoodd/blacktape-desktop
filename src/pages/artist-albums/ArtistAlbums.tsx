@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import styles from "./artist-albums.module.css";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
@@ -9,7 +9,15 @@ import { Album, Song } from "@/shared/types.ts";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ContextMenu, ContextMenuPosition, MenuItemOption } from "@/shared/ui/context-menu";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { AddToQueue } from "@/shared/lib/audio.ts";
+import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
+import {
+  EMPTY_SELECTION,
+  nextSelection,
+  pruneSelection,
+  selectionForContextMenu,
+  type SelectionState,
+} from "@/shared/lib/selection.ts";
+import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
@@ -26,6 +34,101 @@ const ArtistAlbums = () => {
     position: ContextMenuPosition;
     items: MenuItemOption[];
   } | null>(null);
+
+  // Songs of all albums in display order (Shift ranges follow it).
+  const allSongs = useMemo(() => albums.flatMap((a) => a.songs), [albums]);
+  const orderedIds = useMemo(() => allSongs.map((s) => s.id), [allSongs]);
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+
+  // Keep only songs that still exist (after delete, refresh or switching artist).
+  useEffect(() => {
+    setSelection((prev) => pruneSelection(prev, orderedIds));
+  }, [orderedIds]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelection(EMPTY_SELECTION);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const { getContextMenuItems } = useSongContextMenu({
+    onPlay: (song) => handlePlaySong(song.id),
+    playbackContext: "library",
+    allowDelete: true,
+  });
+
+  const handleSelectSong = (song: Song, e: React.MouseEvent) => {
+    setSelection((prev) =>
+      nextSelection(prev, orderedIds, song.id, {
+        ctrl: e.ctrlKey || e.metaKey,
+        shift: e.shiftKey,
+      }),
+    );
+  };
+
+  /** Menu for several selected songs. */
+  const multiSongMenuItems = (songs: Song[]): MenuItemOption[] => {
+    const ids = songs.map((s) => s.id);
+    const label = `${songs.length} tracks`;
+    return [
+      {
+        label: `Play ${label}`,
+        action: () => {
+          startPlayback(ids, 0, "library").catch((e) =>
+            console.error("Play selection error: ", e),
+          );
+        },
+      },
+      {
+        label: "Play Next",
+        action: async () => {
+          try {
+            // Each one is inserted right after the current track, so go backwards
+            // to keep the selection order.
+            for (const id of [...ids].reverse()) await AddNextToQueue(id);
+          } catch (e) {
+            console.error("Play Next error: ", e);
+          }
+        },
+      },
+      {
+        label: "Add to Queue",
+        action: async () => {
+          try {
+            for (const id of ids) await AddToQueue(id);
+          } catch (e) {
+            console.error("Add to Queue error: ", e);
+          }
+        },
+      },
+      { separator: true, label: "" },
+      {
+        label: "Add to Playlist...",
+        action: () => openModal(<AddToPlaylistModal songIds={ids} />),
+      },
+      { separator: true, label: "" },
+      {
+        label: `Delete ${label}...`,
+        danger: true,
+        action: () => openModal(<DeleteSongModal songs={songs} />),
+      },
+    ];
+  };
+
+  const handleOpenSongMenu = (song: Song, position: ContextMenuPosition) => {
+    const next = selectionForContextMenu(selection, song.id);
+    setSelection(next);
+    const selectedSongs = allSongs.filter((s) => next.selected.has(s.id));
+    setMenu({
+      position,
+      items:
+        selectedSongs.length > 1
+          ? multiSongMenuItems(selectedSongs)
+          : getContextMenuItems(song),
+    });
+  };
 
   const openMenu = (e: React.MouseEvent, items: MenuItemOption[]) => {
     e.preventDefault();
@@ -96,9 +199,7 @@ const ArtistAlbums = () => {
     );
   }, [activeDownloads, selectedTab]);
 
-  const handlePlaySong = (clickedSongId: number) => {
-    const allSongs = albums.flatMap((album) => album.songs);
-
+  function handlePlaySong(clickedSongId: number) {
     const currentIndex = allSongs.findIndex(
       (song) => song.id === clickedSongId,
     );
@@ -110,14 +211,22 @@ const ArtistAlbums = () => {
     startPlayback(queueIds, currentIndex, "library").catch((e) =>
       console.log("startPlayback error: ", e),
     );
-  };
+  }
 
   if (!selectedTab) {
     return null;
   }
 
   return (
-    <div className={styles.container}>
+    <div
+      className={styles.container}
+      onClick={(e) => {
+        // A click outside the song rows clears the selection.
+        if (!(e.target as HTMLElement).closest("[data-song-row]")) {
+          setSelection(EMPTY_SELECTION);
+        }
+      }}
+    >
       <h1 className={clsx(styles.artistName, "truncate")}>{selectedTab}</h1>
       <div className={styles.albums}>
         {/* Downloading Albums */}
@@ -266,13 +375,27 @@ const ArtistAlbums = () => {
                 {album.title}
               </h2>
               <ul className={styles.songs}>
-                {album.songs.map((song: Song) => (
+                {album.songs.map((song: Song, songIndex: number) => (
                   <SongListItem
                     key={song.id}
+                    selectedAbove={
+                      songIndex > 0 &&
+                      selection.selected.has(album.songs[songIndex - 1].id)
+                    }
+                    selectedBelow={
+                      songIndex < album.songs.length - 1 &&
+                      selection.selected.has(album.songs[songIndex + 1].id)
+                    }
+                    dragIds={
+                      selection.selected.has(song.id)
+                        ? orderedIds.filter((id) => selection.selected.has(id))
+                        : [song.id]
+                    }
                     song={song}
                     onPlay={handlePlaySong}
-                    playbackContext={"library"}
-                    allowDelete
+                    onSelect={handleSelectSong}
+                    onOpenMenu={handleOpenSongMenu}
+                    selected={selection.selected.has(song.id)}
                   />
                 ))}
               </ul>
