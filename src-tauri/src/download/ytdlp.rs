@@ -189,9 +189,28 @@ struct DownloadContext {
     cookie_arg: String,
     temp_dir: PathBuf,
     session_id: String,
+    /// Why each failed track failed (shown to the user when nothing could be downloaded).
+    failures: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+/// The line of yt-dlp's stderr that says why it failed ("ERROR: [Bandcamp] 1: No video formats found!"), else the
+/// last non-empty line, else the exit code. Pure.
+fn failure_reason(stderr: &str, code: Option<i32>) -> String {
+    let lines = stderr.lines().map(str::trim).filter(|l| !l.is_empty());
+    let error = lines.clone().rev().find(|l| l.starts_with("ERROR:"));
+    match error.or_else(|| lines.last()) {
+        Some(line) => line.to_string(),
+        None => format!("yt-dlp exited with code {}", code.map_or("?".to_string(), |c| c.to_string())),
+    }
 }
 
 impl DownloadContext {
+    fn record_failure(&self, reason: String) {
+        if let Ok(mut failures) = self.failures.lock() {
+            failures.push(reason);
+        }
+    }
+
     async fn prepare(
         app: &AppHandle,
         output_dir: &str,
@@ -247,6 +266,7 @@ impl DownloadContext {
             cookie_arg,
             temp_dir,
             session_id,
+            failures: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 }
@@ -307,7 +327,7 @@ async fn download_track_internal(
     if is_youtube {
         args.extend(vec![
             "-f".to_string(),
-            "251/140/ba/bestaudio".to_string(), // Force format 251 (Opus ~160k) or 140 (AAC 128k)
+            "251/140/ba/bestaudio/ba*".to_string(), // Opus ~160k or AAC 128k; else any format that has audio (age-gated videos only offer a 360p mp4)
             "--extract-audio".to_string(),
             "--audio-format".to_string(),
             "best".to_string(),
@@ -483,6 +503,7 @@ async fn download_track_internal(
             stderr_str.trim(),
             stdout_str.trim()
         );
+        ctx.record_failure(failure_reason(&stderr_str, status.code()));
         return None;
     }
 
@@ -496,7 +517,12 @@ async fn download_track_internal(
         );
     }
 
-    find_downloaded_file(&ctx.temp_dir, track_num).await
+    let found = find_downloaded_file(&ctx.temp_dir, track_num).await;
+    if found.is_none() {
+        // exit code 0 but no file: yt-dlp usually printed why ("Requested format is not available")
+        ctx.record_failure(failure_reason(&stderr_str, status.code()));
+    }
+    found
 }
 
 pub async fn download_single(
@@ -677,6 +703,14 @@ pub async fn download_batch(
         total_tracks,
         now.elapsed()
     );
+
+    // Nothing downloaded because every track failed: tell the user why instead of finishing silently.
+    if downloaded.is_empty() {
+        let reasons = ctx.failures.lock().map(|f| f.clone()).unwrap_or_default();
+        if !reasons.is_empty() {
+            return Err(reasons.join("; "));
+        }
+    }
 
     Ok(downloaded)
 }
@@ -885,4 +919,26 @@ async fn find_downloaded_file(dir: &Path, index: usize) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod failure_reason_tests {
+    use super::failure_reason;
+
+    #[test]
+    fn picks_the_error_line() {
+        let stderr = "WARNING: x
+ERROR: [Bandcamp] 1: No video formats found!; please report
+";
+        assert!(failure_reason(stderr, Some(1)).contains("No video formats found"));
+    }
+
+    #[test]
+    fn falls_back_to_last_line_then_exit_code() {
+        assert_eq!(failure_reason("a
+b
+", Some(1)), "b");
+        assert_eq!(failure_reason("  
+", Some(2)), "yt-dlp exited with code 2");
+    }
 }

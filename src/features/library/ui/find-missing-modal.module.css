@@ -10,6 +10,16 @@
     color: var(--color-text);
 }
 
+.problem {
+    margin-top: 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border-left: 3px solid #ff5a5a;
+    background: rgba(255, 90, 90, 0.08);
+    font-size: var(--font-md);
+    color: var(--color-text);
+}
+
 .text {
     margin-top: 12px;
     font-size: var(--font-md);

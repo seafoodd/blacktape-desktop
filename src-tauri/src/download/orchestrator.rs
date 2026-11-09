@@ -6,7 +6,7 @@ use crate::download::types::{DownloadPayload, DownloadTask, ProgressEvent, TaskE
 use crate::download::ytdlp;
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
 pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Result<(), String> {
     let task_id = task.id.clone();
@@ -24,6 +24,10 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     let _ = fs::create_dir_all(&covers_dir);
 
     let output_path = PathBuf::from(&task.output_dir);
+    let placement = match &task.payload {
+        DownloadPayload::PlacedTrack { placement, .. } => Some(placement.clone()),
+        _ => None,
+    };
 
     let download_result = match task.payload {
         DownloadPayload::AlbumURL(url) => {
@@ -79,6 +83,9 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                 }
             }
         }
+        DownloadPayload::PlacedTrack { url, .. } => {
+            process_track_url(task.platform, &url, &task.output_dir, &app_handle, &task_id).await
+        }
         DownloadPayload::Single(track) => {
             ytdlp::download_batch(&app_handle, &[track], &task.output_dir, &task_id)
                 .await
@@ -100,6 +107,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                 &task_id,
                 &format!("Download failed: {e}"),
             );
+            flash_taskbar(&app_handle);
             return Err(e);
         }
     };
@@ -109,7 +117,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
 
     // A single track whose album the library already has (other platform): number and album come from it.
     let mut placed: Vec<Option<(String, String, i32)>> = vec![None; downloaded_files.len()];
-    if !is_album {
+    if !is_album && placement.is_none() {
         if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() {
             let db = db_state.lock().await;
             for (i, (_, track)) in downloaded_files.iter().enumerate() {
@@ -130,6 +138,9 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
             owned_track.album = album;
             owned_track.album_artist = album_artist;
             owned_track.track_number = Some(number);
+        }
+        if let Some(placement) = &placement {
+            placement.apply(&mut owned_track);
         }
         let track = &owned_track;
         let _ = app_handle.emit(
@@ -209,6 +220,20 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     Ok(())
 }
 
+/// A failed download needs the user's decision, so a window that is in the background (or minimized) asks for
+/// attention: the taskbar button flashes until the window is focused. A focused window needs nothing.
+fn needs_attention(focused: bool) -> bool {
+    !focused
+}
+
+fn flash_taskbar(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if needs_attention(window.is_focused().unwrap_or(false)) {
+            let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+        }
+    }
+}
+
 fn emit_event(app: &AppHandle, event: &str, task_id: &str, msg: &str) {
     let _ = app.emit(
         event,
@@ -226,5 +251,16 @@ fn cleanup_staging_dir(downloaded_files: &[(PathBuf, crate::download::types::Tra
                 let _ = crate::utils::force_remove_dir_all(stage_dir);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::needs_attention;
+
+    #[test]
+    fn only_an_unfocused_window_asks_for_attention() {
+        assert!(needs_attention(false));
+        assert!(!needs_attention(true));
     }
 }

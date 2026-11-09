@@ -221,6 +221,21 @@ pub fn rows_over_limit(rows: &[TrashRow], limit_bytes: u64) -> Vec<TrashRow> {
     victims
 }
 
+/// Like `rows_over_limit`, but rows trashed at `spare_from` or later are never victims (the batch that was just
+/// trashed stays restorable, even when it alone exceeds the limit). They still count toward the total.
+pub fn rows_over_limit_sparing(rows: &[TrashRow], limit_bytes: u64, spare_from: i64) -> Vec<TrashRow> {
+    let mut total: u64 = rows.iter().map(|r| r.size_bytes.max(0) as u64).sum();
+    let mut victims = Vec::new();
+    for row in rows.iter().filter(|r| r.trashed_at < spare_from) {
+        if total <= limit_bytes {
+            break;
+        }
+        total = total.saturating_sub(row.size_bytes.max(0) as u64);
+        victims.push(row.clone());
+    }
+    victims
+}
+
 /// Whether a result changed anything the other windows must reload: something was
 /// done, or a failure came after a partial change (a stuck entry removed, rows purged).
 pub fn should_notify(outcome: &TrashOutcome) -> bool {
@@ -493,6 +508,16 @@ pub async fn auto_clean(
     now: i64,
     settings: &TrashSettings,
 ) -> Result<TrashOutcome, String> {
+    auto_clean_sparing(db, now, settings, i64::MAX).await
+}
+
+/// `auto_clean` that never deletes by size the rows trashed at `spare_from` or later.
+pub async fn auto_clean_sparing(
+    db: &DbLock,
+    now: i64,
+    settings: &TrashSettings,
+    spare_from: i64,
+) -> Result<TrashOutcome, String> {
     let mut outcome = TrashOutcome::default();
 
     if let Some(days) = settings.retention_days {
@@ -514,7 +539,7 @@ pub async fn auto_clean(
             .await
             .map_err(|e| e.to_string())?;
         let limit = max_mb.saturating_mul(1024 * 1024);
-        purge(db, &rows_over_limit(&rows, limit), &mut outcome).await;
+        purge(db, &rows_over_limit_sparing(&rows, limit, spare_from), &mut outcome).await;
     }
 
     Ok(outcome)
@@ -557,18 +582,47 @@ pub async fn write_settings(db: &Database, settings: &TrashSettings) -> Result<(
 // Tauri glue
 // ---------------------------------------------------------------------------
 
-/// Moves playback on (next track, or stop when there is none) when the playing song is
-/// about to be trashed (D9). Queued copies are
-/// left alone, like `delete_songs`.
+/// Moves playback past every song of `ids` while the current song is one of them: `next` is called until the
+/// current song is none of them. When a `next` does not move on (end of the queue) or the songs run out, `stop` is
+/// called. Pure logic over closures so it is tested without an audio device.
+fn skip_past(ids: &[i64], mut current: impl FnMut() -> Option<i64>, mut next: impl FnMut(), mut stop: impl FnMut()) {
+    // at most one step per id: the queue cannot hold more distinct trashed songs than that
+    for _ in 0..=ids.len() {
+        let Some(playing) = current().filter(|id| ids.contains(id)) else {
+            return;
+        };
+        next();
+        if current() == Some(playing) {
+            stop();
+            return;
+        }
+    }
+    if current().is_some_and(|id| ids.contains(&id)) {
+        stop();
+    }
+}
+
+/// Moves playback on (next track that is not trashed too, or stop when there is none) when the playing song is
+/// about to be trashed (D9). A paused player stays paused on the next track. Queued copies are left alone, like
+/// `delete_songs`.
 fn stop_if_playing(player: &Mutex<AudioPlayer>, ids: &[i64]) {
-    if let Ok(mut p) = player.lock() {
-        if let Some(playing) = p.current_song_id().filter(|id| ids.contains(id)) {
-            // Skip to the next track like the Next button (this also releases the
-            // file). If there is no next track, just stop.
-            p.next();
-            if p.current_song_id() == Some(playing) {
-                p.stop();
-            }
+    let Ok(mut p) = player.lock() else { return };
+    if !p.current_song_id().is_some_and(|id| ids.contains(&id)) {
+        return;
+    }
+    let was_paused = p.is_paused();
+    let p = std::cell::RefCell::new(p);
+    skip_past(
+        ids,
+        || p.borrow().current_song_id(),
+        || p.borrow_mut().next(),
+        || p.borrow_mut().stop(),
+    );
+    // `next` starts the track it moves to; a paused player keeps its state
+    if was_paused {
+        let mut p = p.borrow_mut();
+        if p.current_song_id().is_some() {
+            p.pause();
         }
     }
 }
@@ -601,8 +655,17 @@ pub async fn trash_songs(
         let guard = db.lock().await;
         trash_root(&app, &guard).await?
     };
-    let outcome = trash_songs_in(&db, &root, &ids, now_secs()).await?;
+    let now = now_secs();
+    let outcome = trash_songs_in(&db, &root, &ids, now).await?;
     notify(&app, &outcome);
+    // keep the trash within its limits right away, sparing the batch that was just trashed
+    let settings = read_settings(&*db.lock().await).await;
+    if let Ok(settings) = settings {
+        match auto_clean_sparing(&db, now, &settings, now).await {
+            Ok(cleaned) => notify(&app, &cleaned),
+            Err(e) => eprintln!("[trash] clean after trashing failed: {e}"),
+        }
+    }
     Ok(outcome)
 }
 
@@ -930,6 +993,58 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![1, 2]);
         assert!(rows_over_limit(&rows, 2000 * MB as u64).is_empty());
+    }
+
+    #[test]
+    fn rows_over_limit_sparing_keeps_the_new_batch() {
+        let rows = vec![row(1, "a", 100, 10), row(2, "b", 100, 20), row(3, "c", 100, 30)];
+        // limit 150: the old rows go, the newest (trashed at 30) stays even though the total stays above the limit
+        let ids: Vec<i64> = rows_over_limit_sparing(&rows, 150, 30).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+        let ids: Vec<i64> = rows_over_limit_sparing(&rows, 250, 30).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1]);
+        assert!(rows_over_limit_sparing(&rows, 10, 0).is_empty());
+    }
+
+    #[test]
+    fn skip_past_moves_on_until_a_song_that_is_not_trashed() {
+        let queue = std::cell::RefCell::new(vec![1, 2, 3, 4]);
+        let pos = std::cell::Cell::new(0usize);
+        skip_past(
+            &[1, 2],
+            || queue.borrow().get(pos.get()).copied(),
+            || {
+                if pos.get() + 1 < queue.borrow().len() {
+                    pos.set(pos.get() + 1);
+                }
+            },
+            || queue.borrow_mut().clear(),
+        );
+        assert_eq!(queue.borrow().get(pos.get()), Some(&3));
+    }
+
+    #[test]
+    fn skip_past_stops_at_the_end_of_the_queue() {
+        let pos = std::cell::Cell::new(0usize);
+        let stopped = std::cell::Cell::new(false);
+        skip_past(
+            &[1, 2],
+            || if stopped.get() { None } else { Some([1, 2][pos.get()]) },
+            || {
+                if pos.get() + 1 < 2 {
+                    pos.set(pos.get() + 1);
+                }
+            },
+            || stopped.set(true),
+        );
+        assert!(stopped.get());
+    }
+
+    #[test]
+    fn skip_past_does_nothing_when_the_playing_song_is_kept() {
+        let calls = std::cell::Cell::new(0);
+        skip_past(&[5], || Some(1), || calls.set(calls.get() + 1), || calls.set(calls.get() + 10));
+        assert_eq!(calls.get(), 0);
     }
 
     #[test]

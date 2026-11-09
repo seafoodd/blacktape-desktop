@@ -3,11 +3,16 @@ import clsx from "clsx";
 import { BiDownload } from "react-icons/bi";
 import { HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
-import { MdPause, MdPlayArrow } from "react-icons/md";
+import { MdErrorOutline, MdPause, MdPlayArrow } from "react-icons/md";
 import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
 import type { MissingTracks } from "@/shared/lib/libraryIndex.ts";
 import { formatTrackDuration } from "@/shared/lib/trackDuration.ts";
 import { remoteTrackToStreamItem } from "@/shared/lib/remoteTrack.ts";
+import { useModalStore } from "@/shared/store/modalStore.ts";
+import { explainFailure } from "@/features/library/model/downloadFailure.ts";
+import FindMissingModal from "@/features/library/ui/FindMissingModal.tsx";
+import { platformLabel } from "@/shared/lib/platforms.ts";
+import { restoreTrash } from "@/shared/lib/trash.ts";
 import { decodeHtmlEntities } from "@/shared/lib/html.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
@@ -32,6 +37,12 @@ interface MissingTrackRowProps {
   downloading?: boolean;
   /** A song that was just removed: shown dimmed in its place, no actions. */
   ghost?: boolean;
+  /** The platform has no stream for this song: no download or preview, but "Find another source". */
+  unavailable?: boolean;
+  /** The error of the song's last failed download: the row shows the red error button with the way out. */
+  failure?: string;
+  /** Id of this song in the trash: the menu offers "Restore from trash". */
+  trashId?: number;
   selected?: boolean;
   /** Whether the rows above/below are selected too (one frame per run of selected rows). */
   selectedAbove?: boolean;
@@ -55,6 +66,9 @@ const MissingTrackRow = ({
   percent = 0,
   downloading = false,
   ghost = false,
+  unavailable = false,
+  failure,
+  trashId,
   selected = false,
   selectedAbove = false,
   selectedBelow = false,
@@ -63,7 +77,9 @@ const MissingTrackRow = ({
   onMenu,
 }: MissingTrackRowProps) => {
   const { openMenu } = useRemoteTrackMenu();
+  const openModal = useModalStore((s) => s.openModal);
   const downloadOne = useMissingTracksStore((s) => s.downloadOne);
+  const retryOne = useMissingTracksStore((s) => s.retry);
   // The song's album download is running or queued: a second one would download it twice.
   const pending = useMissingTracksStore((s) => s.pendingUrls.has(track.url));
   const busy = pending || downloading;
@@ -86,6 +102,7 @@ const MissingTrackRow = ({
     <li
       className={clsx(styles.row, {
         [styles.ghost]: ghost,
+        [styles.unavailable]: unavailable,
         [styles.playing]: isCurrent,
         [styles.selected]: selected,
         [styles.selectedTop]: selected && !selectedAbove,
@@ -97,7 +114,12 @@ const MissingTrackRow = ({
       onDoubleClick={play}
       onContextMenu={(e) => {
         if (onMenu?.(e)) return;
-        openMenu(e, remote, { list: queue, downloadState: "none" });
+        openMenu(e, remote, {
+          list: queue,
+          downloadState: "none",
+          extraItems:
+            trashId === undefined ? undefined : [{ label: "Restore from trash", action: () => void restoreTrash([trashId]) }],
+        });
       }}
     >
       <div className={styles.left}>
@@ -131,10 +153,37 @@ const MissingTrackRow = ({
         <div className={clsx(styles.title, "truncate")}>{title}</div>
       </div>
       <div className={styles.right}>
-        {!busy && (
+        {!busy && !unavailable && failure === undefined && (
           <span className={styles.duration}>{formatTrackDuration(track.duration_ms)}</span>
         )}
-        {busy ? (
+        {(unavailable || failure !== undefined) && !busy ? (
+          <button
+            type="button"
+            className={styles.errorButton}
+            title={`${explainFailure(failure ?? "no output file", platformLabel(missing.platform)).reason} Click for options.`}
+            aria-label="Song unavailable: find another source"
+            onClick={(e) => {
+              e.stopPropagation();
+              openModal(
+                <FindMissingModal
+                  albumArtist={missing.album_artist}
+                  album={album}
+                  excludeUrl={missing.source_url}
+                  failedSong={{
+                    artist: missing.album_artist,
+                    title,
+                    platform: platformLabel(missing.platform),
+                    trackNumber: track.track_number ?? null,
+                    message: failure,
+                    retry: () => void retryOne(album, track),
+                  }}
+                />,
+              );
+            }}
+          >
+            <MdErrorOutline size={18} />
+          </button>
+        ) : busy ? (
           <span
             className={clsx(
               styles.percent,

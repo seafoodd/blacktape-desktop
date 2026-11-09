@@ -141,11 +141,55 @@
     align-items: baseline;
     gap: 12px;
     min-width: 0;
+    /* as wide as the song list: the missing-songs button sits at its right end */
+    max-width: 600px;
 }
 
 .albumTitleRow .albumTitle {
     flex: 0 1 auto;
     min-width: 0;
+}
+
+/* Warning next to the album title: songs are missing (toggles them) or may be missing (opens the search). */
+.missingButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    justify-content: center;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    height: 22px;
+    min-width: 22px;
+    padding: 0 5px;
+    line-height: 1;
+    border-radius: 4px;
+    font-size: var(--font-sm);
+    color: #e0a030;
+    opacity: 0.8;
+    align-self: center;
+    margin-left: auto;
+    margin-right: 6px;
+
+    &:hover {
+        opacity: 1;
+    }
+}
+
+.missingToggle {
+    color: var(--color-muted);
+}
+
+/* Less than half of the album is downloaded: calmer, it is not a small gap. */
+.missingMostly {
+    opacity: 0.6;
+}
+
+.missingButtonOn {
+    opacity: 1;
+}
+
+.albumTitleRow .albumMeta {
+    flex: 0 1 auto;
 }
 
 .albumMeta {

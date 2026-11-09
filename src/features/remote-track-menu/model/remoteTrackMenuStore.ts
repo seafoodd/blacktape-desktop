@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
+import type { MenuItemOption } from "@/shared/ui/context-menu/ContextMenu.tsx";
 import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
 
 export interface RemoteTrackMenuOptions {
@@ -7,6 +8,8 @@ export interface RemoteTrackMenuOptions {
   list?: readonly RemoteTrack[];
   /** Known library state of the track (the menu shows "Downloaded" instead of "Download" when downloaded). */
   downloadState?: DownloadState;
+  /** Extra items shown first (e.g. "Restore from trash"), followed by a separator. */
+  extraItems?: MenuItemOption[];
 }
 
 export interface RemoteTrackMenuState {
