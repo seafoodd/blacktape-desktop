@@ -796,6 +796,7 @@ pub fn run() {
             // Library index (status of remote items, missing tracks)
             library_index::commands::get_download_status,
             library_index::commands::get_album_status,
+            library_index::commands::get_library_album,
             library_index::commands::get_artist_album_sources,
             library_index::commands::get_missing_tracks,
             library_index::commands::link_album_source,

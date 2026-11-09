@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import clsx from "clsx";
-import { BiArrowBack, BiDownload } from "react-icons/bi";
+import { BiArrowBack, BiDownload, BiRightArrowAlt } from "react-icons/bi";
 import { FaCheckCircle } from "react-icons/fa";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import artistStyles from "@/pages/artist-albums/artist-albums.module.css";
@@ -11,14 +11,14 @@ import { useTrackStatuses } from "@/shared/hooks/useDownloadStatus.ts";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { getLibraryAlbum } from "@/shared/lib/libraryIndex.ts";
 import {
-  albumInfoLine,
+  albumAction,
   albumLibraryState,
-  downloadLabel,
+  albumMetaLine,
   selectableIndexes,
   selectableTracks,
   trackAsStreamItem,
-  trackCountLabel,
   trackRefs,
   trackTaskStates,
   type AlbumTrackInfo,
@@ -32,7 +32,7 @@ import styles from "./album-preview.module.css";
 
 const AlbumPreview = () => {
   const { item, status, preview, error, selection, trackTasks } = useAlbumPreviewStore();
-  const { close, reload, selectTrack, selectAll, clearSelection, download, downloadTrack } =
+  const { close, reload, selectTrack, selectAll, clearSelection, download, downloadUrls, downloadTrack } =
     useAlbumPreviewStore.getState();
   const activeDownloads = useLibraryStore((s) => s.activeDownloads);
   const playStream = useStreamStore((s) => s.play);
@@ -60,6 +60,19 @@ const AlbumPreview = () => {
     () => (preview ? albumLibraryState(preview, libraryStates) : "none"),
     [preview, libraryStates],
   );
+
+  const action = useMemo(
+    () =>
+      preview ? albumAction(preview, libraryStates, selectedCount) : null,
+    [preview, libraryStates, selectedCount],
+  );
+
+  // Opens the library page of the album: the artist's albums (the album was saved under the artist it came from).
+  const goToAlbum = async () => {
+    if (!preview) return;
+    const library = await getLibraryAlbum(preview.url).catch(() => null);
+    void useLibraryStore.getState().setSelectedTab(library?.album_artist ?? preview.artist);
+  };
 
   // Stream and menu lists: the downloadable tracks in album order.
   const streamItems = useMemo(
@@ -136,8 +149,8 @@ const AlbumPreview = () => {
           <div className={artistStyles.albumTitleRow}>
             <h2 className={clsx(artistStyles.albumTitle, "truncate")}>{decodeHtmlEntities(title)}</h2>
             {preview && <DownloadStatusBadge state={albumState} size={18} className={styles.titleBadge} />}
-            {preview && albumInfoLine(preview) && (
-              <span className={clsx(artistStyles.albumMeta, "truncate")}>{albumInfoLine(preview)}</span>
+            {preview && albumMetaLine(preview) && (
+              <span className={clsx(artistStyles.albumMeta, "truncate")}>{albumMetaLine(preview)}</span>
             )}
           </div>
 
@@ -160,19 +173,21 @@ const AlbumPreview = () => {
                   className={styles.primaryButton}
                   disabled={selectable.length === 0 || running !== undefined}
                   onClick={() => {
-                    clearSelectionAfter(download);
+                    if (action?.kind === "go-to-album") void goToAlbum();
+                    else if (action?.kind === "download-missing") void downloadUrls(action.urls);
+                    else clearSelectionAfter(download);
                   }}
                 >
                   {running ? (
                     `Downloading ${running.overallPercent}%`
                   ) : (
                     <>
-                      <BiDownload size={18} />
-                      {downloadLabel(selectedCount, selectable.length)}
+                      {action?.kind === "go-to-album" ? <BiRightArrowAlt size={20} /> : <BiDownload size={18} />}
+                      {action?.label}
                     </>
                   )}
                 </button>
-                {justCompleted && !running && (
+                {justCompleted && !running && action?.kind !== "go-to-album" && (
                   <span className={styles.done}>
                     <FaCheckCircle size={14} /> Downloaded
                   </span>
@@ -186,10 +201,7 @@ const AlbumPreview = () => {
                   {selectedCount >= selectable.length && selectable.length > 0 ? "Clear selection" : "Select all"}
                 </button>
                 <StreamActionRow items={streamItems} playLabel="Play album" />
-                <span className={styles.count}>
-                  {trackCountLabel(preview)}
-                  {selectedCount > 0 && ` · ${selectedCount} selected`}
-                </span>
+                {selectedCount > 0 && <span className={styles.count}>{selectedCount} selected</span>}
               </div>
 
               <ul className={artistStyles.songs}>

@@ -45,6 +45,8 @@ export interface AlbumPreviewStore {
   clearSelection: () => void;
   /** Downloads the selected tracks, or the whole album when nothing (or everything) is selected. */
   download: () => Promise<void>;
+  /** Downloads just these tracks (page urls) into the album folder, e.g. the ones the library lacks. */
+  downloadUrls: (urls: string[]) => Promise<void>;
   /** Downloads one track into the album folder (album pipeline, so the album keeps its source row). */
   downloadTrack: (track: AlbumTrackInfo) => Promise<void>;
 }
@@ -145,6 +147,12 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
     const wholeAlbum = urls.length === 0 || urls.length >= available.length;
     const rows = wholeAlbum ? selectableTracks(preview).map((t) => t.url) : urls;
     await startAlbumDownload(preview, { trackUrls: wholeAlbum ? undefined : urls, rows });
+  },
+
+  downloadUrls: async (urls) => {
+    const { preview } = get();
+    if (!preview || urls.length === 0) return;
+    await startAlbumDownload(preview, { trackUrls: urls, rows: urls });
   },
 
   downloadTrack: async (track) => {
