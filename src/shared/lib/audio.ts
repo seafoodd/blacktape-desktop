@@ -20,6 +20,16 @@ export const startPlayback = (
 export const playSongInQueue = (index: number): Promise<void> =>
   invoke("play_song_in_queue", { index });
 
+/** Removes the songs at these positions of the (play-ordered) queue. */
+export const removeFromQueue = (positions: number[]): Promise<void> =>
+  invoke("remove_from_queue", { positions });
+
+/** Moves queue positions as a block to just before position `insertBefore`. */
+export const moveInQueue = (
+  positions: number[],
+  insertBefore: number,
+): Promise<void> => invoke("move_in_queue", { positions, insertBefore });
+
 export const pause = (): Promise<void> => invoke("pause");
 
 export const resume = (): Promise<void> => invoke("resume");

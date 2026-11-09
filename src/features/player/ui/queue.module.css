@@ -11,13 +11,14 @@
 }
 
 .item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 6px 8px;
     border-radius: var(--radius-md);
     transition: background-color 0.15s ease;
-    cursor: pointer;
+    cursor: default;
     user-select: none;
     scroll-margin-top: 128px;
 }
@@ -30,13 +31,150 @@
     background-color: var(--color-primary);
 }
 
+/* One frame around each run of selected rows: only the run's outer corners are
+   rounded, and rows inside a run touch each other (no gap, no inner corners). */
+.item.selected {
+    border-radius: 0;
+    background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    box-shadow:
+        inset 2px 0 0 var(--color-primaryLight),
+        inset -2px 0 0 var(--color-primaryLight);
+}
+
+/* Bridges the container's 4px gap to the next selected row so the frame is one block
+   (a negative margin would shrink the rows and shift the layout). */
+.item.selected.selectedJoined::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 4px;
+    background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    box-shadow:
+        inset 2px 0 0 var(--color-primaryLight),
+        inset -2px 0 0 var(--color-primaryLight);
+    pointer-events: none;
+}
+
+.item.selected.selectedTop {
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
+    box-shadow:
+        inset 2px 0 0 var(--color-primaryLight),
+        inset -2px 0 0 var(--color-primaryLight),
+        inset 0 2px 0 var(--color-primaryLight);
+}
+
+.item.selected.selectedBottom {
+    border-bottom-left-radius: var(--radius-md);
+    border-bottom-right-radius: var(--radius-md);
+    box-shadow:
+        inset 2px 0 0 var(--color-primaryLight),
+        inset -2px 0 0 var(--color-primaryLight),
+        inset 0 -2px 0 var(--color-primaryLight);
+}
+
+.item.selected.selectedTop.selectedBottom {
+    box-shadow: inset 0 0 0 2px var(--color-primaryLight);
+}
+
+.item.active.selected {
+    background-color: var(--color-primary);
+}
+
+.dragging {
+    opacity: 0.4;
+}
+
+/* Drop position: a straight line in the gap, not a shadow on the (rounded) row. */
+.item.dropTop::before,
+.item.dropBottom::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: var(--color-primaryLight);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.item.dropTop::before {
+    top: -3px;
+}
+
+.item.dropBottom::before {
+    top: calc(100% + 1px);
+}
+
+.removeButton {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 100%;
+    background: transparent;
+    color: var(--color-text);
+    cursor: pointer;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+    }
+}
+
+.item:hover .removeButton {
+    display: flex;
+}
+
+.coverWrap {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
 .songCover {
     width: 44px;
     height: 44px;
     border-radius: 6px;
     object-fit: cover;
-    flex-shrink: 0;
+    display: block;
     background-color: var(--color-muted);
+    transition:
+        filter 0.15s ease,
+        transform 0.15s ease;
+}
+
+/* Hover: the cover is dimmed and blurred, a play button sits on top of it. */
+.item:hover .songCover {
+    filter: brightness(0.5) blur(1.5px);
+    transform: scale(1.05); /* hides the soft edge the blur leaves */
+}
+
+.playButton {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+
+.item:hover .playButton {
+    display: flex;
+}
+
+/* The play triangle is drawn right of its box centre; shift it back so it looks
+   centred. */
+.playButton .playIcon {
+    transform: translateX(-1px);
 }
 
 .info {

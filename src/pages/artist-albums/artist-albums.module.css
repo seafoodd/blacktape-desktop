@@ -28,6 +28,12 @@
     flex-shrink: 0;
 }
 
+/* Cover and title of an album: click selects its tracks, double click plays it. */
+.albumHeader {
+    cursor: default;
+    user-select: none;
+}
+
 .albumCover,
 .playlistImage {
     /*max-height: 300px;*/

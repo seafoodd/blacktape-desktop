@@ -24,7 +24,7 @@
 }
 
 .header span {
-    color: var(--color-primary-light);
+    color: var(--color-primaryLight);
 }
 
 .content {
@@ -121,7 +121,7 @@
 
 .downloadBtn:hover {
     transform: scale(1.05);
-    background-color: var(--color-primary-light);
+    background-color: var(--color-primaryLight);
 }
 
 /* Tracks List layout */
@@ -182,7 +182,7 @@
 }
 
 .trackDownloadBtn:hover {
-    color: var(--color-primary-light) !important;
+    color: var(--color-primaryLight) !important;
 }
 
 .platformBadge {

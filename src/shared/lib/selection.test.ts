@@ -3,6 +3,7 @@ import {
   EMPTY_SELECTION,
   nextSelection,
   pruneSelection,
+  selectGroup,
   selectionForContextMenu,
   type SelectionState,
 } from "./selection.ts";
@@ -189,5 +190,65 @@ describe("pruneSelection", () => {
     pruneSelection(input, [1, 2]);
     expect(sorted(input.selected)).toEqual([1, 2, 9]);
     expect(input.anchor).toBe(9);
+  });
+});
+
+describe("selectGroup", () => {
+  describe("plain", () => {
+    it("replaces any existing selection with exactly the ids and anchors the first id", () => {
+      const result = selectGroup(state([1, 5, 6], 6), [2, 3, 4], false);
+      expect(sorted(result.selected)).toEqual([2, 3, 4]);
+      expect(result.anchor).toBe(2);
+    });
+
+    it("returns the same state object when ids is empty", () => {
+      const input = state([1, 2], 2);
+      expect(selectGroup(input, [], false)).toBe(input);
+    });
+  });
+
+  describe("additive", () => {
+    it("adds ids to the existing selection and anchors the first id of the group", () => {
+      const result = selectGroup(state([1], 1), [3, 4], true);
+      expect(sorted(result.selected)).toEqual([1, 3, 4]);
+      expect(result.anchor).toBe(3);
+    });
+
+    it("removes the ids when all of them are already selected, keeping the others and the previous anchor", () => {
+      const result = selectGroup(state([1, 2, 3, 4], 6), [2, 3], true);
+      expect(sorted(result.selected)).toEqual([1, 4]);
+      expect(result.anchor).toBe(6);
+    });
+
+    it("adds only the missing ids when some are already selected, without removing any", () => {
+      const result = selectGroup(state([2], 2), [1, 2, 3], true);
+      expect(sorted(result.selected)).toEqual([1, 2, 3]);
+      expect(result.anchor).toBe(1);
+    });
+
+    it("adds the ids to an empty selection", () => {
+      const result = selectGroup(EMPTY_SELECTION, [4, 5], true);
+      expect(sorted(result.selected)).toEqual([4, 5]);
+      expect(result.anchor).toBe(4);
+    });
+  });
+
+  it("does not mutate the input state", () => {
+    const input = state([1, 2], 2);
+    selectGroup(input, [3, 4], false);
+    selectGroup(input, [3, 4], true);
+    selectGroup(input, [1, 2], true);
+    expect(sorted(input.selected)).toEqual([1, 2]);
+    expect(input.anchor).toBe(2);
+  });
+
+  it("produces the same selected set regardless of the order of ids", () => {
+    const forward = selectGroup(state([1], 1), [2, 3, 4], true);
+    const reversed = selectGroup(state([1], 1), [4, 3, 2], true);
+    expect(sorted(forward.selected)).toEqual(sorted(reversed.selected));
+
+    const plainForward = selectGroup(state([], null), [2, 3, 4], false);
+    const plainReversed = selectGroup(state([], null), [4, 3, 2], false);
+    expect(sorted(plainForward.selected)).toEqual(sorted(plainReversed.selected));
   });
 });

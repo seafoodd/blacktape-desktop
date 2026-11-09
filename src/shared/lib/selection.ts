@@ -81,3 +81,25 @@ export function pruneSelection(
   }
   return { selected, anchor };
 }
+
+/**
+ * Selects a whole group of items at once (e.g. all tracks of an album).
+ * - plain: the selection becomes exactly `ids`
+ * - additive (Ctrl/Cmd): adds `ids`, or removes them when they are all selected already
+ */
+export function selectGroup(
+  state: SelectionState,
+  ids: number[],
+  additive: boolean,
+): SelectionState {
+  if (ids.length === 0) return state;
+  if (!additive) return { selected: new Set(ids), anchor: ids[0] };
+
+  const allSelected = ids.every((id) => state.selected.has(id));
+  const selected = new Set(state.selected);
+  for (const id of ids) {
+    if (allSelected) selected.delete(id);
+    else selected.add(id);
+  }
+  return { selected, anchor: allSelected ? state.anchor : ids[0] };
+}

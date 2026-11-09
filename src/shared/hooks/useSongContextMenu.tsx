@@ -18,6 +18,8 @@ interface UseSongContextMenuOptions {
   /** `index` is the row the menu was opened on, when the list passes one. */
   onPlay?: (song: Song, index?: number) => void;
   onRemoveFromPlaylist?: (index: number) => void;
+  /** Text of the remove item (default "Remove from Playlist"). */
+  removeLabel?: string;
   /** Adds a "Delete..." item (remove from library / delete file). */
   allowDelete?: boolean;
 }
@@ -208,7 +210,7 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
 
     if (options.onRemoveFromPlaylist) {
       items.push({
-        label: "Remove from Playlist",
+        label: options.removeLabel ?? "Remove from Playlist",
         action: () => {
           if (options.onRemoveFromPlaylist) {
             options.onRemoveFromPlaylist(index);

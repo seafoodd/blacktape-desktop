@@ -189,7 +189,7 @@
 
     &:focus-visible {
         color: white;
-        background-color: var(--color-primary-light);
+        background-color: var(--color-primaryLight);
         outline: none;
 
         .albumCount {

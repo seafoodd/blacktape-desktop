@@ -2,6 +2,7 @@ import clsx from "clsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
+import { MdPause, MdPlayArrow } from "react-icons/md";
 import { formatDuration } from "@/shared/lib/time.ts";
 import React from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
@@ -37,7 +38,8 @@ const SongListItem = ({
   dragIds,
   index,
 }: SongListItemProps) => {
-  const { currentSong, isPlaying } = useAudioStore();
+  const { currentSong, isPlaying, togglePlay } = useAudioStore();
+  const isCurrent = !!currentSong && song.id === currentSong.id;
 
   const handleOpenContextMenu = (
     e: React.MouseEvent,
@@ -148,19 +150,47 @@ const SongListItem = ({
       tabIndex={0}
     >
       <div className={styles.songLeft}>
-        {currentSong && song.id == currentSong.id ? (
-          isPlaying ? (
-            <HiOutlineMusicNote className={styles.playingIcon} />
-          ) : (
-            <HiMiniPause className={styles.pauseIcon} />
-          )
-        ) : (
-          <div className={styles.songTrackNumber}>
-            {index !== undefined
-              ? String(index + 1).padStart(2, "0")
-              : song.track_number && String(song.track_number).padStart(2, "0")}
+        <div className={styles.numSlot}>
+          {/* Hidden on hover: the play button takes its place. */}
+          <div className={styles.numContent}>
+            {isCurrent ? (
+              isPlaying ? (
+                <HiOutlineMusicNote className={styles.playingIcon} />
+              ) : (
+                <HiMiniPause className={styles.pauseIcon} />
+              )
+            ) : (
+              <div className={styles.songTrackNumber}>
+                {index !== undefined
+                  ? String(index + 1).padStart(2, "0")
+                  : song.track_number &&
+                    String(song.track_number).padStart(2, "0")}
+              </div>
+            )}
           </div>
-        )}
+          <button
+            className={styles.rowPlayButton}
+            title={isCurrent && isPlaying ? "Pause" : "Play"}
+            aria-label={isCurrent && isPlaying ? "Pause" : "Play"}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isCurrent) {
+                togglePlay().catch((err) =>
+                  console.error("togglePlay error: ", err),
+                );
+              } else {
+                onPlay(song.id);
+              }
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            {isCurrent && isPlaying ? (
+              <MdPause size={22} />
+            ) : (
+              <MdPlayArrow size={22} className={styles.playIcon} />
+            )}
+          </button>
+        </div>
         <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
       </div>
       <div className={styles.songRight}>

@@ -19,26 +19,26 @@
     &.selected {
         background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight);
     }
 
     &.selected.selectedTop {
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light),
-            inset 0 2px 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 2px 0 var(--color-primaryLight);
     }
 
     &.selected.selectedBottom {
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light),
-            inset 0 -2px 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 -2px 0 var(--color-primaryLight);
     }
 
     &.selected.selectedTop.selectedBottom {
-        box-shadow: inset 0 0 0 2px var(--color-primary-light);
+        box-shadow: inset 0 0 0 2px var(--color-primaryLight);
     }
 
     &.playing {
@@ -61,22 +61,73 @@
     text-align: start;
 }
 
+/* Slot of the track number / playing icon; the hover play button is centred on it. */
+.numSlot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    flex-shrink: 0;
+}
+
+.numContent {
+    display: flex;
+    align-items: center;
+}
+
+.rowPlayButton {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 100%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: 100ms linear background-color;
+
+    /* same hover background as the three-dots button */
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.song:hover .rowPlayButton {
+    display: flex;
+}
+
+/* The play triangle is drawn right of its box centre; shift it back so it looks
+   centred in the circle. */
+.rowPlayButton .playIcon {
+    transform: translateX(-1px);
+}
+
+.song:hover .numContent {
+    visibility: hidden;
+}
+
+/* Centred in the number slot, like the track number and the hover play button
+   (the old negative margins were for left-aligned numbers). */
 .playingIcon {
     width: 18px;
     height: 18px;
-    margin-left: -2px;
-    margin-right: 2px;
 }
 
 .pauseIcon {
     width: 20px;
     height: 20px;
-    margin-left: -3px;
-    margin-right: 1px;
 }
 
 .songTrackNumber {
     width: 18px;
+    text-align: center;
 }
 
 .songTitle {

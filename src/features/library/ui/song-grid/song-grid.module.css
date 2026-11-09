@@ -22,7 +22,6 @@
 
 .headerNum {
     justify-self: center;
-    padding-right: 16px;
 }
 
 .headerDuration {
@@ -56,26 +55,26 @@
     &.selected {
         background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight);
     }
 
     &.selected.selectedTop {
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light),
-            inset 0 2px 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 2px 0 var(--color-primaryLight);
     }
 
     &.selected.selectedBottom {
         box-shadow:
-            inset 2px 0 0 var(--color-primary-light),
-            inset -2px 0 0 var(--color-primary-light),
-            inset 0 -2px 0 var(--color-primary-light);
+            inset 2px 0 0 var(--color-primaryLight),
+            inset -2px 0 0 var(--color-primaryLight),
+            inset 0 -2px 0 var(--color-primaryLight);
     }
 
     &.selected.selectedTop.selectedBottom {
-        box-shadow: inset 0 0 0 2px var(--color-primary-light);
+        box-shadow: inset 0 0 0 2px var(--color-primaryLight);
     }
 
     &.playing {
@@ -103,10 +102,55 @@
     }
 }
 
+/* Number, playing/pause icon and the hover play button are all centred in the column
+   (the "#" in the header is centred too). */
 .cellNum {
-    padding-left: 8px;
-    justify-content: start;
+    justify-content: center;
     font-size: var(--font-md);
+    position: relative;
+}
+
+.numContent {
+    display: flex;
+    align-items: center;
+}
+
+/* Hover: the play button replaces the track number / playing icon, centred on it. */
+.rowPlayButton {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 100%;
+    background: transparent;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: 100ms linear background-color;
+
+    /* same hover background as the three-dots button */
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+}
+
+.songRow:hover .rowPlayButton {
+    display: flex;
+}
+
+/* The play triangle is drawn right of its box centre; shift it back so it looks
+   centred in the circle. */
+.rowPlayButton .playIcon {
+    transform: translateX(-1px);
+}
+
+.songRow:hover .numContent {
+    visibility: hidden;
 }
 
 .cellTitle {
@@ -124,16 +168,12 @@
 .playingIcon {
     width: 18px;
     height: 18px;
-    margin-left: -2px;
-    margin-right: 2px;
     color: var(--color-text);
 }
 
 .pauseIcon {
     width: 20px;
     height: 20px;
-    margin-left: -3px;
-    margin-right: 1px;
     color: var(--color-text);
 }
 

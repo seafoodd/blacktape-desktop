@@ -50,6 +50,27 @@ pub fn play_song_in_queue(
 }
 
 #[command]
+pub fn remove_from_queue(
+    positions: Vec<usize>,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    player.remove_from_queue(&positions);
+    Ok(())
+}
+
+#[command]
+pub fn move_in_queue(
+    positions: Vec<usize>,
+    insert_before: usize,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let mut player = player_state.lock().map_err(|_| "Player lock poisoned")?;
+    player.move_in_queue(&positions, insert_before);
+    Ok(())
+}
+
+#[command]
 pub fn get_queue(state: State<Mutex<AudioPlayer>>) -> Vec<Song> {
     let mut player = state.lock().unwrap();
     player.get_ordered_queue()
