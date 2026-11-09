@@ -135,6 +135,26 @@
     font-size: var(--font-xl);
 }
 
+/* Album title with the year and genres to the right of it, on one line. */
+.albumTitleRow {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+}
+
+.albumTitleRow .albumTitle {
+    flex: 0 1 auto;
+    min-width: 4ch;
+}
+
+.albumMeta {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--font-sm);
+    color: var(--color-muted);
+}
+
 .songs {
     display: flex;
     flex-direction: column;
