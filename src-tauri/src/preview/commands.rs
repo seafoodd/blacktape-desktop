@@ -2,7 +2,7 @@
 //! plays it through the normal audio player (`AudioPlayer::play_stream`), so the existing player controls,
 //! queue handling, media keys and volume all apply. `stream_prefetch` warms the url cache.
 
-use crate::audio::player::{AudioPlayer, BoxedSource};
+use crate::audio::player::{lock_player, AudioPlayer, BoxedSource};
 use crate::preview::http_source::HttpSource;
 use crate::preview::resolve::{self, StreamInfo};
 use crate::preview::segmented_source::SegmentedSource;
@@ -269,7 +269,7 @@ pub fn stream_queue(
     let shuffle = shuffle == Some(true);
     let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
     let index = start_index(songs.len(), index, shuffle, |n| rand::rng().random_range(0..n));
-    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    let mut p = lock_player(&player);
     if shuffle && !p.is_shuffle() {
         // Turned on BEFORE the playback starts: `start_playback` then shuffles the new queue with the chosen
         // song first, and the next stream to prepare is picked from the final order.
@@ -291,9 +291,7 @@ pub enum MixedEntry {
 /// `i` could be built (a library song that is gone is dropped). When the requested entry was dropped, the next
 /// resolved one is used (or the last).
 pub fn mixed_start_index(resolved: &[bool], index: usize) -> usize {
-    let before = resolved.iter().take(index).filter(|r| **r).count();
-    let total = resolved.iter().filter(|r| **r).count();
-    before.min(total.saturating_sub(1))
+    crate::audio::queue_ops::index_after_filter(resolved, index)
 }
 
 /// Replaces the queue with library songs and streams in the given order and starts `index`. The whole list is
@@ -334,7 +332,7 @@ pub async fn start_mixed_playback(
         return Err("nothing to play".to_string());
     }
     let start = mixed_start_index(&resolved, index);
-    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    let mut p = lock_player(&player);
     p.start_playback(songs, start);
     Ok(())
 }
@@ -351,7 +349,7 @@ pub fn stream_add_to_queue(
         return Ok(());
     }
     let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
-    let mut p = player.lock().map_err(|_| "player lock poisoned".to_string())?;
+    let mut p = lock_player(&player);
     match queue_add_mode(p.queue_len(), play_next == Some(true)) {
         QueueAdd::StartPlayback => p.start_playback(songs, 0),
         QueueAdd::PlayNext => p.add_songs_to_queue(songs, true),

@@ -1,5 +1,10 @@
-use crate::discord_presence::DiscordRpcClient;
+use crate::audio::output::AudioOutput;
 use crate::audio::queue_ops;
+use crate::audio::transition::{
+    effective_duration, progress_fraction, resolve_transition, should_buffer, song_key, PendingNext, SongKey,
+    Transition,
+};
+use crate::discord_presence::DiscordRpcClient;
 use crate::download::opus_source::OpusSource;
 use crate::{
     audio::media_controls::MediaControls,
@@ -12,13 +17,71 @@ use rodio::cpal::{
     traits::{DeviceTrait, HostTrait},
     DeviceId, DeviceIdError,
 };
-use rodio::{Decoder, MixerDeviceSink, Player, Source};
+use rodio::{Decoder, Player, Source};
 use serde::{Deserialize, Serialize};
 use souvlaki::MediaMetadata;
 use std::path::Path;
+use std::sync::mpsc;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
-use std::{fs::File, sync::Mutex, time::Duration};
+use std::{fs::File, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// How often the background watchers look at the player.
+const TRANSITION_TICK: Duration = Duration::from_millis(100);
+const DEVICE_TICK: Duration = Duration::from_millis(500);
+/// Files above this size are not copied into memory for a tag edit (the decoder is released instead).
+pub const MAX_IN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
+/// Event sent to the UI when a song cannot be played (payload: [`PlaybackError`]).
+pub const PLAYBACK_ERROR_EVENT: &str = "playback-error";
+
+/// Locks the player. A panic while the lock was held must not disable playback until the app restarts, so a
+/// poisoned lock is recovered: every method leaves the player in a consistent state between statements that can
+/// panic, and the next command overwrites whatever was half done.
+pub fn lock_player(state: &Mutex<AudioPlayer>) -> MutexGuard<'_, AudioPlayer> {
+    state.lock().unwrap_or_else(|poisoned| {
+        eprintln!("[audio] recovering the player after a panic in another thread");
+        state.clear_poison();
+        poisoned.into_inner()
+    })
+}
+
+/// A volume from the UI forced into 0..=1 (more than 1 amplifies and can damage hearing and speakers).
+pub fn clamp_volume(volume: f32) -> f32 {
+    if volume.is_nan() { 0.0 } else { volume.clamp(0.0, 1.0) }
+}
+
+/// URI of a cover image for the OS media controls. A local file is passed as `file://<path>`: souvlaki strips the
+/// prefix and opens the path itself on Windows (so the path keeps its native form there), and on Linux an absolute
+/// path gives the standard `file:///...`. Web urls are passed unchanged.
+pub fn cover_uri(path: &str) -> String {
+    if is_web_url(path) {
+        return path.to_string();
+    }
+    #[cfg(target_os = "windows")]
+    let path = path.replace('/', "\\");
+    format!("file://{path}")
+}
+
+/// True for an http(s) url.
+pub fn is_web_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
+/// Why a song could not be played, for the UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaybackError {
+    pub title: String,
+    pub message: String,
+}
+
+/// One update of the Discord presence, applied in order by the presence thread.
+struct DiscordUpdate {
+    song: Song,
+    duration_ms: i64,
+    position_ms: i64,
+    paused: bool,
+}
 
 /// A song of the queue that is streamed from its platform instead of played from a file.
 pub fn is_stream_song(song: &Song) -> bool {
@@ -51,7 +114,7 @@ const SEEK_TOLERANCE: Duration = Duration::from_millis(1500);
 
 /// Ok when the playing position `landed` is within `SEEK_TOLERANCE` of `target`; else why not.
 pub fn check_seek_landed(target: Duration, landed: Duration) -> Result<(), String> {
-    let off = if landed > target { landed - target } else { target - landed };
+    let off = landed.abs_diff(target);
     if off <= SEEK_TOLERANCE {
         Ok(())
     } else {
@@ -69,7 +132,7 @@ fn file_for_stream_url(url: &str, files: &[Song]) -> bool {
 
 /// The stream version of a library song whose file is gone, when it has a source page to stream from.
 pub fn stream_fallback(song: &Song, file_exists: bool) -> Option<Song> {
-    if is_stream_song(song) || file_exists || song.source_url.as_deref().map_or(true, str::is_empty) {
+    if is_stream_song(song) || file_exists || song.source_url.as_deref().is_none_or(str::is_empty) {
         return None;
     }
     let mut stream = song.clone();
@@ -89,7 +152,7 @@ pub fn streamify_deleted(queue: &mut [Song], keep: &[usize], deleted: &[Song]) -
         }
         let Some(id) = queued.id else { continue };
         let Some(gone) = deleted.iter().find(|d| d.id == Some(id)) else { continue };
-        if gone.source_url.as_deref().map_or(true, str::is_empty) {
+        if gone.source_url.as_deref().is_none_or(str::is_empty) {
             continue;
         }
         let mut stream = gone.clone();
@@ -118,10 +181,14 @@ pub fn swap_streams_for_files(queue: &mut [Song], keep: &[usize], files: &[Song]
     swapped
 }
 
-/// Appends queue index `new_idx` at the end of the play order. An empty player starts at cursor 0.
+/// Appends queue index `new_idx` at the end of the play order. An empty player starts at cursor 0; a player with
+/// a queue but no current song points the cursor at the first added song.
 fn order_push(order: &mut Option<Vec<usize>>, cursor: &mut Option<usize>, new_idx: usize) {
     if let Some(order) = order {
         order.push(new_idx);
+        if cursor.is_none() {
+            *cursor = Some(order.len() - 1);
+        }
     } else {
         *order = Some(vec![new_idx]);
         *cursor = Some(0);
@@ -136,8 +203,9 @@ fn order_insert_next(order: &mut Option<Vec<usize>>, cursor: &mut Option<usize>,
             order.insert(insert_pos, new_idx);
         }
         (Some(order), None) => {
+            // nothing is current: the added song is what plays next, so the cursor points at it
             order.push(new_idx);
-            *cursor = Some(0);
+            *cursor = Some(order.len() - 1);
         }
         (None, _) => {
             *order = Some(vec![new_idx]);
@@ -161,7 +229,7 @@ pub enum RepeatMode {
 pub type BoxedSource = Box<dyn Source<Item = f32> + Send>;
 
 pub struct AudioPlayer {
-    sink: MixerDeviceSink,
+    output: AudioOutput,
     player: Player,
     duration: Option<Duration>,
     seek_offset: Duration,
@@ -182,8 +250,18 @@ pub struct AudioPlayer {
     prepared: Option<(String, BoxedSource, Option<Duration>)>,
     /// Url of the stream song being prepared in the background.
     preparing: Option<String>,
-    /// Duration of a prepared stream that was appended for a gapless transition.
-    appended_duration: Option<Duration>,
+    /// The next song, appended to `player` for a gapless transition (see `audio::transition`).
+    pending_next: Option<PendingNext>,
+    /// Bumped whenever the audio in `player` is replaced; a background decode only applies to the audio it was
+    /// started for.
+    audio_generation: u64,
+    /// A file of the next song is being decoded in the background.
+    buffering: bool,
+    /// The last song a gapless append was tried for (generation and key): a file that cannot be decoded is not
+    /// tried again on every tick; the transition then happens when the current song ends.
+    buffer_attempt: Option<(u64, SongKey)>,
+    /// Discord presence updates, applied in order by a dedicated thread.
+    discord: mpsc::Sender<DiscordUpdate>,
     /// Id of the current song when it was swapped for its downloaded file while its stream keeps playing: the UI
     /// sees a local song, the audio is still the stream.
     stream_backing_id: Option<i64>,
@@ -211,20 +289,26 @@ pub fn apply_song_edit(target: &mut Song, updated: &Song) -> bool {
     true
 }
 
+/// A next song to decode outside the player lock (see `AudioPlayer::tick`).
+struct BufferJob {
+    generation: u64,
+    key: SongKey,
+    path: String,
+}
+
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
-        let sink = Self::create_sink().expect("Failed to open default audio stream");
-        let player = Player::connect_new(sink.mixer());
+        let output = AudioOutput::open_default_or_null();
+        let player = Player::connect_new(output.mixer());
+        // Without a real device there is no device to compare with: the watcher switches once one appears.
+        let current_device_id = if output.is_null() { None } else { Self::get_default_device_id().ok() };
+        let discord = Self::spawn_discord_worker(handle.clone());
 
         Self::spawn_device_watcher(handle.clone());
         Self::spawn_transition_watcher(handle.clone());
 
-        Self::spawn_cover_listener(&handle);
-
-        let initial_device_id = Self::get_default_device_id().ok();
-
         Self {
-            sink,
+            output,
             player,
             duration: None,
             seek_offset: Duration::ZERO,
@@ -232,7 +316,7 @@ impl AudioPlayer {
             current_song: None,
             handle,
             queue: Vec::new(),
-            current_device_id: initial_device_id,
+            current_device_id,
             shuffle_mode: false,
             repeat_mode: RepeatMode::Off,
             play_order: None,
@@ -242,133 +326,198 @@ impl AudioPlayer {
             stream_generation: 0,
             prepared: None,
             preparing: None,
-            appended_duration: None,
+            pending_next: None,
+            audio_generation: 0,
+            buffering: false,
+            buffer_attempt: None,
+            discord,
         }
     }
 
-    fn create_sink() -> Result<MixerDeviceSink, String> {
-        rodio::DeviceSinkBuilder::from_default_device()
-            .map_err(|_| "No audio device found".to_string())?
-            .open_stream()
-            .map_err(|e| e.to_string())
-    }
-
+    /// Switches to the system's default output device whenever it changes (or appears).
     fn spawn_device_watcher(handle: AppHandle) {
         tauri::async_runtime::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
-                let system_default_id = Self::get_default_device_id().ok();
-
-                if let Ok(mut player) = handle.state::<Mutex<AudioPlayer>>().lock() {
-                    if let Some(new_id) = system_default_id {
-                        if player.current_device_id.as_ref() != Some(&new_id) {
-                            println!(
-                                "New default audio device detected. Switching from {:?} to: {:?}",
-                                player.current_device_id, new_id
-                            );
-                            let _ = player.reconnect_default_device();
-                        }
-                    }
+                tokio::time::sleep(DEVICE_TICK).await;
+                // queried without the player lock: enumerating devices can be slow
+                let Ok(default_id) = Self::get_default_device_id() else {
+                    continue;
+                };
+                let state = handle.state::<Mutex<AudioPlayer>>();
+                let mut player = lock_player(&state);
+                if player.current_device_id.as_ref() != Some(&default_id) {
+                    println!(
+                        "[audio] default output device changed from {:?} to {default_id:?}",
+                        player.current_device_id
+                    );
+                    player.reconnect_default_device(default_id);
                 }
             }
         });
     }
 
+    /// Drives gapless transitions (see `audio::transition`). Decoding the next file happens outside the player lock,
+    /// so commands are never blocked by disk or decoder work.
     fn spawn_transition_watcher(handle: AppHandle) {
         tauri::async_runtime::spawn(async move {
-            let mut sleep_time: Duration = Duration::ZERO;
-
             loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
+                tokio::time::sleep(TRANSITION_TICK).await;
                 let state = handle.state::<Mutex<AudioPlayer>>();
-
-                let mut pending_transition: Option<(usize, Song, bool)> = None;
-
-                let needs_emit = {
-                    let mut player = state
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-                    if player.is_paused() || player.stream_loading.is_some() {
-                        false
-                    } else {
-                        let current_pos = player.seek_offset + player.player.get_pos();
-                        let mut advanced = false;
-
-                        let stream_ran_out = player.player.empty()
-                            && player.current_is_stream_audio();
-                        if stream_ran_out {
-                            // A stream ended before its announced duration (or nothing was buffered).
-                            if let Some(next_cursor) = player.get_next_cursor() {
-                                if let Some(next_song) = player.song_at(next_cursor) {
-                                    pending_transition = Some((next_cursor, next_song, false));
-                                }
-                            }
-                            sleep_time = Duration::ZERO;
-                            advanced = true;
-                        } else if let Some(duration) = player.duration.filter(|d| !d.is_zero()) {
-                            // (an unknown duration is not "already over": a stream of unknown length ends by running dry)
-                            if duration.saturating_sub(current_pos) <= Duration::from_millis(250) {
-                                println!("start seamless transition");
-
-                                if let Some(next_cursor) = player.get_next_cursor() {
-                                    if let Some((next_song, appended)) =
-                                        player.buffer_next_in_queue(next_cursor)
-                                    {
-                                        pending_transition = Some((next_cursor, next_song, appended));
-                                        sleep_time = duration.saturating_sub(current_pos);
-                                        advanced = true;
-                                    }
-                                } else {
-                                    player.stop();
-                                    pending_transition = None;
-                                    sleep_time = Duration::ZERO;
-                                    advanced = true;
-                                }
-                            }
-                        }
-                        advanced
-                    }
-                };
-
-                if needs_emit {
-                    tokio::time::sleep(sleep_time).await;
-
-                    let mut player = state
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-                    match pending_transition.take() {
-                        Some((next_cursor, next_song, true)) => {
-                            // Seamless: the next source was already appended.
-                            player.cursor = Some(next_cursor);
-                            player.current_song = Some(next_song.clone());
-                            player.duration = player
-                                .appended_duration
-                                .take()
-                                .or(Some(Duration::from_millis(next_song.duration_ms)))
-                                .filter(|d| !d.is_zero());
-                            player.seek_offset = Duration::ZERO;
-                            player.adopt_stream_duration();
-                            player.prepare_next();
-                        }
-                        Some((next_cursor, next_song, false)) => {
-                            // Nothing could be appended (stream not ready yet): load it now.
-                            player.cursor = Some(next_cursor);
-                            player.play(next_song);
-                            continue;
-                        }
-                        None => player.stop(),
-                    }
-
-                    player.emit_state();
-                    player.update_discord_song(Some(0));
-                    player.update_current_metadata();
-                }
+                let job = lock_player(&state).tick();
+                let Some(job) = job else { continue };
+                let path = job.path.clone();
+                let decoded = tauri::async_runtime::spawn_blocking(move || {
+                    Self::decode_source(&path).map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("decoder task failed: {e}")));
+                lock_player(&state).finish_buffering(job, decoded);
             }
         });
+    }
+
+    /// One step of the transition watcher. Commits a transition whose appended song started, moves on when the
+    /// audio ran dry, or appends the next song shortly before the end. Returns a decode job for the next file, which
+    /// the caller runs without the lock and hands back to `finish_buffering`.
+    fn tick(&mut self) -> Option<BufferJob> {
+        if self.is_paused() || self.stream_loading.is_some() || self.current_song.is_none() {
+            return None;
+        }
+        if let Some(pending) = &self.pending_next {
+            if pending.started(self.player.len()) {
+                self.commit_transition();
+            }
+            return None;
+        }
+        if self.player.empty() {
+            // the song ended and nothing was appended (unknown length, a stream that was not ready, a file that
+            // could not be decoded ahead of time, or a stream that ended early)
+            self.advance_after_end();
+            return None;
+        }
+        if self.buffering || !should_buffer(self.duration, self.current_position()) {
+            return None;
+        }
+
+        let cursor = self.get_next_cursor()?;
+        self.stream_missing_file_at(cursor);
+        let song = self.song_at(cursor)?;
+        let key = song_key(&song);
+        if self.buffer_attempt.as_ref() == Some(&(self.audio_generation, key.clone())) {
+            return None;
+        }
+        if is_stream_song(&song) {
+            // only an already opened stream can be appended; otherwise it opens when the current song ends
+            let url = song.source_url.clone().unwrap_or_default();
+            if let Some((source, duration)) = self.take_prepared(&url) {
+                let duration = effective_duration(source.total_duration().or(duration), song.duration_ms);
+                self.append_pending(cursor, key, source, duration);
+            }
+            return None;
+        }
+        self.buffering = true;
+        self.buffer_attempt = Some((self.audio_generation, key.clone()));
+        Some(BufferJob { generation: self.audio_generation, key, path: song.path })
+    }
+
+    /// Appends a decoded next file, unless the audio or the queue changed while it was decoded.
+    fn finish_buffering(&mut self, job: BufferJob, decoded: Result<BoxedSource, String>) {
+        if job.generation != self.audio_generation {
+            return; // the audio was replaced meanwhile; `buffering` was reset with it
+        }
+        self.buffering = false;
+        if self.pending_next.is_some() {
+            return;
+        }
+        let Some(cursor) = self.get_next_cursor() else { return };
+        let Some(song) = self.song_at(cursor).filter(|s| song_key(s) == job.key) else {
+            return; // another song is next now; the next tick buffers that one
+        };
+        match decoded {
+            Ok(source) => {
+                let duration = effective_duration(source.total_duration(), song.duration_ms);
+                self.append_pending(cursor, job.key, source, duration);
+            }
+            Err(e) => eprintln!("[audio] cannot decode the next song {:?} ahead of time: {e}", song.title),
+        }
+    }
+
+    fn append_pending(&mut self, cursor: usize, key: SongKey, source: BoxedSource, duration: Option<Duration>) {
+        self.player.append(source);
+        self.pending_next = Some(PendingNext {
+            cursor,
+            key,
+            duration,
+            sources_at_append: self.player.len(),
+        });
+    }
+
+    /// The appended song started: make it the current song, or correct course when the queue changed since.
+    fn commit_transition(&mut self) {
+        let Some(pending) = self.pending_next.take() else { return };
+        let expected = self.get_next_cursor().and_then(|c| self.song_at(c).map(|s| (c, song_key(&s))));
+        match resolve_transition(&pending.key, expected.as_ref().map(|(c, k)| (*c, k))) {
+            Transition::Adopt(cursor) => {
+                let Some(song) = self.song_at(cursor) else { return self.stop() };
+                self.cursor = Some(cursor);
+                self.stream_backing_id = None;
+                self.duration = pending.duration.or_else(|| effective_duration(None, song.duration_ms));
+                self.seek_offset = Duration::ZERO;
+                self.current_song = Some(song);
+                self.adopt_stream_duration();
+                self.media_playing();
+                self.update_current_metadata();
+                self.emit_state();
+                self.update_discord_song(Some(0));
+                self.prepare_next();
+            }
+            Transition::Restart(cursor) => self.play_at(cursor),
+            Transition::Stop => self.stop(),
+        }
+    }
+
+    /// The current song ended by itself: plays what the queue has next, or stops at the end of the queue.
+    fn advance_after_end(&mut self) {
+        match self.get_next_cursor() {
+            Some(cursor) => self.play_at(cursor),
+            None => self.stop(),
+        }
+    }
+
+    /// Moves the cursor to play-order position `cursor` and plays that song.
+    fn play_at(&mut self, cursor: usize) {
+        self.stream_missing_file_at(cursor);
+        match self.song_at(cursor) {
+            Some(song) => {
+                self.cursor = Some(cursor);
+                self.play(song);
+            }
+            None => self.stop(),
+        }
+    }
+
+    /// Empties the audio player (it pauses as well). Everything appended or being decoded for it is dropped.
+    fn reset_audio(&mut self) {
+        self.player.clear();
+        self.forget_appended();
+    }
+
+    /// The audio in `player` was replaced: a pending transition and an in-flight decode no longer apply.
+    fn forget_appended(&mut self) {
+        self.pending_next = None;
+        self.buffering = false;
+        self.buffer_attempt = None;
+        self.audio_generation = self.audio_generation.wrapping_add(1);
+    }
+
+    /// Position in the current song (the audio player's position restarts at 0 when its source is replaced).
+    fn current_position(&self) -> Duration {
+        self.seek_offset + self.player.get_pos()
+    }
+
+    fn media_playing(&mut self) {
+        let position = self.current_position();
+        self.media_controls.set_playing(position);
     }
 
     fn get_default_device_id() -> Result<DeviceId, DeviceIdError> {
@@ -385,6 +534,8 @@ impl AudioPlayer {
         device.id()
     }
 
+    /// Plays `song` from the start as the current song. The cursor must already point at it. A file that cannot be
+    /// decoded leaves the player stopped on that song (so the UI and the queue agree) and reports the error.
     pub fn play(&mut self, song: Song) {
         self.stream_backing_id = None;
         if is_stream_song(&song) {
@@ -402,89 +553,92 @@ impl AudioPlayer {
             return self.play_stream_song(stream);
         }
         self.stream_loading = None;
+        self.reset_audio();
+        self.seek_offset = Duration::ZERO;
+
         let source = match Self::decode_source(&song.path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Error playing {}: {e}", song.path);
-                return;
-            }
+            Ok(source) => source,
+            Err(e) => return self.fail_current(song, &e.to_string()),
         };
-
-        self.duration = source
-            .total_duration()
-            .or_else(|| Some(Duration::from_millis(song.duration_ms)));
-
-        self.seek_offset = Duration::ZERO; // RESET OFFSET ON PLAY
-
-        self.player.clear();
+        self.duration = effective_duration(source.total_duration(), song.duration_ms);
         self.player.append(source);
-
         self.player.play();
         self.current_song = Some(song);
 
         self.update_current_metadata();
-        self.media_controls
-            .play()
-            .expect("Failed to resume media controls state");
+        self.media_playing();
         self.emit_state();
         self.update_discord_song(Some(0));
         self.prepare_next();
     }
 
+    /// `song` (the current song) cannot be played: the player stops on it and the UI is told why.
+    fn fail_current(&mut self, song: Song, message: &str) {
+        eprintln!("[audio] cannot play {:?} ({}): {message}", song.title, song.path);
+        let error = PlaybackError { title: song.title.clone(), message: message.to_string() };
+        self.current_song = Some(song);
+        self.duration = None;
+        self.seek_offset = Duration::ZERO;
+        self.player.pause();
+        self.media_controls.set_stopped();
+        self.update_current_metadata();
+        self.emit_state();
+        let _ = self.handle.emit(PLAYBACK_ERROR_EVENT, error);
+    }
+
     fn decode_source(path_str: &str) -> Result<BoxedSource, Box<dyn std::error::Error>> {
         let path = Path::new(path_str);
 
-        // 1. If it's an .opus file, use your custom OpusSource
+        // Opus files use the project's own decoder; rodio's covers MP3, WAV, FLAC, AAC and the rest.
         if path.extension().and_then(|ext| ext.to_str()) == Some("opus") {
             let opus_source = OpusSource::open(path)?;
             return Ok(Box::new(opus_source));
         }
 
-        // 2. Fall back to Rodio's generic decoder for MP3, WAV, FLAC, etc.
         let file = File::open(path)?;
         let decoder = Decoder::try_from(file)?;
-
-        // Box and return
         Ok(Box::new(decoder))
     }
 
     pub fn pause(&mut self) {
         self.player.pause();
-        self.media_controls
-            .pause()
-            .expect("Failed to pause media controls");
+        let position = self.current_position();
+        self.media_controls.set_paused(position);
         self.emit_state();
         self.update_current_metadata();
         self.update_discord_song(None);
     }
 
     pub fn resume(&mut self) {
-        if self.player.len() < 1 {
+        if self.player.empty() {
             if self.stream_loading.is_some() {
                 return;
             }
+            // nothing is loaded: the current song, or the song the cursor points at (a queue without current song)
             if let Some(song) = self.current_song.clone() {
                 return self.play(song);
             }
+            if let Some(cursor) = self.cursor {
+                return self.play_at(cursor);
+            }
+            return;
         }
         self.player.play();
-        self.media_controls
-            .play()
-            .expect("Failed to resume media controls state");
+        self.media_playing();
         self.emit_state();
         self.update_current_metadata();
         self.update_discord_song(None);
     }
 
+    /// Stops playback: the audio is released (no file stays open), the current song and the queue are kept.
     pub fn stop(&mut self) {
-        self.player.pause();
-        self.player.stop();
-        self.media_controls
-            .stop()
-            .expect("Failed to stop media controls state");
+        self.reset_audio();
+        self.seek_offset = Duration::ZERO;
         self.duration = None;
+        self.media_controls.set_stopped();
         self.emit_state();
         self.update_current_metadata();
+        self.update_discord_song(None);
     }
 
     /// Id of the loaded (current) song, if any.
@@ -510,11 +664,12 @@ impl AudioPlayer {
 
     /// Adds `songs` without replacing the queue: right after the current song (keeping the given order)
     /// when `play_next`, at the end otherwise. One state emit and one `prepare_next` for the whole batch.
+    /// Without a current song both modes append, and the cursor points at the first added song.
     pub fn add_songs_to_queue(&mut self, songs: Vec<Song>, play_next: bool) {
         if songs.is_empty() {
             return;
         }
-        if play_next {
+        if play_next && self.cursor.is_some() {
             // Every insert lands at cursor + 1, so going backwards leaves the songs in the given order.
             for song in songs.into_iter().rev() {
                 self.queue.push(song);
@@ -567,17 +722,16 @@ impl AudioPlayer {
         self.cursor = removal.cursor;
 
         if removal.removed_current {
-            match self.get_song_at_cursor() {
-                Some(next) => {
-                    self.play(next);
-                    return;
-                }
+            match removal.cursor {
+                Some(cursor) => return self.play_at(cursor),
                 None => {
                     self.stop();
                     self.current_song = None;
                     self.cursor = None;
                 }
             }
+        } else {
+            self.prepare_next();
         }
         self.emit_state();
     }
@@ -592,15 +746,8 @@ impl AudioPlayer {
             queue_ops::move_positions(order, self.cursor, positions, insert_before);
         self.play_order = Some(new_order);
         self.cursor = new_cursor;
+        self.prepare_next();
         self.emit_state();
-    }
-
-    pub fn clear_queue(&mut self) {
-        self.queue.clear();
-    }
-
-    pub fn get_queue(&self) -> Vec<Song> {
-        self.queue.clone()
     }
 
     pub fn get_ordered_queue(&self) -> Vec<Song> {
@@ -611,41 +758,6 @@ impl AudioPlayer {
                 .collect(),
             None => self.queue.clone(),
         }
-    }
-
-    /// Advances the player to the next song in the queue.
-    ///
-    /// Returns `true` if the player advanced, or `false` if the queue was empty.
-    fn advance_to_next_in_queue(&mut self, next_cursor: usize) -> bool {
-        self.cursor = Some(next_cursor);
-        self.stream_missing_file_at(next_cursor);
-
-        if let Some(next_song) = self.get_song_at_cursor() {
-            if is_stream_song(&next_song) {
-                self.play(next_song);
-                return true;
-            }
-            // a stream that was still opening is abandoned (its late result is ignored)
-            self.stream_loading = None;
-            self.stream_backing_id = None;
-            self.buffer_next_silent(&next_song);
-            self.current_song = Some(next_song.clone());
-            self.duration = Some(Duration::from_millis(next_song.duration_ms));
-            self.seek_offset = Duration::ZERO;
-            self.prepare_next();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Appends the song at `next_cursor` for a gapless transition. Returns the song and whether audio was
-    /// appended (a stream song that is not prepared yet is not).
-    fn buffer_next_in_queue(&mut self, next_cursor: usize) -> Option<(Song, bool)> {
-        self.stream_missing_file_at(next_cursor);
-        let next_song = self.song_at(next_cursor)?;
-        let appended = self.buffer_next_silent(&next_song);
-        Some((next_song, appended))
     }
 
     /// If the library song at play-order position `cursor` has no file any more (deleted), its queue entry becomes
@@ -668,23 +780,27 @@ impl AudioPlayer {
         self.queue.get(idx).cloned()
     }
 
+    /// Replaces the queue with `songs` and plays the one at `current_index` (clamped into the queue). With shuffle
+    /// on, the chosen song plays first and the rest is shuffled. An empty list stops playback and clears the queue.
     pub fn start_playback(&mut self, songs: Vec<Song>, current_index: usize) {
-        let new_play_order: Vec<usize> = (0..songs.len()).collect();
-
+        let Some(start) = queue_ops::clamp_start(songs.len(), current_index) else {
+            self.stop();
+            self.queue.clear();
+            self.play_order = None;
+            self.cursor = None;
+            self.current_song = None;
+            self.emit_state();
+            return;
+        };
+        self.play_order = Some((0..songs.len()).collect());
         self.queue = songs;
-        self.play_order = Some(new_play_order);
-        self.cursor = Some(current_index);
-
+        self.cursor = Some(start);
         if self.shuffle_mode {
             self.apply_shuffle_to_queue();
         }
-        self.stop();
-        if let (Some(order), Some(cursor)) = (&self.play_order, self.cursor) {
-            if let Some(&song_idx) = order.get(cursor) {
-                if let Some(song) = self.queue.get(song_idx).cloned() {
-                    self.play(song);
-                }
-            }
+        match self.cursor {
+            Some(cursor) => self.play_at(cursor),
+            None => self.stop(),
         }
     }
 
@@ -706,60 +822,44 @@ impl AudioPlayer {
         }
     }
 
-    fn get_song_at_cursor(&self) -> Option<Song> {
-        let order = self.play_order.as_ref()?;
-        let cursor = self.cursor?;
-        let song_idx = order.get(cursor)?;
-        self.queue.get(*song_idx).cloned()
-    }
-
+    /// Position of the song that plays when the current one ends (see `queue_ops::next_on_end`).
     fn get_next_cursor(&self) -> Option<usize> {
-        let order = self.play_order.as_ref()?;
-        let current_cursor = self.cursor?;
-
-        if self.repeat_mode == RepeatMode::Track {
-            return Some(current_cursor);
-        }
-
-        let next_cursor = current_cursor + 1;
-
-        if next_cursor >= order.len() {
-            if self.repeat_mode == RepeatMode::Queue {
-                Some(0)
-            } else {
-                None
-            }
-        } else {
-            Some(next_cursor)
-        }
+        let len = self.play_order.as_ref()?.len();
+        queue_ops::next_on_end(len, self.cursor, self.repeat_mode)
     }
 
     pub fn toggle_shuffle(&mut self) {
         if self.shuffle_mode {
-            if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
-                let current_actual_idx = order[cursor];
-                order.sort_unstable();
-                self.cursor = Some(current_actual_idx);
+            if let Some(order) = self.play_order.as_deref() {
+                let (order, cursor) = queue_ops::unshuffle(order, self.cursor);
+                self.play_order = Some(order);
+                self.cursor = cursor;
             }
             self.shuffle_mode = false;
         } else {
             self.shuffle_mode = true;
             self.apply_shuffle_to_queue();
         }
+        self.prepare_next();
         self.emit_state();
     }
 
     pub fn set_repeat_mode(&mut self, repeat_mode: RepeatMode) {
         self.repeat_mode = repeat_mode;
+        // the song after the current one may be another one now
+        self.prepare_next();
+        self.emit_state();
     }
 
     fn apply_shuffle_to_queue(&mut self) {
-        if let (Some(ref mut order), Some(cursor)) = (&mut self.play_order, self.cursor) {
-            let current_idx = order.remove(cursor);
-            let mut rng = rng();
-            order.shuffle(&mut rng);
-            order.insert(0, current_idx);
-            self.cursor = Some(0);
+        if let Some(order) = self.play_order.as_deref() {
+            let (order, cursor) =
+                queue_ops::shuffle_keeping_current(order, self.cursor, |rest| rest.shuffle(&mut rng()));
+            self.play_order = Some(order);
+            // without a current song the cursor stays where it was (none)
+            if self.cursor.is_some() {
+                self.cursor = cursor;
+            }
         }
     }
 
@@ -767,111 +867,42 @@ impl AudioPlayer {
         let Some(song) = &self.current_song else {
             return;
         };
-
-        let formatted_uri: String;
-
-        let uri_ref = if let Some(path) = &song.cover_url {
-            formatted_uri = if path.starts_with("http://") || path.starts_with("https://") {
-                path.clone()
-            } else {
-                Self::format_cover_path(path)
-            };
-            Some(formatted_uri.as_str())
-        } else {
-            None
-        };
-
+        let cover = song.cover_url.as_deref().map(cover_uri);
         let display_artists = song.artists.join(", ");
+        let duration = self.duration.or_else(|| effective_duration(None, song.duration_ms));
 
         self.media_controls.update_metadata(MediaMetadata {
             title: Some(&song.title),
             artist: Some(&display_artists),
             album: Some(&song.album),
-            duration: Some(Duration::from_millis(song.duration_ms)),
-            cover_url: uri_ref,
+            duration,
+            cover_url: cover.as_deref(),
         });
     }
 
-    fn buffer_next_silent(&mut self, song: &Song) -> bool {
-        if is_stream_song(song) {
-            let url = song.source_url.clone().unwrap_or_default();
-            return match self.take_prepared(&url) {
-                Some((source, duration)) => {
-                    self.appended_duration = duration;
-                    self.player.append(source);
-                    true
-                }
-                None => false,
-            };
-        }
-        let now = Instant::now();
-        println!("Silent buffer: {}, {:?}", song.title, song.id);
-        let appended = match Self::decode_source(&song.path) {
-            Ok(source) => {
-                self.player.append(source);
-                true
-            }
-            Err(_) => false,
-        };
-        println!("BUFFERING TOOK: {:#?}", now.elapsed());
-        appended
-    }
-
+    /// Skips to the next song of the queue (repeat-one moves on as well; repeat-all wraps around). At the end of the
+    /// queue without repeat, playback stops on the last song.
     pub fn next(&mut self) {
-        self.player.skip_one();
-        self.player.play();
-
-        let Some(order) = &self.play_order else {
-            return;
-        };
-        let Some(current_cursor) = self.cursor else {
-            return;
-        };
-
-        let mut next_cursor = current_cursor + 1;
-
-        if next_cursor >= order.len() {
-            if self.repeat_mode != RepeatMode::Off {
-                next_cursor = 0;
-            } else {
-                self.emit_state();
-                self.update_current_metadata();
-                return;
-            }
-            println!("REPEATING 0, {}, {}", next_cursor, order.len());
-            self.cursor = Some(next_cursor);
+        let len = self.play_order.as_ref().map_or(0, Vec::len);
+        match queue_ops::next_on_skip(len, self.cursor, self.repeat_mode) {
+            Some(cursor) => self.play_at(cursor),
+            None if self.current_song.is_some() => self.stop(),
+            None => {}
         }
-
-        if !self.advance_to_next_in_queue(next_cursor) {
-            self.stop();
-        }
-
-        self.emit_state();
-        self.update_current_metadata();
-        self.update_discord_song(Some(0));
     }
 
+    /// Restarts the current song after its first 5 seconds; otherwise goes to the previous song (the first song
+    /// restarts).
     pub fn previous(&mut self) {
-        let absolute_pos = self.seek_offset + self.player.get_pos();
-        if absolute_pos > Duration::from_secs(5) {
-            if let Some(current) = self.get_song_at_cursor() {
-                self.play(current);
-                return;
-            }
-        }
-
-        let Some(current_cursor) = self.cursor else {
+        let Some(cursor) = self.cursor else {
             return;
         };
-
-        if current_cursor > 0 {
-            self.cursor = Some(current_cursor - 1);
-            if let Some(prev_song) = self.get_song_at_cursor() {
-                self.play(prev_song);
-            }
-        } else if let Some(current) = self.get_song_at_cursor() {
-            self.play(current);
-        }
+        let target = if self.current_position() > Duration::from_secs(5) {
+            cursor
+        } else {
+            cursor.saturating_sub(1)
+        };
+        self.play_at(target);
     }
 
     /// Seeks the current song to `fraction` (0..=1) of its length. The result says whether the position really
@@ -922,16 +953,8 @@ impl AudioPlayer {
         }
 
         if remaining < Duration::from_secs(1) {
-            println!("[seek] target {target:?} is within 1 s of the end ({duration:?}): skipping to the next song");
-            let Some(next_cursor) = self.get_next_cursor() else {
-                self.next();
-                return Ok(());
-            };
-
-            self.player.skip_one();
-            self.advance_to_next_in_queue(next_cursor);
-            self.emit_state();
-            self.update_current_metadata();
+            println!("[seek] target {target:?} is within 1 s of the end ({duration:?}): the song counts as ended");
+            self.advance_after_end();
             return Ok(());
         }
 
@@ -977,12 +1000,10 @@ impl AudioPlayer {
             Some(_) => "file",
         }
     }
+
+    /// Progress of the current song in 0..=1 (0 when its length is unknown).
     pub fn position(&self) -> f32 {
-        if let Some(duration) = self.duration {
-            let actual_pos = self.seek_offset + self.player.get_pos();
-            return (actual_pos.as_secs_f32() / duration.as_secs_f32()).min(1.0);
-        }
-        0.0
+        progress_fraction(self.current_position(), self.duration)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -1010,11 +1031,18 @@ impl AudioPlayer {
         Ok(Box::new(decoder))
     }
 
-    /// If `id` is the current song, switches playback to an in-memory copy of its
-    /// file at (almost) the same position, so the file on disk is no longer open and
-    /// can be rewritten with no audible gap. Does nothing for other songs. On error
-    /// playback is left untouched.
-    pub fn move_song_to_memory(&mut self, id: i64) -> Result<(), String> {
+    /// Path of the current song's file when `id` is the current song (a library file, not a stream).
+    pub fn current_file_of(&self, id: i64) -> Option<String> {
+        self.current_song
+            .as_ref()
+            .filter(|s| s.id == Some(id) && !s.path.is_empty() && !self.current_is_stream_audio())
+            .map(|s| s.path.clone())
+    }
+
+    /// If `id` is the current song, switches playback to `bytes` (an in-memory copy of its file, read by the caller
+    /// without holding the player lock) at (almost) the same position, so the file on disk is no longer open and
+    /// can be rewritten with no audible gap. Does nothing for other songs. On error playback is left untouched.
+    pub fn move_song_to_memory(&mut self, id: i64, bytes: Vec<u8>) -> Result<(), String> {
         let Some(song) = self
             .current_song
             .clone()
@@ -1023,7 +1051,6 @@ impl AudioPlayer {
             return Ok(());
         };
 
-        let bytes = std::fs::read(&song.path).map_err(|e| e.to_string())?;
         let mut source =
             Self::decode_source_from_memory(&song.path, bytes).map_err(|e| e.to_string())?;
 
@@ -1051,6 +1078,7 @@ impl AudioPlayer {
             self.player.clear();
             self.player.append(source);
         }
+        self.forget_appended();
         if paused {
             self.player.pause();
         } else {
@@ -1065,9 +1093,9 @@ impl AudioPlayer {
         if self.current_song.as_ref().and_then(|s| s.id) != Some(id) {
             return None;
         }
-        let pos = self.seek_offset + self.player.get_pos();
+        let pos = self.current_position();
         let paused = self.is_paused();
-        self.player.clear();
+        self.reset_audio();
         Some(EditSuspend { pos, paused })
     }
 
@@ -1115,8 +1143,6 @@ impl AudioPlayer {
     }
 
     pub fn emit_state(&self) {
-        let ordered_queue = self.get_ordered_queue();
-
         let state = PlayerState {
             current_song: self.current_song.clone(),
             is_playing: !self.is_paused(),
@@ -1124,117 +1150,141 @@ impl AudioPlayer {
             volume: self.player.volume(),
             shuffle_mode: self.shuffle_mode,
             repeat_mode: self.repeat_mode,
-            queue: ordered_queue,
+            queue: self.get_ordered_queue(),
             queue_cursor: self.cursor,
             source_index: source_index_at(self.play_order.as_deref(), self.cursor),
             streaming: self.current_song.as_ref().is_some_and(is_stream_song),
             stream_loading: self.stream_loading.is_some(),
         };
-
-        if let Some(ref song) = state.current_song {
-            println!(
-                "emitted {}, progress: {}, is_playing: {}",
-                song.title, state.progress, state.is_playing
-            );
-        }
-
         self.handle.emit("player-state", state).ok();
     }
 
-    fn format_cover_path(path: &str) -> String {
-        #[cfg(target_os = "windows")]
-        let cover_path = format!("file://{}", path.replace('/', "\\"));
-        #[cfg(not(target_os = "windows"))]
-        let cover_path = format!("file://{}", path);
-
-        cover_path
-    }
-
-    fn update_discord_song(&self, force_position_ms: Option<i64>) {
-        let song_data = match &self.current_song {
-            Some(song) => (song.clone(), self.duration),
-            None => return,
-        };
-
-        let pos_ms = force_position_ms
-            .unwrap_or_else(|| i64::try_from(self.player.get_pos().as_millis()).unwrap_or(0));
-        let is_paused = self.is_paused();
-        let handle = self.handle.clone();
-
-        tauri::async_runtime::spawn_blocking(move || {
-            let (song, duration) = song_data;
-            let duration_ms = duration
-                .and_then(|d| i64::try_from(d.as_millis()).ok())
-                .unwrap_or(0);
-            let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
-            let mut lock = state.lock().unwrap();
-
-            if lock.is_none() {
-                match DiscordRpcClient::new(handle.clone()) {
-                    Ok(client) => *lock = Some(client),
-                    Err(e) => {
-                        eprintln!("Failed to create Discord client: {e}");
-                        return;
-                    }
+    /// Starts the thread that applies Discord presence updates. Updates are applied one at a time in the order they
+    /// were made, and only the newest of a burst is sent (Discord rate-limits presence changes anyway).
+    fn spawn_discord_worker(handle: AppHandle) -> mpsc::Sender<DiscordUpdate> {
+        let (tx, rx) = mpsc::channel::<DiscordUpdate>();
+        let spawned = std::thread::Builder::new().name("discord-presence".into()).spawn(move || {
+            while let Ok(mut update) = rx.recv() {
+                while let Ok(newer) = rx.try_recv() {
+                    update = newer;
                 }
-            }
-
-            if let Some(ref mut discord) = *lock {
-                if !discord.is_connected() && discord.reconnect().is_err() {
-                    return;
-                }
-
-                if let Err(e) = discord.update_song(&song, duration_ms, pos_ms, is_paused) {
-                    eprintln!("Discord update failed, disconnecting: {e}");
-                    discord.is_connected = false;
-                }
+                Self::apply_discord_update(&handle, update);
             }
         });
+        if let Err(e) = spawned {
+            eprintln!("[discord] cannot start the presence thread: {e}");
+        }
+        tx
     }
 
-    fn reconnect_default_device(&mut self) -> Result<(), String> {
-        println!("Attempting to reconnect to a default audio device...");
-
-        let prev_is_paused = self.is_paused();
-        let prev_volume = self.get_volume();
-        let prev_pos = self.seek_offset + self.player.get_pos();
-        let prev_song = self.current_song.clone();
-        // Prepared streams belong to nothing device specific, but their decoders are cheap to reopen.
-        self.prepared = None;
-
-        let new_sink = Self::create_sink()?;
-        let new_player = Player::connect_new(new_sink.mixer());
-
-        self.sink = new_sink;
-        self.player = new_player;
-
-        if let Some(song) = prev_song.as_ref().filter(|s| is_stream_song(s)).cloned() {
-            // A stream is reopened from the network (from the start).
-            self.play(song);
-        } else if let Some(song) = prev_song {
-            if let Ok(mut source) = Self::decode_source(&song.path) {
-                if prev_pos.as_millis() > 0 {
-                    let _ = source.try_seek(prev_pos);
-
-                    self.seek_offset = prev_pos;
-                } else {
-                    self.seek_offset = Duration::ZERO;
-                }
-
-                self.player.append(source);
-                self.set_volume(prev_volume);
-
-                if prev_is_paused {
-                    self.player.pause();
-                } else {
-                    self.player.play();
+    fn apply_discord_update(handle: &AppHandle, update: DiscordUpdate) {
+        let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
+        let mut client = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if client.is_none() {
+            match DiscordRpcClient::new(handle.clone()) {
+                Ok(created) => *client = Some(created),
+                Err(e) => {
+                    eprintln!("[discord] cannot create the client: {e}");
+                    return;
                 }
             }
         }
+        let Some(discord) = client.as_mut() else { return };
+        if !discord.is_connected() && discord.reconnect().is_err() {
+            return;
+        }
+        if let Err(e) = discord.update_song(&update.song, update.duration_ms, update.position_ms, update.paused) {
+            eprintln!("[discord] update failed, disconnecting: {e}");
+            discord.is_connected = false;
+        }
+    }
 
-        self.current_device_id = Self::get_default_device_id().ok();
+    /// Sends the current song to the Discord presence. `force_position_ms` overrides the measured position (0 right
+    /// after a song starts, the target after a seek).
+    fn update_discord_song(&self, force_position_ms: Option<i64>) {
+        let Some(song) = self.current_song.clone() else {
+            return;
+        };
+        let position_ms =
+            force_position_ms.unwrap_or_else(|| i64::try_from(self.current_position().as_millis()).unwrap_or(0));
+        let duration_ms = self
+            .duration
+            .and_then(|d| i64::try_from(d.as_millis()).ok())
+            .unwrap_or(0);
+        let update = DiscordUpdate { song, duration_ms, position_ms, paused: self.is_paused() };
+        // the thread only stops with the app
+        let _ = self.discord.send(update);
+    }
+
+    /// A cover found for the presence of song `song_id`: shown from now on if it is still the current song.
+    /// Only web urls are accepted.
+    pub fn apply_external_cover(&mut self, song_id: i64, url: String) {
+        if !is_web_url(&url) {
+            return;
+        }
+        let Some(song) = self.current_song.as_mut().filter(|s| s.id == Some(song_id)) else {
+            return;
+        };
+        song.external_cover_url = Some(url);
+        self.update_discord_song(None);
+    }
+
+    /// Moves playback to the new default output device: the current song continues at the same position, volume
+    /// and paused state. A device that cannot be opened is remembered, so it is not retried every tick; the next
+    /// change of the default device tries again.
+    fn reconnect_default_device(&mut self, device_id: DeviceId) {
+        self.current_device_id = Some(device_id);
+        let output = match AudioOutput::open_default() {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("[audio] keeping the previous output: {e}");
+                return;
+            }
+        };
+
+        let was_paused = self.is_paused();
+        let volume = self.player.volume();
+        let position = self.current_position();
+        let song = self.current_song.clone();
+
+        // the old player goes before its output: dropping it stops whatever it still plays
+        self.player = Player::connect_new(output.mixer());
+        self.output = output;
+        self.player.set_volume(volume);
+        self.forget_appended();
+
+        match song {
+            // a stream that is opening ends up in the new player when it is ready
+            _ if self.stream_loading.is_some() => {}
+            None => {}
+            // a stream is reopened from the network (from the start)
+            Some(song) if is_stream_song(&song) => {
+                self.play(song);
+                if was_paused {
+                    self.pause();
+                }
+            }
+            Some(song) => self.resume_file_at(song, position, was_paused),
+        }
         self.emit_state();
-        Ok(())
+    }
+
+    /// Plays the file of `song` from `position` (used after the output device changed).
+    fn resume_file_at(&mut self, song: Song, position: Duration, paused: bool) {
+        let mut source = match Self::decode_source(&song.path) {
+            Ok(source) => source,
+            Err(e) => return self.fail_current(song, &e.to_string()),
+        };
+        self.seek_offset = Duration::ZERO;
+        if !position.is_zero() && source.try_seek(position).is_ok() {
+            self.seek_offset = position;
+        }
+        self.player.append(source);
+        if paused {
+            self.player.pause();
+        } else {
+            self.player.play();
+        }
     }
 
     /// Library songs were deleted: the ones in the queue (except the current one) become streams of the same
@@ -1306,11 +1356,6 @@ impl AudioPlayer {
         swapped
     }
 
-    pub fn set_queue(&mut self, songs: Vec<Song>) {
-        println!("SETTING QUEUE: {songs:?}");
-        self.queue = songs;
-    }
-
     // ----- streaming -----
 
     /// Plays a stream song: right away when it was prepared, otherwise it is opened in the background
@@ -1323,9 +1368,9 @@ impl AudioPlayer {
         }
         self.stream_generation += 1;
         let generation = self.stream_generation;
-        self.player.clear();
+        self.reset_audio();
         self.seek_offset = Duration::ZERO;
-        self.duration = Some(Duration::from_millis(song.duration_ms));
+        self.duration = effective_duration(None, song.duration_ms);
         self.stream_loading = Some(url.clone());
         self.current_song = Some(song.clone());
         self.update_current_metadata();
@@ -1369,19 +1414,16 @@ impl AudioPlayer {
 
     /// Starts an opened source as the current song.
     fn start_source(&mut self, song: Song, source: BoxedSource, duration: Option<Duration>) {
-        self.duration = source
-            .total_duration()
-            .or(duration)
-            .or_else(|| Some(Duration::from_millis(song.duration_ms)));
+        self.duration = effective_duration(source.total_duration().or(duration), song.duration_ms);
         self.seek_offset = Duration::ZERO;
-        self.player.clear();
+        self.reset_audio();
         self.player.append(source);
         self.player.play();
         self.current_song = Some(song);
         self.adopt_stream_duration();
 
         self.update_current_metadata();
-        let _ = self.media_controls.play();
+        self.media_playing();
         self.emit_state();
         self.update_discord_song(Some(0));
         self.prepare_next();
@@ -1455,51 +1497,22 @@ impl AudioPlayer {
         });
     }
 
+    /// Sets the volume (clamped to 0..=1: the UI can never amplify).
     pub fn set_volume(&mut self, fraction: f32) {
-        self.player.set_volume(fraction);
+        self.player.set_volume(clamp_volume(fraction));
     }
 
-    pub fn get_volume(&mut self) -> f32 {
+    pub fn get_volume(&self) -> f32 {
         self.player.volume()
-    }
-
-    fn spawn_cover_listener(handle: &AppHandle) {
-        use tauri::Listener;
-
-        let listener_handle = handle.clone();
-
-        handle.listen_any("cover-found", move |event| {
-            let Ok(payload) = serde_json::from_str::<(i64, String)>(event.payload()) else {
-                return;
-            };
-            let (song_id, url) = payload;
-
-            let h = listener_handle.clone();
-
-            tauri::async_runtime::spawn(async move {
-                if let Some(state) = h.try_state::<Mutex<AudioPlayer>>() {
-                    if let Ok(mut player) = state.lock() {
-                        if let Some(ref mut song) = player.current_song {
-                            if song.id == Some(song_id) {
-                                song.external_cover_url = Some(url);
-                                println!("Sync: Song cover updated in AudioPlayer state.");
-                                let current_pos =
-                                    i64::try_from(player.player.get_pos().as_millis()).unwrap_or(0);
-                                player.update_discord_song(Some(current_pos));
-                            }
-                        }
-                    }
-                }
-            });
-        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_song_edit, check_seek_landed, clamp_fraction, file_for_stream, is_stream_song, order_insert_next,
-        order_push, source_index_at, stream_fallback, streamify_deleted, swap_streams_for_files, AudioPlayer,
+        apply_song_edit, check_seek_landed, clamp_fraction, clamp_volume, cover_uri, file_for_stream, is_stream_song,
+        is_web_url, order_insert_next, order_push, source_index_at, stream_fallback, streamify_deleted,
+        swap_streams_for_files, AudioPlayer,
     };
     use crate::types::{Platform, QualityTier, Song};
     use rodio::Source;
@@ -2004,7 +2017,8 @@ mod tests {
         let mut cursor = None;
         order_insert_next(&mut order, &mut cursor, 2);
         assert_eq!(order, Some(vec![0, 1, 2]));
-        assert_eq!(cursor, Some(0));
+        // nothing was current: the cursor points at the song just added (it plays next)
+        assert_eq!(cursor, Some(2));
 
         let (mut order, mut cursor) = (None, None);
         order_insert_next(&mut order, &mut cursor, 0);
@@ -2123,5 +2137,86 @@ mod tests {
     #[test]
     fn seek_check_landed_far_after_target_is_err() {
         assert!(check_seek_landed(Duration::from_secs(10), Duration::from_secs(60)).is_err());
+    }
+
+    #[test]
+    fn clamp_volume_nan_becomes_zero() {
+        assert_eq!(clamp_volume(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn clamp_volume_negative_becomes_zero() {
+        assert_eq!(clamp_volume(-0.5), 0.0);
+    }
+
+    #[test]
+    fn clamp_volume_above_one_becomes_one() {
+        assert_eq!(clamp_volume(50.0), 1.0);
+    }
+
+    #[test]
+    fn clamp_volume_inside_range_is_unchanged() {
+        assert_eq!(clamp_volume(0.3), 0.3);
+    }
+
+    #[test]
+    fn clamp_volume_bounds_are_unchanged() {
+        assert_eq!(clamp_volume(0.0), 0.0);
+        assert_eq!(clamp_volume(1.0), 1.0);
+    }
+
+    #[test]
+    fn is_web_url_accepts_http_and_https() {
+        assert!(is_web_url("https://example.com/cover.jpg"));
+        assert!(is_web_url("http://example.com/cover.jpg"));
+    }
+
+    #[test]
+    fn is_web_url_rejects_other_schemes_paths_and_empty() {
+        assert!(!is_web_url("file://x"));
+        assert!(!is_web_url("/covers/a.jpg"));
+        assert!(!is_web_url("C:\\a.jpg"));
+        assert!(!is_web_url(""));
+    }
+
+    #[test]
+    fn cover_uri_web_url_is_unchanged() {
+        assert_eq!(cover_uri("https://example.com/cover.jpg"), "https://example.com/cover.jpg");
+    }
+
+    #[test]
+    fn cover_uri_local_path_gets_file_prefix() {
+        assert_eq!(cover_uri("cover.jpg"), "file://cover.jpg");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cover_uri_windows_path_uses_backslashes() {
+        assert_eq!(cover_uri("C:/covers/a.jpg"), "file://C:\\covers\\a.jpg");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn cover_uri_unix_absolute_path_gives_standard_file_uri() {
+        assert_eq!(cover_uri("/covers/a.jpg"), "file:///covers/a.jpg");
+    }
+
+    #[test]
+    fn order_push_with_order_but_no_cursor_points_cursor_at_pushed_song() {
+        let mut order = Some(vec![0, 1]);
+        let mut cursor = None;
+        order_push(&mut order, &mut cursor, 2);
+        assert_eq!(order, Some(vec![0, 1, 2]));
+        assert_eq!(cursor, Some(2));
+    }
+
+    #[test]
+    fn order_push_second_push_keeps_the_cursor() {
+        let mut order = Some(vec![0, 1]);
+        let mut cursor = None;
+        order_push(&mut order, &mut cursor, 2);
+        order_push(&mut order, &mut cursor, 3);
+        assert_eq!(order, Some(vec![0, 1, 2, 3]));
+        assert_eq!(cursor, Some(2));
     }
 }

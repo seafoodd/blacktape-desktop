@@ -1,5 +1,6 @@
 use crate::db::db::Database;
 use crate::{discord_presence::cover_fetcher::CoverFetcher, types::Song};
+use crate::audio::player::{lock_player, AudioPlayer};
 use discord_rich_presence::{
     activity::{self, Activity, Assets, Timestamps},
     DiscordIpc, DiscordIpcClient,
@@ -8,7 +9,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 const CLIENT_ID: &str = "1490382526169219342";
 const SOURCE_CODE_URL: &str = "https://github.com/seafoodd/blacktape-desktop";
@@ -132,7 +133,10 @@ impl DiscordRpcClient {
                         .await
                         .is_ok()
                     {
-                        handle.emit("cover-found", (song_id, fetched_url)).unwrap();
+                        // straight to the player (an event could also be sent by the web view)
+                        if let Some(player) = handle.try_state::<std::sync::Mutex<AudioPlayer>>() {
+                            lock_player(&player).apply_external_cover(song_id, fetched_url);
+                        }
                     }
                 });
             }

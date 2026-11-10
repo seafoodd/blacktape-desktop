@@ -4,6 +4,7 @@
 //! order they play) plus a `cursor` (position in `play_order` of the current song).
 //! The UI addresses songs by position in the play order.
 
+use crate::audio::player::RepeatMode;
 use crate::playlists::ordering::move_block_order;
 
 /// Result of removing songs from the play order.
@@ -68,9 +69,78 @@ pub fn move_positions(
     (new_order, new_cursor)
 }
 
+/// Index of the song to start at after some requested songs could not be resolved (a library song that is no
+/// longer in the database is dropped). `resolved[i]` tells whether requested entry `i` survived. The index points at
+/// the requested song when it survived, otherwise at the next surviving one (or the last). 0 for an empty result.
+pub fn index_after_filter(resolved: &[bool], index: usize) -> usize {
+    let before = resolved.iter().take(index).filter(|r| **r).count();
+    let total = resolved.iter().filter(|r| **r).count();
+    before.min(total.saturating_sub(1))
+}
+
+/// A requested start position forced into the queue: `None` for an empty queue.
+pub fn clamp_start(len: usize, index: usize) -> Option<usize> {
+    (len > 0).then(|| index.min(len - 1))
+}
+
+/// Position after `cursor` when the current song ENDS: the same song with repeat-one, the first one after the last
+/// with repeat-all, `None` at the end of the queue otherwise (and for an empty queue or no cursor).
+pub fn next_on_end(len: usize, cursor: Option<usize>, repeat: RepeatMode) -> Option<usize> {
+    let cursor = cursor.filter(|&c| c < len)?;
+    match repeat {
+        RepeatMode::Track => Some(cursor),
+        _ if cursor + 1 < len => Some(cursor + 1),
+        RepeatMode::Queue => Some(0),
+        RepeatMode::Off => None,
+    }
+}
+
+/// Position after `cursor` when the user presses Next: like [`next_on_end`], but repeat-one moves on as well (it
+/// only loops a song that ends by itself) and wraps around at the end of the queue.
+pub fn next_on_skip(len: usize, cursor: Option<usize>, repeat: RepeatMode) -> Option<usize> {
+    let cursor = cursor.filter(|&c| c < len)?;
+    if cursor + 1 < len {
+        Some(cursor + 1)
+    } else if repeat == RepeatMode::Off {
+        None
+    } else {
+        Some(0)
+    }
+}
+
+/// Shuffles `order` and puts the current song first. Returns the new order and cursor (0, or `None` when there
+/// was no valid cursor: then the whole order is shuffled). `shuffle` performs the in-place shuffle.
+pub fn shuffle_keeping_current(
+    order: &[usize],
+    cursor: Option<usize>,
+    shuffle: impl FnOnce(&mut [usize]),
+) -> (Vec<usize>, Option<usize>) {
+    let mut rest = order.to_vec();
+    let Some(current) = cursor.filter(|&c| c < rest.len()).map(|c| rest.remove(c)) else {
+        shuffle(&mut rest);
+        return (rest, None);
+    };
+    shuffle(&mut rest);
+    rest.insert(0, current);
+    (rest, Some(0))
+}
+
+/// Undoes a shuffle: the queue plays in its original order again and the cursor follows the current song.
+pub fn unshuffle(order: &[usize], cursor: Option<usize>) -> (Vec<usize>, Option<usize>) {
+    let current = cursor.and_then(|c| order.get(c).copied());
+    let mut sorted = order.to_vec();
+    sorted.sort_unstable();
+    let new_cursor = current.and_then(|song| sorted.iter().position(|&s| s == song));
+    (sorted, new_cursor)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{move_positions, remove_positions};
+    use super::{
+        clamp_start, index_after_filter, move_positions, next_on_end, next_on_skip, remove_positions,
+        shuffle_keeping_current, unshuffle,
+    };
+    use crate::audio::player::RepeatMode;
 
     /// Deterministic permutation of 0..len that is not the identity for len >= 2.
     fn shuffled(len: usize) -> Vec<usize> {
@@ -93,6 +163,189 @@ mod tests {
 
     fn cursors_for(len: usize) -> Vec<Option<usize>> {
         std::iter::once(None).chain((0..len).map(Some)).collect()
+    }
+
+    // ---- index_after_filter ----
+
+    #[test]
+    fn index_after_filter_all_resolved_keeps_index() {
+        assert_eq!(index_after_filter(&[true, true, true], 1), 1);
+    }
+
+    #[test]
+    fn index_after_filter_dropped_requested_entry_moves_to_next_survivor() {
+        // entry 1 was dropped; the next surviving song is at survivor position 1
+        assert_eq!(index_after_filter(&[true, false, true], 1), 1);
+    }
+
+    #[test]
+    fn index_after_filter_dropped_entries_before_index_shift_it_down() {
+        // entry 0 was dropped, so the requested entry 2 is survivor position 1
+        assert_eq!(index_after_filter(&[false, true, true], 2), 1);
+    }
+
+    #[test]
+    fn index_after_filter_index_past_end_gives_last_survivor() {
+        assert_eq!(index_after_filter(&[true, true], 5), 1);
+    }
+
+    #[test]
+    fn index_after_filter_nothing_resolved_or_empty_gives_zero() {
+        assert_eq!(index_after_filter(&[false, false], 1), 0);
+        assert_eq!(index_after_filter(&[], 0), 0);
+    }
+
+    // ---- clamp_start ----
+
+    #[test]
+    fn clamp_start_empty_queue_is_none() {
+        assert_eq!(clamp_start(0, 0), None);
+        assert_eq!(clamp_start(0, 3), None);
+    }
+
+    #[test]
+    fn clamp_start_index_inside_is_kept() {
+        assert_eq!(clamp_start(5, 2), Some(2));
+        assert_eq!(clamp_start(5, 4), Some(4));
+    }
+
+    #[test]
+    fn clamp_start_index_at_or_past_len_gives_last() {
+        assert_eq!(clamp_start(5, 5), Some(4));
+        assert_eq!(clamp_start(3, 99), Some(2));
+    }
+
+    // ---- next_on_end / next_on_skip ----
+
+    const ALL_REPEAT: [RepeatMode; 3] = [RepeatMode::Off, RepeatMode::Track, RepeatMode::Queue];
+
+    #[test]
+    fn next_on_end_middle_of_queue() {
+        assert_eq!(next_on_end(5, Some(2), RepeatMode::Off), Some(3));
+        assert_eq!(next_on_end(5, Some(2), RepeatMode::Queue), Some(3));
+        // repeat-one loops the same song when it ends
+        assert_eq!(next_on_end(5, Some(2), RepeatMode::Track), Some(2));
+    }
+
+    #[test]
+    fn next_on_end_last_song() {
+        assert_eq!(next_on_end(3, Some(2), RepeatMode::Off), None);
+        assert_eq!(next_on_end(3, Some(2), RepeatMode::Queue), Some(0));
+        assert_eq!(next_on_end(3, Some(2), RepeatMode::Track), Some(2));
+    }
+
+    #[test]
+    fn next_on_end_single_song_queue() {
+        assert_eq!(next_on_end(1, Some(0), RepeatMode::Off), None);
+        assert_eq!(next_on_end(1, Some(0), RepeatMode::Queue), Some(0));
+        assert_eq!(next_on_end(1, Some(0), RepeatMode::Track), Some(0));
+    }
+
+    #[test]
+    fn next_on_skip_middle_of_queue_moves_on_for_every_mode() {
+        for repeat in ALL_REPEAT {
+            assert_eq!(next_on_skip(5, Some(2), repeat), Some(3), "{repeat:?}");
+        }
+    }
+
+    #[test]
+    fn next_on_skip_last_song() {
+        assert_eq!(next_on_skip(3, Some(2), RepeatMode::Off), None);
+        assert_eq!(next_on_skip(3, Some(2), RepeatMode::Queue), Some(0));
+        // repeat-one moves on when the user skips, so it wraps like repeat-all
+        assert_eq!(next_on_skip(3, Some(2), RepeatMode::Track), Some(0));
+    }
+
+    #[test]
+    fn next_on_skip_single_song_queue() {
+        assert_eq!(next_on_skip(1, Some(0), RepeatMode::Off), None);
+        assert_eq!(next_on_skip(1, Some(0), RepeatMode::Queue), Some(0));
+        assert_eq!(next_on_skip(1, Some(0), RepeatMode::Track), Some(0));
+    }
+
+    #[test]
+    fn next_without_cursor_out_of_range_or_empty_queue_is_none() {
+        for repeat in ALL_REPEAT {
+            assert_eq!(next_on_end(3, None, repeat), None, "{repeat:?}");
+            assert_eq!(next_on_skip(3, None, repeat), None, "{repeat:?}");
+            assert_eq!(next_on_end(3, Some(3), repeat), None, "{repeat:?}");
+            assert_eq!(next_on_skip(3, Some(10), repeat), None, "{repeat:?}");
+            assert_eq!(next_on_end(0, Some(0), repeat), None, "{repeat:?}");
+            assert_eq!(next_on_skip(0, Some(0), repeat), None, "{repeat:?}");
+        }
+    }
+
+    // ---- shuffle_keeping_current ----
+
+    fn reverse(v: &mut [usize]) {
+        v.reverse();
+    }
+
+    #[test]
+    fn shuffle_keeping_current_puts_current_song_first() {
+        // current song is order[1] = 20
+        let (order, cursor) = shuffle_keeping_current(&[10, 20, 30, 40], Some(1), reverse);
+        assert_eq!(cursor, Some(0));
+        assert_eq!(order[0], 20);
+        assert_eq!(order, vec![20, 40, 30, 10]);
+    }
+
+    #[test]
+    fn shuffle_keeping_current_result_is_a_permutation() {
+        let input = vec![5, 3, 8, 1, 9];
+        let (order, cursor) = shuffle_keeping_current(&input, Some(3), reverse);
+        assert_eq!(sorted(order.clone()), sorted(input.clone()));
+        assert_eq!(order[cursor.unwrap()], input[3]);
+    }
+
+    #[test]
+    fn shuffle_keeping_current_without_cursor_shuffles_everything() {
+        let (order, cursor) = shuffle_keeping_current(&[1, 2, 3], None, reverse);
+        assert_eq!(order, vec![3, 2, 1]);
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
+    fn shuffle_keeping_current_out_of_range_cursor_shuffles_everything() {
+        let (order, cursor) = shuffle_keeping_current(&[1, 2, 3], Some(5), reverse);
+        assert_eq!(order, vec![3, 2, 1]);
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
+    fn shuffle_keeping_current_empty_order() {
+        assert_eq!(shuffle_keeping_current(&[], None, reverse), (vec![], None));
+        assert_eq!(shuffle_keeping_current(&[], Some(0), reverse), (vec![], None));
+    }
+
+    // ---- unshuffle ----
+
+    #[test]
+    fn unshuffle_restores_sorted_order_and_follows_current_song() {
+        // current song is order[0] = 3, which sits at position 3 of the sorted order
+        assert_eq!(unshuffle(&[3, 0, 2, 1], Some(0)), (vec![0, 1, 2, 3], Some(3)));
+    }
+
+    #[test]
+    fn unshuffle_without_cursor_stays_none() {
+        assert_eq!(unshuffle(&[2, 0, 1], None), (vec![0, 1, 2], None));
+    }
+
+    #[test]
+    fn unshuffle_out_of_range_cursor_gives_none() {
+        assert_eq!(unshuffle(&[2, 0, 1], Some(7)), (vec![0, 1, 2], None));
+    }
+
+    #[test]
+    fn unshuffle_order_that_is_not_zero_based() {
+        // sorted: [2, 7, 9]; the current song 7 is now at position 1
+        assert_eq!(unshuffle(&[7, 2, 9], Some(0)), (vec![2, 7, 9], Some(1)));
+        assert_eq!(unshuffle(&[7, 2, 9], Some(2)), (vec![2, 7, 9], Some(2)));
+    }
+
+    #[test]
+    fn unshuffle_empty_order() {
+        assert_eq!(unshuffle(&[], Some(0)), (vec![], None));
     }
 
     // ---- remove_positions ----

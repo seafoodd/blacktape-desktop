@@ -51,6 +51,7 @@ export const PlayerControls = () => {
     toggleShuffle,
     cycleRepeatMode,
     repeatMode,
+    playbackError,
   } = useAudioStore();
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [mutedVolume, setMutedVolume] = useState<number>(volume);
@@ -199,7 +200,12 @@ export const PlayerControls = () => {
                 <div className={clsx(styles.currentSongTitle, "truncate")}>
                   {currentSong.title}
                 </div>
-                <div className={clsx(styles.currentSongArtist, "truncate")}>
+                {playbackError && (
+                  <div className={clsx(styles.playbackError, "truncate")} title={playbackError.message}>
+                    Can't play this song: {playbackError.message}
+                  </div>
+                )}
+                <div className={clsx(styles.currentSongArtist, "truncate", playbackError && styles.hidden)}>
                   {isStreaming && (
                     <span
                       className={styles.streamBadge}

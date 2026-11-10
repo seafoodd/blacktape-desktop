@@ -37,7 +37,7 @@ use crate::playlists::commands::{
 use crate::search::full::{ArtistProfile, FullSearchPage, SearchCursor, SearchKind};
 use crate::search::SearchSuggestion;
 use crate::types::{Album, ArtistSummary, DownloadType, Platform};
-use audio::player::AudioPlayer;
+use audio::player::{lock_player, AudioPlayer, MAX_IN_MEMORY_BYTES};
 use std::error::Error;
 use std::sync::Mutex;
 use tauri::{
@@ -341,10 +341,9 @@ async fn delete_lyrics(
 
 /// Pushes edited metadata to the player (current song, queue, media controls).
 fn refresh_player_songs(player_state: &Mutex<AudioPlayer>, songs: &[Song]) {
-    if let Ok(mut player) = player_state.lock() {
-        for song in songs {
-            player.refresh_song_metadata(song);
-        }
+    let mut player = lock_player(player_state);
+    for song in songs {
+        player.refresh_song_metadata(song);
     }
 }
 
@@ -374,15 +373,33 @@ fn write_song_in_place(
     id: i64,
     info: &song_edit::SongInfo,
 ) -> Result<(), String> {
+    // The file of the playing song is copied into memory BEFORE taking the player lock: reading a large file
+    // must not block the player (and every command waiting for it). Very large files are not copied.
+    let current_file = lock_player(player).current_file_of(id);
+    let is_current = current_file.is_some();
+    let bytes = current_file.and_then(|path| match std::fs::metadata(&path) {
+        Ok(meta) if meta.len() <= MAX_IN_MEMORY_BYTES => std::fs::read(&path)
+            .map_err(|e| eprintln!("[tag edit] cannot read {path} into memory: {e}"))
+            .ok(),
+        Ok(_) => None,
+        Err(e) => {
+            eprintln!("[tag edit] cannot inspect {path}: {e}");
+            None
+        }
+    });
     {
         // The lock is held for the whole write so the player's background watchers
         // cannot react to the temporarily empty queue.
-        let mut p = player
-            .lock()
-            .map_err(|_| "Player lock poisoned".to_string())?;
-        // Preferred: keep playing from an in-memory copy (no gap). If that is not
+        let mut p = lock_player(player);
+        // Preferred: keep playing from the in-memory copy (no gap). If that is not
         // possible, fall back to closing the file and resuming afterwards.
-        let suspended = match p.move_song_to_memory(id) {
+        let handover = match bytes {
+            Some(bytes) => p.move_song_to_memory(id, bytes),
+            None if is_current => Err("no in-memory copy of the file".to_string()),
+            // not the playing song: nothing holds its file open
+            None => Ok(()),
+        };
+        let suspended = match handover {
             Ok(()) => None,
             Err(e) => {
                 eprintln!("[tag edit] in-memory handover failed ({e}); falling back");
@@ -503,9 +520,7 @@ async fn delete_songs(
         .filter(|s| s.id.is_some_and(|id| outcome.deleted_ids.contains(&id)))
         .cloned()
         .collect();
-    if let Ok(mut p) = player.lock() {
-        p.streamify_deleted(&removed);
-    }
+    lock_player(&player).streamify_deleted(&removed);
 
     if outcome.failures.is_empty() {
         Ok(())
@@ -771,9 +786,7 @@ pub fn run() {
                 let handle = app_handle.clone();
                 app.listen(event, move |_| {
                     let binding = handle.state::<Mutex<AudioPlayer>>();
-                    let mut player = binding.lock().expect("Failed to lock audio player");
-
-                    action(&mut player);
+                    action(&mut lock_player(&binding));
                 });
             };
             register("media-resume", AudioPlayer::resume);

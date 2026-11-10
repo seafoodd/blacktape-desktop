@@ -6,7 +6,7 @@
 //! wrappers at the bottom. The core locks the DB only for DB steps, never for file IO,
 //! so a slow cross-drive copy does not block other commands.
 
-use crate::audio::player::AudioPlayer;
+use crate::audio::player::{lock_player, AudioPlayer};
 use crate::db::db::{Database, TrashRow};
 use crate::types::Song;
 use crate::utils::set_hidden;
@@ -606,7 +606,7 @@ fn skip_past(ids: &[i64], mut current: impl FnMut() -> Option<i64>, mut next: im
 /// about to be trashed (D9). A paused player stays paused on the next track. Queued copies are left alone, like
 /// `delete_songs`.
 fn stop_if_playing(player: &Mutex<AudioPlayer>, ids: &[i64]) {
-    let Ok(mut p) = player.lock() else { return };
+    let p = lock_player(player);
     if !p.current_song_id().is_some_and(|id| ids.contains(&id)) {
         return;
     }
