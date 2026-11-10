@@ -20,6 +20,10 @@ pub struct RemoteRef {
     pub artist: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+    /// Album of a TRACK, when the UI knows it. The artist + title match then only counts songs of that album: a
+    /// live or compilation version of a song the library has from another album is not "downloaded".
+    #[serde(default)]
+    pub album: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -46,6 +50,19 @@ pub struct LibraryIndex {
     /// Normalized titles (see `candidates::normalize_text`) of the library songs by normalized album artist,
     /// for the fuzzy title match of songs that have no page url.
     pub titles: HashMap<String, Vec<String>>,
+}
+
+/// True when `slugs` has the slug of `artist title`, or of the first artist of a track credited to several
+/// artists ("A, B"), which is how the library files it. Pure.
+pub fn slugs_contain(slugs: &HashSet<String>, artist: &str, title: &str) -> bool {
+    if slugs.is_empty() || title.trim().is_empty() {
+        return false;
+    }
+    let first = artist.split(',').next().unwrap_or(artist);
+    [artist, first]
+        .iter()
+        .filter(|a| !a.trim().is_empty())
+        .any(|a| slugs.contains(&make_canonical_slug(a, title)))
 }
 
 /// 0..=1 similarity of two strings by edit distance (1 = equal).
@@ -134,14 +151,7 @@ impl LibraryIndex {
     /// True when the library has a song with this artist and title (slug of `artist title`). A track credited to
     /// several artists ("A, B") is also tried with its first artist, which is how the library files it.
     pub fn contains_by_meta(&self, artist: &str, title: &str) -> bool {
-        if self.slugs.is_empty() || title.trim().is_empty() {
-            return false;
-        }
-        let first = artist.split(',').next().unwrap_or(artist);
-        [artist, first]
-            .iter()
-            .filter(|a| !a.trim().is_empty())
-            .any(|a| self.slugs.contains(&make_canonical_slug(a, title)))
+        slugs_contain(&self.slugs, artist, title)
     }
 
     /// True when the remote track is in the library (by url key, else by youtube item id).
@@ -381,5 +391,37 @@ mod tests {
             .with_titles([("A".to_string(), "Song Title".to_string())]);
         assert!(index.contains_by_fuzzy_title("A, B", "Song Title"));
         assert!(!index.contains_by_fuzzy_title("B, C", "Song Title"));
+    }
+
+    // ---- slugs_contain
+
+    fn slugs_of(artist: &str, title: &str) -> HashSet<String> {
+        HashSet::from([make_canonical_slug(artist, title)])
+    }
+
+    #[test]
+    fn slugs_contain_finds_the_exact_artist_and_title() {
+        assert!(slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_finds_the_first_of_several_artists() {
+        assert!(slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath, Ozzy Osbourne", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_an_empty_set() {
+        assert!(!slugs_contain(&HashSet::new(), "Black Sabbath", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_an_empty_title() {
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath", "   "));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_another_artist() {
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Other Artist", "Iron Man"));
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Other Artist, Someone", "Iron Man"));
     }
 }

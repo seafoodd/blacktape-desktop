@@ -16,6 +16,11 @@ export interface RemoteRef {
   /** Artist and title of a track: lets the backend recognise songs downloaded before the library kept page urls. */
   artist?: string;
   title?: string;
+  /**
+   * Album of a track, when known: the artist + title match then only counts songs of that album, so a live or
+   * compilation version of a song the library has from another album is not "downloaded".
+   */
+  album?: string;
 }
 
 export interface AlbumStatus {

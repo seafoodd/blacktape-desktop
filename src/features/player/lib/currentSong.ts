@@ -49,4 +49,5 @@ export const remoteTrackRef = (track: RemoteTrack): RemoteRef => ({
   url: track.url,
   artist: track.artist,
   title: track.title,
+  album: track.album || undefined,
 });

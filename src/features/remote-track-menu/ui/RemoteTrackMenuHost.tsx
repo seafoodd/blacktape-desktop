@@ -56,6 +56,7 @@ const OpenMenu = ({ track, options, position, onClose }: OpenMenuProps) => {
     url: track.url,
     artist: track.artist,
     title: track.title,
+    album: track.album || undefined,
   });
   const downloadState = options.downloadState ?? libraryState;
   return (

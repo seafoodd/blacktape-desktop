@@ -22,11 +22,13 @@ export const remoteRefOf = (item: {
   item_url_path: string;
   name?: string;
   band_name?: string;
+  album_name?: string | null;
 }): RemoteRef => ({
   platform: item.platform,
   url: item.item_url_path,
   artist: item.band_name,
   title: item.name,
+  album: item.album_name || undefined,
 });
 
 /** Identity of a ref list by its urls: the same urls in the same order give the same string. */
