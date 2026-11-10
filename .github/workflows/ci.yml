@@ -15,6 +15,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # audiopus_sys bundles an old Opus CMakeLists that newer CMake rejects
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
 jobs:
   frontend:
     name: Frontend (Build & Vitest)
@@ -66,4 +70,4 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml
 
       - name: Cargo Test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml

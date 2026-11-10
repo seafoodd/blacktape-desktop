@@ -10,6 +10,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # audiopus_sys bundles an old Opus CMakeLists that newer CMake rejects
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
 jobs:
   publish-tauri:
     name: Build & Publish Tauri App
