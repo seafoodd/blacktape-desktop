@@ -1,3 +1,4 @@
+import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
@@ -301,7 +302,7 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                         [styles.artist]:
                           suggestion.item_type === ItemType.Artist,
                       })}
-                      src={suggestion.img}
+                      src={coverSrc(suggestion.img, 56)}
                       referrerPolicy="no-referrer"
                       alt="cover"
                     />

@@ -87,7 +87,7 @@ export const ArtistProfileCard = ({ artist, profile, downloads }: ArtistProfileC
             loading="lazy"
           />
         )}
-        <Cover src={avatar} alt={name} className={styles.profileAvatar} />
+        <Cover src={avatar} alt={name} className={styles.profileAvatar} size={64} />
         <div className={styles.profileInfo}>
           <div className={styles.profileTitleRow}>
             <h3 className={clsx(styles.profileName, styles.ellipsis)} title={name}>
