@@ -25,7 +25,7 @@ use crate::audio::commands::{
     toggle_shuffle,
 };
 use crate::audio::media_controls::MediaControls;
-use crate::auth::youtube::{check_auth_status, cookies_are_ready, launch_youtube_login};
+use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
 use crate::db::schema::get_migrations;
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
@@ -889,7 +889,9 @@ pub fn run() {
             // Auth
             launch_youtube_login,
             cookies_are_ready,
-            check_auth_status,
+            auth::account::account_status,
+            auth::account::account_connect,
+            auth::account::account_disconnect,
             // Playlists
             create_playlist,
             get_all_playlists,
