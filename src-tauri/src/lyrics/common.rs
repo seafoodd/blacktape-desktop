@@ -7,7 +7,13 @@ use std::time::Duration;
 
 pub const BROWSER_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-pub const APP_USER_AGENT: &str = "Blacktape/0.3.0 (https://github.com/seafood/blacktape)";
+/// Identifies the app to open APIs (LRCLIB, later MusicBrainz), which ask for name, version and a contact url.
+/// The version follows Cargo.toml, so it never goes stale.
+pub const APP_USER_AGENT: &str = concat!(
+    "Blacktape/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/seafoodd/blacktape-desktop)"
+);
 
 /// Hard cap on any single provider response body.
 pub const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;

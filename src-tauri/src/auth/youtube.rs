@@ -76,15 +76,25 @@ pub async fn launch_youtube_login(
         .focused(force_visible)
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
         .initialization_script(r#"
-        // Listen for internal state reports from frontend
+        // Listen for internal state reports from frontend. Only this page's own message counts (posted by the
+        // check below on www.youtube.com): an embedded frame, such as an ad, cannot hand over cookies of its own.
         window.addEventListener("message", (event) => {
+            if (event.source !== window || event.origin !== "https://www.youtube.com") {
+                return;
+            }
             if (event.data && event.data.type === "BLACKTAPE_COOKIE_EXPORT") {
                 window.location.href = "tauri://save-cookies?data=" + encodeURIComponent(event.data.cookies);
             }
         });
     "#)
         .on_navigation(move |url| {
-            println!("[blacktape::auth] Navigating to: {}", url);
+            // Without the query: it carries the exported cookies (tauri://save-cookies) and Google's sign-in tokens.
+            println!(
+                "[blacktape::auth] Navigating to: {}://{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or_default(),
+                url.path()
+            );
             let host = url.host_str();
 
             // 1. Intercept cookie save request after successful auth check

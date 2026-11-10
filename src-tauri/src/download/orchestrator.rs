@@ -203,6 +203,10 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     cleanup_staging_dir(&downloaded_files);
 
     if !new_songs.is_empty() {
+        // The new covers may sit outside the folders the interface can read yet (another download folder).
+        for dir in crate::asset_scope::cover_dirs(new_songs.iter().filter_map(|s| s.cover_url.as_deref())) {
+            crate::asset_scope::allow_dir(&app_handle, &dir, false);
+        }
         let db_state = app_handle.state::<tokio::sync::Mutex<Database>>();
         let db = db_state.lock().await;
         println!("Inserting songs to db: {new_songs:?}");

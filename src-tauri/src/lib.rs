@@ -1,3 +1,4 @@
+pub(crate) mod asset_scope;
 pub mod audio;
 pub mod auth;
 pub mod db;
@@ -89,6 +90,7 @@ async fn scan_music(
     db.set_app_setting(trash::LIBRARY_DIR_KEY, &dir)
         .await
         .map_err(|e| e.to_string())?;
+    asset_scope::allow_dir(&app, std::path::Path::new(&dir), true);
 
     let db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
     Ok(db_songs)
@@ -719,8 +721,20 @@ pub fn run() {
                 .ok()
                 .map(|d| d.join("thumbs"));
             let uri = request.uri().clone();
+            let origin = request
+                .headers()
+                .get(tauri::http::header::ORIGIN)
+                .and_then(|o| o.to_str().ok())
+                .map(str::to_string);
+            let app = ctx.app_handle().clone();
             thumbs::spawn_job(move || {
-                responder.respond(thumbs::handle(cache_dir, uri.path(), uri.query()));
+                responder.respond(thumbs::handle(
+                    cache_dir,
+                    uri.path(),
+                    uri.query(),
+                    origin.as_deref(),
+                    |path| asset_scope::is_allowed(&app, path),
+                ));
             });
         })
         .plugin(
@@ -750,6 +764,17 @@ pub fn run() {
             let db_path = app_dir.join("blacktape.db");
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
             let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
+            // The interface reads covers only from the library and the folders of known covers.
+            let (library_dir, cover_paths) = tauri::async_runtime::block_on(async {
+                let library_dir = db.get_app_setting(trash::LIBRARY_DIR_KEY).await.ok().flatten();
+                let covers: Vec<String> = db
+                    .get_all_songs()
+                    .await
+                    .map(|songs| songs.into_iter().filter_map(|s| s.cover_url).collect())
+                    .unwrap_or_default();
+                (library_dir, covers)
+            });
+            asset_scope::allow_known_dirs(&app_handle, library_dir.as_deref(), &cover_paths);
             app.manage(tokio::sync::Mutex::new(db));
             trash::spawn_auto_clean(app_handle.clone());
 

@@ -1,26 +1,6 @@
-use crate::download::{ytdlp, AlbumDownload, TrackDownload};
+use crate::download::{AlbumDownload, TrackDownload};
 use crate::utils::sanitize_fs;
 use rustypipe::client::RustyPipe;
-use tauri::AppHandle;
-
-/// Extracts streaming URL of a single YouTube track
-pub async fn extract_streaming_url(app: &AppHandle, yt_url: &str) -> Result<String, String> {
-    let args = [
-        "--no-playlist",
-        "-g",
-        "--format-sort",
-        "hasaud,acodec,abr,channels,asr,aext",
-        "-f",
-        "bestaudio",
-        "--ignore-errors",
-        "--no-warnings",
-        "--cookies",
-        "C:\\Users\\seafood\\Downloads\\youtube.txt",
-        yt_url,
-    ];
-
-    ytdlp::execute(app, &args).await
-}
 
 /// Extracts the YouTube 11-character video ID from various URL formats or raw ID strings.
 pub fn extract_video_id(url: &str) -> Result<String, String> {
