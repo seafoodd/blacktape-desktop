@@ -72,6 +72,7 @@ jobs:
         run: npm ci
 
       - name: Build and Release with Tauri Action
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,8 +83,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: "Blacktape v__VERSION__"
-          releaseBody: "See the assets below to download and install Blacktape v__VERSION__."
+          releaseName: "v__VERSION__"
+          releaseBody: "Release notes are added when the build finishes."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -91,3 +92,36 @@ jobs:
           # Generates and attaches latest.json with signatures (.sig) to the GitHub release
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
+
+      # A single exe next to nothing else: unzip anywhere and run, no installer.
+      - name: Add the portable build
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ steps.tauri.outputs.appVersion }}"
+          $dir = "Blacktape_${version}_x64_portable"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item src-tauri/target/release/blacktape-desktop.exe "$dir/Blacktape.exe"
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
+          gh release upload "v$version" "$dir.zip" --clobber
+
+  finalize:
+    name: Release notes
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # "What's Changed" and "Full Changelog" (compare with the previous release), as GitHub generates them.
+      - name: Write the release notes
+        run: |
+          tag="v$(jq -r .version package.json)"
+          gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name="$tag" --jq .body > notes.md
+          gh release edit "$tag" --notes-file notes.md
