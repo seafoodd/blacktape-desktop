@@ -313,6 +313,7 @@ pub fn youtube_args(clients: &str) -> Vec<String> {
         "urls",
     ]
     .iter()
+    .chain(crate::download::ytdlp::SYSTEM_CERTIFICATES.iter())
     .map(|s| s.to_string())
     .collect()
 }
@@ -356,6 +357,8 @@ pub fn wait_before_open(info: &StreamInfo, now_unix: f64) -> Duration {
 }
 
 async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
+    // Only a web address reaches yt-dlp (also through the pre-started process's stdin).
+    let url = crate::download::ytdlp::checked_url(url)?;
     // 1. Fast path: the pre-started yt-dlp process (interpreter already loaded) with the fast client.
     let fast = match spare::take(app).await {
         Some(child) => spare::feed(child, url).await,

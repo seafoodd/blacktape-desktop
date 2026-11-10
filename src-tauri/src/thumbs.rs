@@ -227,22 +227,51 @@ pub fn spawn_job(job: impl FnOnce() + Send + 'static) {
     POOL.spawn(job);
 }
 
-/// Entry point for the `thumb` URI scheme handler.
-pub fn handle(cache_dir: Option<PathBuf>, uri_path: &str, query: Option<&str>) -> Response<Vec<u8>> {
+/// The app's own page origins (Windows/Android, macOS/Linux, and `tauri dev`): only they may read a thumbnail's
+/// pixels (the dominant-colour hook draws covers on a canvas), never a web page in another window.
+const APP_ORIGINS: [&str; 4] = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+    "http://localhost:1420",
+];
+
+/// The `Access-Control-Allow-Origin` value for a request from `origin`: the origin itself when it is the app's. Pure.
+pub fn cors_origin(origin: Option<&str>) -> Option<&str> {
+    origin.filter(|o| APP_ORIGINS.contains(o))
+}
+
+/// Entry point for the `thumb` URI scheme handler. `allowed` says whether the interface may read the requested
+/// file (the asset scope); `origin` is the requesting page's `Origin` header.
+pub fn handle(
+    cache_dir: Option<PathBuf>,
+    uri_path: &str,
+    query: Option<&str>,
+    origin: Option<&str>,
+    allowed: impl Fn(&Path) -> bool,
+) -> Response<Vec<u8>> {
     let Some((path, size)) = parse_request(uri_path, query) else {
         return error_response(StatusCode::BAD_REQUEST);
     };
+    if !allowed(&path) {
+        return error_response(StatusCode::FORBIDDEN);
+    }
     let Some(cache_dir) = cache_dir else {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR);
     };
     match get_or_create(&cache_dir, &path, size) {
-        Ok(r) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, r.mime)
-            .header(header::CACHE_CONTROL, "public, max-age=600")
-            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-            .body(r.bytes)
-            .unwrap_or_default(),
+        Ok(r) => {
+            let mut builder = Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, r.mime)
+                .header(header::CACHE_CONTROL, "public, max-age=600");
+            if let Some(origin) = cors_origin(origin) {
+                builder = builder
+                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin)
+                    .header(header::VARY, "Origin");
+            }
+            builder.body(r.bytes).unwrap_or_default()
+        }
         Err(_) => error_response(StatusCode::NOT_FOUND),
     }
 }
@@ -488,7 +517,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("cache");
         let src = write_image(dir.path(), "big.png", 800, 600);
-        let resp = handle(Some(cache), &format!("/{}", encode(&src)), Some("s=192"));
+        let resp = handle(Some(cache), &format!("/{}", encode(&src)), Some("s=192"), None, |_| true);
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CONTENT_TYPE).unwrap(),
@@ -501,7 +530,7 @@ mod tests {
     fn handle_returns_400_for_bad_path() {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("cache");
-        let resp = handle(Some(cache), "/cover.jpg", None);
+        let resp = handle(Some(cache), "/cover.jpg", None, None, |_| true);
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -510,7 +539,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("cache");
         let missing = dir.path().join("missing.jpg");
-        let resp = handle(Some(cache), &format!("/{}", encode(&missing)), Some("s=192"));
+        let resp = handle(Some(cache), &format!("/{}", encode(&missing)), Some("s=192"), None, |_| true);
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -518,8 +547,59 @@ mod tests {
     fn handle_returns_500_without_cache_dir() {
         let dir = tempfile::tempdir().unwrap();
         let src = write_image(dir.path(), "big.png", 800, 600);
-        let resp = handle(None, &format!("/{}", encode(&src)), Some("s=192"));
+        let resp = handle(None, &format!("/{}", encode(&src)), Some("s=192"), None, |_| true);
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn cors_origin_echoes_only_app_origins() {
+        assert_eq!(cors_origin(Some("http://tauri.localhost")), Some("http://tauri.localhost"));
+        assert_eq!(cors_origin(Some("https://www.youtube.com")), None);
+        assert_eq!(cors_origin(None), None);
+    }
+
+    #[test]
+    fn handle_returns_403_when_the_asset_scope_refuses_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let src = write_image(dir.path(), "big.png", 800, 600);
+        let resp = handle(Some(cache), &format!("/{}", encode(&src)), Some("s=192"), None, |_| false);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn handle_allows_the_app_origin_in_cors_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let src = write_image(dir.path(), "big.png", 800, 600);
+        let resp = handle(
+            Some(cache),
+            &format!("/{}", encode(&src)),
+            Some("s=192"),
+            Some("http://tauri.localhost"),
+            |_| true,
+        );
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "http://tauri.localhost"
+        );
+    }
+
+    #[test]
+    fn handle_omits_cors_header_for_foreign_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let src = write_image(dir.path(), "big.png", 800, 600);
+        let resp = handle(
+            Some(cache),
+            &format!("/{}", encode(&src)),
+            Some("s=192"),
+            Some("https://evil.com"),
+            |_| true,
+        );
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
     }
 }
 

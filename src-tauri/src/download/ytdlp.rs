@@ -1,5 +1,6 @@
 use crate::download::{ProgressEvent, TrackDownload};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,23 @@ pub fn get_path(app: &AppHandle) -> PathBuf {
     path
 }
 
+/// The release asset listing the SHA-256 of every yt-dlp binary ("<hex>  <file name>" per line).
+const CHECKSUMS_ASSET: &str = "SHA2-256SUMS";
+
+/// The lowercase SHA-256 that `sums` (the SHA2-256SUMS file) lists for `asset`, if it lists one. Pure.
+fn expected_sha256(sums: &str, asset: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (hash, name) = line.trim().split_once(char::is_whitespace)?;
+        let name = name.trim().trim_start_matches('*'); // "*name" marks binary mode in sha256sum output
+        let valid = hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit());
+        (name == asset && valid).then(|| hash.to_ascii_lowercase())
+    })
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent("blacktape-desktop")
@@ -70,35 +88,81 @@ pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         let target_asset = "yt-dlp";
 
-        let asset = response
-            .assets
-            .iter()
-            .find(|a| a.name == target_asset)
-            .ok_or_else(|| "Binary asset not found in GitHub response".to_string())?;
+        let asset_url = |name: &str| {
+            response
+                .assets
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| a.browser_download_url.clone())
+                .ok_or_else(|| format!("{name} not found in the yt-dlp release"))
+        };
+        let binary_url = asset_url(target_asset)?;
+        let sums_url = asset_url(CHECKSUMS_ASSET)?;
 
-        let mut download_resp = client
-            .get(&asset.browser_download_url)
+        // The published checksum comes first: no binary is written without one to compare with.
+        let sums = client
+            .get(&sums_url)
             .send()
             .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .text()
+            .await
+            .map_err(|e| e.to_string())?;
+        let expected = expected_sha256(&sums, target_asset)
+            .ok_or_else(|| format!("{CHECKSUMS_ASSET} has no checksum for {target_asset}"))?;
+
+        let mut download_resp = client
+            .get(&binary_url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
             .map_err(|e| e.to_string())?;
 
         if let Some(parent) = binary_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
-        let mut file = File::create(&binary_path).map_err(|e| e.to_string())?;
-        while let Some(chunk) = download_resp.chunk().await.map_err(|e| e.to_string())? {
-            file.write_all(&chunk).map_err(|e| e.to_string())?;
+        // Downloaded next to the binary and swapped in only once its checksum matches: an interrupted or
+        // tampered download never replaces a working yt-dlp.
+        let partial_path = binary_path.with_extension("download");
+        let written: Result<String, String> = async {
+            let mut file = File::create(&partial_path).map_err(|e| e.to_string())?;
+            let mut hasher = Sha256::new();
+            while let Some(chunk) = download_resp.chunk().await.map_err(|e| e.to_string())? {
+                hasher.update(&chunk);
+                file.write_all(&chunk).map_err(|e| e.to_string())?;
+            }
+            file.sync_all().map_err(|e| e.to_string())?;
+            Ok(to_hex(&hasher.finalize()))
+        }
+        .await;
+        let verified = written.and_then(|actual| {
+            if actual == expected {
+                Ok(())
+            } else {
+                Err(format!("yt-dlp checksum mismatch: expected {expected}, got {actual}"))
+            }
+        });
+        if let Err(e) = verified {
+            let _ = fs::remove_file(&partial_path);
+            return Err(e);
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&binary_path)
+            let mut perms = fs::metadata(&partial_path)
                 .map_err(|e| e.to_string())?
                 .permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&binary_path, perms).map_err(|e| e.to_string())?;
+            fs::set_permissions(&partial_path, perms).map_err(|e| e.to_string())?;
+        }
+
+        if let Err(e) = fs::rename(&partial_path, &binary_path) {
+            // e.g. the old yt-dlp is running (Windows locks it): keep it and try again on the next start.
+            let _ = fs::remove_file(&partial_path);
+            return Err(format!("cannot replace yt-dlp: {e}"));
         }
 
         fs::write(&version_file, &latest_version).map_err(|e| e.to_string())?;
@@ -153,7 +217,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
             "[ytdlp::execute ERROR] Subprocess error message: {}",
             err_msg
         );
-        Err(err_msg)
+        Err(certificate_hint(&err_msg).map_or(err_msg, str::to_string))
     }
 }
 
@@ -196,12 +260,126 @@ struct DownloadContext {
 /// The line of yt-dlp's stderr that says why it failed ("ERROR: [Bandcamp] 1: No video formats found!"), else the
 /// last non-empty line, else the exit code. Pure.
 fn failure_reason(stderr: &str, code: Option<i32>) -> String {
+    if let Some(hint) = certificate_hint(stderr) {
+        return hint.to_string();
+    }
     let lines = stderr.lines().map(str::trim).filter(|l| !l.is_empty());
     let error = lines.clone().rev().find(|l| l.starts_with("ERROR:"));
     match error.or_else(|| lines.last()) {
         Some(line) => line.to_string(),
         None => format!("yt-dlp exited with code {}", code.map_or("?".to_string(), |c| c.to_string())),
     }
+}
+
+/// What the user reads when yt-dlp cannot verify a site's certificate; `None` for other errors. Pure.
+pub fn certificate_hint(stderr: &str) -> Option<&'static str> {
+    stderr.contains("CERTIFICATE_VERIFY_FAILED").then_some(
+        "The site's security certificate could not be verified. An antivirus or a proxy that inspects HTTPS \
+         traffic usually causes this: allow Blacktape in it, or turn its HTTPS scanning off.",
+    )
+}
+
+/// Makes yt-dlp trust the operating system's certificate store instead of its own bundle, so the certificate of an
+/// antivirus or a company proxy the system already trusts is accepted, while certificates are still verified.
+pub const SYSTEM_CERTIFICATES: [&str; 2] = ["--compat-options", "no-certifi"];
+
+/// The url handed to yt-dlp, refused unless it is an http(s) web address: a value starting with `-` would be read
+/// as an option (`--exec` runs a command), and a local path or another scheme has no business there. Pure.
+pub fn checked_url(url: &str) -> Result<&str, String> {
+    let refused = || format!("Not a web address: {url}");
+    let parsed = url::Url::parse(url).map_err(|_| refused())?;
+    let web = matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some_and(|h| !h.is_empty());
+    if !web || url.starts_with('-') || url.chars().any(char::is_control) {
+        return Err(refused());
+    }
+    Ok(url)
+}
+
+/// The site a download url belongs to, from its host (a "youtube.com" elsewhere in the url does not count).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadSite {
+    Youtube,
+    Bandcamp,
+    Soundcloud,
+    Other,
+}
+
+fn download_site(url: &str) -> DownloadSite {
+    let host = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .unwrap_or_default();
+    let on = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+    if on("youtube.com") || on("youtu.be") {
+        DownloadSite::Youtube
+    } else if on("bandcamp.com") {
+        DownloadSite::Bandcamp
+    } else if crate::soundcloud::is_soundcloud_url(url) {
+        DownloadSite::Soundcloud
+    } else {
+        DownloadSite::Other
+    }
+}
+
+/// yt-dlp's arguments to download one track: the url is checked and always comes last, after `--`. Pure.
+fn download_args(url: &str, output_template: &str, cookie_arg: &str) -> Result<Vec<String>, String> {
+    let url = checked_url(url)?;
+    let mut args: Vec<String> = [
+        "--ignore-errors",
+        "--no-playlist",
+        "--concurrent-fragments",
+        "10",
+        "--http-chunk-size",
+        "10M",
+        "-o",
+        output_template,
+    ]
+    .iter()
+    .chain(SYSTEM_CERTIFICATES.iter())
+    .map(|s| s.to_string())
+    .collect();
+
+    match download_site(url) {
+        DownloadSite::Youtube => args.extend(
+            [
+                "-f",
+                "251/140/ba/bestaudio/ba*", // Opus ~160k or AAC 128k; else any format that has audio (age-gated videos only offer a 360p mp4)
+                "--extract-audio",
+                "--audio-format",
+                "best",
+                "--audio-quality",
+                "0", // Ensures maximum VBR quality if ffmpeg runs
+                "--extractor-args",
+                "youtube:player-client=web_embedded,web,tv", // Fixed client to eliminate 403 / low-bitrate lockouts
+                "--cookies-from-browser",
+                cookie_arg,
+            ]
+            .map(String::from),
+        ),
+        DownloadSite::Bandcamp => args.extend(
+            [
+                "-f",
+                "flac/alac/wav/aiff-lossless/mp3-320/mp3-v0/aac-hi/vorbis/bestaudio/best",
+                "--format-sort",
+                "hasaud,ext:flac:wav:alac:mp3,abr",
+                "--extract-audio",
+                "--audio-format",
+                "best",
+                "--audio-quality",
+                "0",
+                "--cookies-from-browser",
+                cookie_arg,
+            ]
+            .map(String::from),
+        ),
+        DownloadSite::Soundcloud => args.extend(soundcloud_format_args()),
+        DownloadSite::Other => args.extend(["-f", "bestaudio/best"].map(String::from)),
+    }
+
+    args.push("--newline".to_string());
+    args.push("--".to_string());
+    args.push(url.to_string());
+    Ok(args)
 }
 
 impl DownloadContext {
@@ -308,58 +486,17 @@ async fn download_track_internal(
     total_tracks: usize,
 ) -> Option<PathBuf> {
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
-    let is_youtube = track.url.contains("youtube.com") || track.url.contains("youtu.be");
-    let is_bandcamp = track.url.contains("bandcamp.com");
-    let is_soundcloud = crate::soundcloud::is_soundcloud_url(&track.url);
-
-    let mut args = vec![
-        "--ignore-errors".to_string(),
-        "--no-check-certificates".to_string(),
-        "--no-playlist".to_string(),
-        "--concurrent-fragments".to_string(),
-        "10".to_string(),
-        "--http-chunk-size".to_string(),
-        "10M".to_string(),
-        "-o".to_string(),
-        output_template.to_string_lossy().to_string(),
-    ];
-
-    if is_youtube {
-        args.extend(vec![
-            "-f".to_string(),
-            "251/140/ba/bestaudio/ba*".to_string(), // Opus ~160k or AAC 128k; else any format that has audio (age-gated videos only offer a 360p mp4)
-            "--extract-audio".to_string(),
-            "--audio-format".to_string(),
-            "best".to_string(),
-            "--audio-quality".to_string(),
-            "0".to_string(), // Ensures maximum VBR quality if ffmpeg runs
-            "--extractor-args".to_string(),
-            "youtube:player-client=web_embedded,web,tv".to_string(), // Fixed client to eliminate 403 / low-bitrate lockouts
-            "--cookies-from-browser".to_string(),
-            ctx.cookie_arg.clone(),
-        ]);
-    } else if is_bandcamp {
-        args.extend(vec![
-            "-f".to_string(),
-            "flac/alac/wav/aiff-lossless/mp3-320/mp3-v0/aac-hi/vorbis/bestaudio/best".to_string(),
-            "--format-sort".to_string(),
-            "hasaud,ext:flac:wav:alac:mp3,abr".to_string(),
-            "--extract-audio".to_string(),
-            "--audio-format".to_string(),
-            "best".to_string(),
-            "--audio-quality".to_string(),
-            "0".to_string(),
-            "--cookies-from-browser".to_string(),
-            ctx.cookie_arg.clone(),
-        ]);
-    } else if is_soundcloud {
-        args.extend(soundcloud_format_args());
-    } else {
-        args.extend(vec!["-f".to_string(), "bestaudio/best".to_string()]);
-    }
-
-    args.push("--newline".to_string());
-    args.push(track.url.clone());
+    let args = match download_args(&track.url, &output_template.to_string_lossy(), &ctx.cookie_arg) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!(
+                "[yt-dlp ERROR] [{}] [Track {}/{}] {}",
+                ctx.session_id, track_num, total_tracks, err
+            );
+            ctx.record_failure(err);
+            return None;
+        }
+    };
 
     println!(
         "[yt-dlp] [{}] [Track {}/{}] Executing:\n  {:?} {}",
@@ -940,5 +1077,134 @@ b
 ", Some(1)), "b");
         assert_eq!(failure_reason("  
 ", Some(2)), "yt-dlp exited with code 2");
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+
+    const YT: &str = "https://www.youtube.com/watch?v=abc";
+    const COOKIES: &str = "chrome";
+    const TEMPLATE: &str = "out/%(id)s.%(ext)s";
+    const SSL_STDERR: &str =
+        "ERROR: unable to download: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:1006)";
+
+    /// A 64-character hash made of one repeated hex digit.
+    fn hash(c: char) -> String {
+        c.to_string().repeat(64)
+    }
+
+    #[test]
+    fn checked_url_accepts_web_addresses_and_returns_them_unchanged() {
+        assert_eq!(checked_url(YT), Ok(YT));
+        assert_eq!(
+            checked_url("http://x.bandcamp.com/track/a"),
+            Ok("http://x.bandcamp.com/track/a")
+        );
+    }
+
+    #[test]
+    fn checked_url_rejects_options_local_paths_other_schemes_and_control_chars() {
+        for bad in [
+            "--exec=calc",
+            "-x",
+            "file:///C:/a.mp3",
+            "C:\\music\\a.mp3",
+            "ftp://x.com/a",
+            "https://x.com/a\nhttps://y.com",
+            "",
+            "https://",
+        ] {
+            assert!(checked_url(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn download_site_is_chosen_by_host_only() {
+        assert_eq!(download_site(YT), DownloadSite::Youtube);
+        assert_eq!(download_site("https://music.youtube.com/watch?v=abc"), DownloadSite::Youtube);
+        assert_eq!(download_site("https://youtu.be/abc"), DownloadSite::Youtube);
+        assert_eq!(download_site("https://artist.bandcamp.com/track/a"), DownloadSite::Bandcamp);
+        assert_eq!(download_site("https://soundcloud.com/artist/track"), DownloadSite::Soundcloud);
+        assert_eq!(download_site("https://evil.com/?youtube.com"), DownloadSite::Other);
+        assert_eq!(download_site("https://notyoutube.com/x"), DownloadSite::Other);
+    }
+
+    #[test]
+    fn youtube_args_end_with_separator_and_url_and_trust_the_system_store() {
+        let args = download_args(YT, TEMPLATE, COOKIES).unwrap();
+        let tail: Vec<&str> = args[args.len() - 3..].iter().map(String::as_str).collect();
+        assert_eq!(tail, ["--newline", "--", YT]);
+
+        let compat = args.iter().position(|a| a == "--compat-options").unwrap();
+        assert_eq!(args[compat + 1], "no-certifi");
+        assert!(!args.iter().any(|a| a == "--no-check-certificates"));
+
+        let cookies = args.iter().position(|a| a == "--cookies-from-browser").unwrap();
+        assert_eq!(args[cookies + 1], COOKIES);
+    }
+
+    #[test]
+    fn non_youtube_urls_never_get_browser_cookies() {
+        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, COOKIES).unwrap();
+        assert!(!args.iter().any(|a| a == "--cookies-from-browser"));
+    }
+
+    #[test]
+    fn download_args_refuses_option_like_urls() {
+        assert!(download_args("--exec=calc", TEMPLATE, COOKIES).is_err());
+    }
+
+    #[test]
+    fn certificate_hint_only_for_certificate_verify_failures() {
+        assert!(certificate_hint(SSL_STDERR).is_some());
+        assert!(certificate_hint("ERROR: [Bandcamp] 1: No video formats found!").is_none());
+    }
+
+    #[test]
+    fn failure_reason_shows_the_certificate_hint_for_ssl_errors() {
+        assert_eq!(failure_reason(SSL_STDERR, Some(1)), certificate_hint(SSL_STDERR).unwrap());
+    }
+
+    #[test]
+    fn expected_sha256_matches_the_exact_asset_name() {
+        let exe = hash('a');
+        let bin = hash('b');
+        let mac = hash('c');
+        let sums = format!("{exe}  yt-dlp.exe\n{bin}  yt-dlp\n{mac} *yt-dlp_macos\n");
+        assert_eq!(expected_sha256(&sums, "yt-dlp.exe"), Some(exe.clone()));
+        assert_eq!(expected_sha256(&sums, "yt-dlp"), Some(bin));
+        assert_eq!(expected_sha256(&sums, "yt-dlp_macos"), Some(mac));
+    }
+
+    #[test]
+    fn expected_sha256_does_not_match_a_longer_name() {
+        let sums = format!("{}  yt-dlp.exe\n", hash('a'));
+        assert_eq!(expected_sha256(&sums, "yt-dlp"), None);
+    }
+
+    #[test]
+    fn expected_sha256_returns_lowercase_for_uppercase_hex() {
+        let upper = "ABCDEF0123456789".repeat(4);
+        let sums = format!("{upper}  yt-dlp\n");
+        assert_eq!(expected_sha256(&sums, "yt-dlp"), Some(upper.to_ascii_lowercase()));
+    }
+
+    #[test]
+    fn expected_sha256_ignores_malformed_hashes_and_missing_assets() {
+        let short = "a".repeat(63);
+        let non_hex = format!("{}g", "a".repeat(63));
+        let sums = format!("{short}  yt-dlp\n{non_hex}  yt-dlp.exe\n");
+        assert_eq!(expected_sha256(&sums, "yt-dlp"), None);
+        assert_eq!(expected_sha256(&sums, "yt-dlp.exe"), None);
+
+        let only_exe = format!("{}  yt-dlp.exe\n", hash('a'));
+        assert_eq!(expected_sha256(&only_exe, "yt-dlp_macos"), None);
+    }
+
+    #[test]
+    fn to_hex_is_lowercase_and_zero_padded() {
+        assert_eq!(to_hex(&[0x00, 0x0f, 0xab]), "000fab");
     }
 }
