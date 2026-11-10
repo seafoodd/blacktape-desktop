@@ -275,6 +275,17 @@
     animation: playerSpin 700ms linear infinite;
 }
 
+/* shown in place of the download icon while the current stream song downloads */
+.actionSpinner {
+    display: block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: playerSpin 700ms linear infinite;
+}
+
 @keyframes playerSpin {
     to {
         transform: rotate(360deg);

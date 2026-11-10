@@ -28,6 +28,7 @@ import { remoteTrackDownloadParams } from "@/features/remote-track-menu/model/bu
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
+import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
 import { streamAlbumUrl } from "@/shared/lib/stream.ts";
 import { albumTarget, remoteTrackRef, streamSongToRemoteTrack } from "../lib/currentSong.ts";
 import { RepeatMode } from "@/shared/types.ts";
@@ -88,6 +89,11 @@ export const PlayerControls = () => {
     [currentSong, isStreaming, albumUrl],
   );
   const downloadState = useTrackStatus(streamTrack ? remoteTrackRef(streamTrack) : null);
+  const downloadParams = useMemo(() => (streamTrack ? remoteTrackDownloadParams(streamTrack) : null), [streamTrack]);
+  // The download of this song started from anywhere (here, a menu, the album page), if any.
+  const download = useLibraryStore((s) => (downloadParams ? findDownload(s.activeDownloads, downloadParams) : undefined));
+  const downloading = isRunning(download);
+  const downloaded = downloadState === "downloaded" || download?.status === "completed";
 
   const openAlbum = () => {
     if (!currentSong || !target) return;
@@ -237,11 +243,17 @@ export const PlayerControls = () => {
                   <button
                     type="button"
                     className={styles.songAction}
-                    disabled={downloadState === "downloaded"}
-                    title={downloadState === "downloaded" ? "Already in your library" : "Download this song"}
-                    onClick={() => void useLibraryStore.getState().startDownload(remoteTrackDownloadParams(streamTrack))}
+                    disabled={downloaded || downloading}
+                    title={downloaded ? "Already in your library" : downloading ? "Downloading…" : "Download this song"}
+                    onClick={() => downloadParams && void useLibraryStore.getState().startDownload(downloadParams)}
                   >
-                    {downloadState === "downloaded" ? <MdCheck /> : <MdFileDownload />}
+                    {downloading ? (
+                      <span className={styles.actionSpinner} role="status" aria-label="Downloading" />
+                    ) : downloaded ? (
+                      <MdCheck />
+                    ) : (
+                      <MdFileDownload />
+                    )}
                   </button>
                 )}
                 <button

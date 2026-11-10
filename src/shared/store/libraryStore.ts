@@ -6,6 +6,7 @@ import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
+import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
 
 export type DownloadStatus =
   | "idle"
@@ -38,6 +39,8 @@ export interface DownloadProgress {
   tracks: TrackDownloadProgress[];
   /** A single track filed into a library song: its progress belongs to that song, whatever title the platform gave it. */
   placement?: TrackPlacement;
+  /** Album downloads of some tracks: their page urls (absent for a whole album and for recovered downloads). */
+  trackUrls?: string[];
 }
 
 export interface StartDownloadParams {
@@ -536,6 +539,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const trackUrls = isObject ? paramsOrPlatform.trackUrls : undefined;
     const placement = isObject ? paramsOrPlatform.placement : undefined;
 
+    // A second click while the same songs are still downloading would queue them again.
+    if (isRunning(findDownload(get().activeDownloads, { url, trackUrls }))) return;
+
     const taskId = crypto.randomUUID();
     const isSingleTrack =
       downloadType === ItemType.Track || downloadType === "Track";
@@ -558,6 +564,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           platform: platform as Platform,
           overallPercent: 0,
           placement,
+          trackUrls,
           tracks: isSingleTrack
             ? [
                 {
