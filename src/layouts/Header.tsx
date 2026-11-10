@@ -1,4 +1,5 @@
 import { SearchBar } from "@/features/search";
+import { UpdateButton } from "@/features/updater";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
@@ -96,6 +97,7 @@ export const Header = () => {
       </Dropdown.Root>
 
       <SearchBar className={styles.searchBar} />
+      <UpdateButton />
       <WindowControls />
     </header>
   );

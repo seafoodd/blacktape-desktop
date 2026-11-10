@@ -1,6 +1,6 @@
 [package]
 name = "blacktape-desktop"
-version = "0.4.1"
+version = "0.4.2"
 description = "A desktop music player that can download and organize music from different platforms."
 authors = ["seafood"]
 edition = "2021"
@@ -130,3 +130,7 @@ lto = false          # Disables LTO to cut link time by 50%+
 debug = false        # Skips generating debug symbols
 incremental = true   # Cache unchanged crates between bench runs
 panic = "abort"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2.4.0"
+tauri-plugin-updater = "2.14.1"

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Checking for, installing and restarting into app updates (app windows only, not the login window)",
+  "windows": ["main", "settings"],
+  "platforms": ["windows", "macOS", "linux"],
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

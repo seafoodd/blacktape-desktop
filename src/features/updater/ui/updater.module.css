@@ -1,0 +1,80 @@
+.pill {
+    margin-left: auto;
+    margin-right: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--color-primary);
+    background: transparent;
+    color: var(--color-primaryLight);
+    font-size: var(--font-sm, 12px);
+    cursor: pointer;
+    white-space: nowrap;
+    position: relative;
+    z-index: 1;
+
+    &:hover {
+        background-color: var(--color-primary);
+        color: var(--color-on);
+    }
+}
+
+.dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(460px, 80vw);
+}
+
+.dialogTitle {
+    font-size: var(--font-lg, 18px);
+}
+
+.muted {
+    color: var(--color-muted);
+}
+
+.notes {
+    max-height: 240px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-size: var(--font-sm, 12px);
+    scrollbar-width: thin;
+}
+
+.error {
+    color: var(--color-error);
+    word-break: break-word;
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.primary,
+.secondary {
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+
+    &:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+}
+
+.primary {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on);
+}
+
+.secondary {
+    background: transparent;
+    color: var(--color-text);
+}
