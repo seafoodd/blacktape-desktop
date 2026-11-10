@@ -9,6 +9,7 @@ mod lyrics;
 mod playlists;
 pub mod scan;
 pub mod song_edit;
+pub mod source_tag;
 mod preview;
 mod search;
 pub mod soundcloud;
@@ -93,6 +94,14 @@ async fn scan_music(
     asset_scope::allow_dir(&app, std::path::Path::new(&dir), true);
 
     let db_songs = db.get_all_songs().await.map_err(|e| e.to_string())?;
+
+    // The url keeps a download recognisable (Bandcamp/SoundCloud ids can be bare slugs): put the one the library
+    // still has into files that lack it, so later scans keep it.
+    for (path, source) in scan::source_urls_to_backfill(&songs, &db_songs) {
+        if let Err(e) = source_tag::write_source(&path, &source) {
+            eprintln!("[Scanner] Could not store the source url in {path:?}: {e}");
+        }
+    }
     Ok(db_songs)
 }
 

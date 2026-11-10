@@ -1,0 +1,2 @@
+# Test audio files must stay byte-exact (no line-ending conversion).
+src-tauri/tests/fixtures/** binary

@@ -164,8 +164,8 @@ impl Database {
                 genre = excluded.genre,
                 release_year = excluded.release_year,
                 source = excluded.source,
-                source_url = excluded.source_url,
-                source_item_id = excluded.source_item_id,
+                source_url = CASE WHEN COALESCE(excluded.source_url, '') = '' AND excluded.source = songs.source THEN songs.source_url ELSE excluded.source_url END,
+                source_item_id = CASE WHEN COALESCE(excluded.source_item_id, '') = '' AND excluded.source = songs.source THEN songs.source_item_id ELSE excluded.source_item_id END,
                 canonical_track_slug = excluded.canonical_track_slug,
                 canonical_album_slug = excluded.canonical_album_slug,
                 quality_tier = excluded.quality_tier",
@@ -218,8 +218,8 @@ impl Database {
                     genre = excluded.genre,
                     release_year = excluded.release_year,
                     source = excluded.source,
-                    source_url = excluded.source_url,
-                    source_item_id = excluded.source_item_id,
+                    source_url = CASE WHEN COALESCE(excluded.source_url, '') = '' AND excluded.source = songs.source THEN songs.source_url ELSE excluded.source_url END,
+                    source_item_id = CASE WHEN COALESCE(excluded.source_item_id, '') = '' AND excluded.source = songs.source THEN songs.source_item_id ELSE excluded.source_item_id END,
                     canonical_track_slug = excluded.canonical_track_slug,
                     canonical_album_slug = excluded.canonical_album_slug,
                     quality_tier = excluded.quality_tier
@@ -860,8 +860,8 @@ async fn insert_song_tx(
             genre = excluded.genre,
             release_year = excluded.release_year,
             source = excluded.source,
-            source_url = excluded.source_url,
-            source_item_id = excluded.source_item_id,
+            source_url = CASE WHEN COALESCE(excluded.source_url, '') = '' AND excluded.source = songs.source THEN songs.source_url ELSE excluded.source_url END,
+            source_item_id = CASE WHEN COALESCE(excluded.source_item_id, '') = '' AND excluded.source = songs.source THEN songs.source_item_id ELSE excluded.source_item_id END,
             canonical_track_slug = excluded.canonical_track_slug,
             canonical_album_slug = excluded.canonical_album_slug,
             quality_tier = excluded.quality_tier",
@@ -1086,6 +1086,7 @@ impl Database {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::types::{Platform, QualityTier};
 
     pub(crate) async fn setup_test_db() -> Database {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -1432,5 +1433,143 @@ pub(crate) mod tests {
         let db = setup_test_db().await;
         setup_move_playlist(&db, &[1, 2, 1, 3, 1]).await;
         db
+    }
+
+    fn make_source_song(
+        path: &str,
+        source: Platform,
+        source_url: Option<&str>,
+        source_item_id: Option<&str>,
+    ) -> Song {
+        Song {
+            id: None,
+            path: path.to_string(),
+            title: "Track".to_string(),
+            artists: vec!["Artist".to_string()],
+            album_artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            duration_ms: 1000,
+            track_number: Some(1),
+            genre: None,
+            release_year: None,
+            cover_url: None,
+            external_cover_url: None,
+            lyrics: None,
+            lyrics_source: None,
+            source,
+            source_url: source_url.map(str::to_string),
+            source_item_id: source_item_id.map(str::to_string),
+            canonical_track_slug: "artist-track".to_string(),
+            canonical_album_slug: "artist-album".to_string(),
+            quality_tier: QualityTier::Standard,
+        }
+    }
+
+    async fn only_song(db: &Database) -> Song {
+        let mut songs = db.get_all_songs().await.unwrap();
+        assert_eq!(songs.len(), 1, "expected exactly one stored song");
+        songs.remove(0)
+    }
+
+    #[tokio::test]
+    async fn test_insert_songs_keeps_source_when_reinserted_with_nulls() {
+        let db = setup_test_db().await;
+        let first = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/a"),
+            Some("a"),
+        );
+        db.insert_songs(vec![first]).await.unwrap();
+
+        let second = make_source_song("/m/a.mp3", Platform::Bandcamp, None, None);
+        db.insert_songs(vec![second]).await.unwrap();
+
+        let song = only_song(&db).await;
+        assert_eq!(song.source, Platform::Bandcamp);
+        assert_eq!(song.source_url.as_deref(), Some("https://x.bandcamp.com/track/a"));
+        assert_eq!(song.source_item_id.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn test_insert_songs_keeps_source_when_reinserted_with_empty_url() {
+        let db = setup_test_db().await;
+        let first = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/a"),
+            Some("a"),
+        );
+        db.insert_songs(vec![first]).await.unwrap();
+
+        let second = make_source_song("/m/a.mp3", Platform::Bandcamp, Some(""), Some(""));
+        db.insert_songs(vec![second]).await.unwrap();
+
+        let song = only_song(&db).await;
+        assert_eq!(song.source_url.as_deref(), Some("https://x.bandcamp.com/track/a"));
+        assert_eq!(song.source_item_id.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn test_insert_songs_overwrites_source_when_new_values_given() {
+        let db = setup_test_db().await;
+        let first = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/a"),
+            Some("a"),
+        );
+        db.insert_songs(vec![first]).await.unwrap();
+
+        let second = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/b"),
+            Some("b"),
+        );
+        db.insert_songs(vec![second]).await.unwrap();
+
+        let song = only_song(&db).await;
+        assert_eq!(song.source_url.as_deref(), Some("https://x.bandcamp.com/track/b"));
+        assert_eq!(song.source_item_id.as_deref(), Some("b"));
+    }
+
+    #[tokio::test]
+    async fn test_insert_songs_clears_source_when_source_platform_changes() {
+        let db = setup_test_db().await;
+        let first = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/a"),
+            Some("a"),
+        );
+        db.insert_songs(vec![first]).await.unwrap();
+
+        let second = make_source_song("/m/a.mp3", Platform::Local, None, None);
+        db.insert_songs(vec![second]).await.unwrap();
+
+        let song = only_song(&db).await;
+        assert_eq!(song.source, Platform::Local);
+        assert_eq!(song.source_url, None);
+        assert_eq!(song.source_item_id, None);
+    }
+
+    #[tokio::test]
+    async fn test_insert_song_keeps_source_when_reinserted_with_nulls() {
+        let db = setup_test_db().await;
+        let first = make_source_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/a"),
+            Some("a"),
+        );
+        db.insert_song(first).await.unwrap();
+
+        let second = make_source_song("/m/a.mp3", Platform::Bandcamp, None, None);
+        db.insert_song(second).await.unwrap();
+
+        let song = only_song(&db).await;
+        assert_eq!(song.source_url.as_deref(), Some("https://x.bandcamp.com/track/a"));
+        assert_eq!(song.source_item_id.as_deref(), Some("a"));
     }
 }
