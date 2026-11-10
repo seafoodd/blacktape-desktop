@@ -1,6 +1,10 @@
+//! The operating system's media controls (Windows SMTC, MPRIS on Linux, Now Playing on macOS).
+//!
+//! They are a convenience: when the platform refuses them (no session bus, no window handle yet) the player works
+//! without them, and every later call is a no-op. Errors are logged, never raised.
+
 use std::time::Duration;
 
-use souvlaki::Error;
 use souvlaki::MediaControlEvent;
 use souvlaki::MediaControls as SouvlakiMediaControls;
 use souvlaki::MediaMetadata;
@@ -12,75 +16,78 @@ use tauri::Emitter;
 use tauri::WebviewWindow;
 
 pub struct MediaControls {
-    controls: SouvlakiMediaControls,
+    controls: Option<SouvlakiMediaControls>,
 }
 
 impl MediaControls {
     pub fn new(window: &WebviewWindow, app_handle: AppHandle) -> Self {
-        #[cfg(not(target_os = "windows"))]
-        let hwnd = None;
+        match Self::create(window, app_handle) {
+            Ok(controls) => Self { controls: Some(controls) },
+            Err(e) => {
+                eprintln!("[media controls] unavailable, continuing without them: {e}");
+                Self { controls: None }
+            }
+        }
+    }
 
+    fn create(window: &WebviewWindow, app_handle: AppHandle) -> Result<SouvlakiMediaControls, String> {
+        #[cfg(not(target_os = "windows"))]
+        let hwnd = {
+            let _ = window;
+            None
+        };
         #[cfg(target_os = "windows")]
-        let hwnd = Some(window.hwnd().expect("Failed to receive HWND").0);
+        let hwnd = Some(window.hwnd().map_err(|e| format!("no window handle: {e}"))?.0);
+
         let config = PlatformConfig {
             dbus_name: "blacktape",
             display_name: "Blacktape Desktop",
             hwnd,
         };
-        let mut controls =
-            SouvlakiMediaControls::new(config).expect("Failed to create MediaControls");
-
-        let app_handle_clone = app_handle.clone();
+        let mut controls = SouvlakiMediaControls::new(config).map_err(|e| format!("{e:?}"))?;
         controls
-            .attach(move |event: MediaControlEvent| match event {
-                MediaControlEvent::Play => {
-                    let _ = app_handle_clone.emit("media-resume", ());
-                }
-                MediaControlEvent::Pause => {
-                    let _ = app_handle_clone.emit("media-pause", ());
-                }
-                MediaControlEvent::Stop => {
-                    let _ = app_handle_clone.emit("media-stop", ());
-                }
-                MediaControlEvent::Next => {
-                    let _ = app_handle_clone.emit("media-next", ());
-                }
-                MediaControlEvent::Previous => {
-                    let _ = app_handle_clone.emit("media-previous", ());
-                }
-                MediaControlEvent::Toggle => {
-                    let _ = app_handle_clone.emit("media-toggle", ());
-                }
-                _ => {}
+            .attach(move |event: MediaControlEvent| {
+                let name = match event {
+                    MediaControlEvent::Play => "media-resume",
+                    MediaControlEvent::Pause => "media-pause",
+                    MediaControlEvent::Stop => "media-stop",
+                    MediaControlEvent::Next => "media-next",
+                    MediaControlEvent::Previous => "media-previous",
+                    MediaControlEvent::Toggle => "media-toggle",
+                    _ => return,
+                };
+                let _ = app_handle.emit(name, ());
             })
-            .unwrap();
-
-        controls
-            .set_playback(MediaPlayback::Stopped)
-            .expect("Failed to set playback");
-
-        Self { controls }
+            .map_err(|e| format!("{e:?}"))?;
+        controls.set_playback(MediaPlayback::Stopped).map_err(|e| format!("{e:?}"))?;
+        Ok(controls)
     }
 
     pub fn update_metadata(&mut self, metadata: MediaMetadata) {
-        if let Err(e) = self.controls.set_metadata(metadata) {
-            eprintln!("Failed to set metadata: {e:?}");
+        if let Some(controls) = self.controls.as_mut() {
+            if let Err(e) = controls.set_metadata(metadata) {
+                eprintln!("[media controls] cannot set metadata: {e:?}");
+            }
         }
     }
 
-    pub fn play(&mut self) -> Result<(), Error> {
-        self.controls.set_playback(MediaPlayback::Playing {
-            progress: Some(MediaPosition(Duration::ZERO)),
-        })
+    pub fn set_playing(&mut self, position: Duration) {
+        self.set_playback(MediaPlayback::Playing { progress: Some(MediaPosition(position)) });
     }
 
-    pub fn pause(&mut self) -> Result<(), Error> {
-        self.controls.set_playback(MediaPlayback::Paused {
-            progress: Some(MediaPosition(Duration::ZERO)),
-        })
+    pub fn set_paused(&mut self, position: Duration) {
+        self.set_playback(MediaPlayback::Paused { progress: Some(MediaPosition(position)) });
     }
 
-    pub fn stop(&mut self) -> Result<(), Error> {
-        self.controls.set_playback(MediaPlayback::Stopped)
+    pub fn set_stopped(&mut self) {
+        self.set_playback(MediaPlayback::Stopped);
+    }
+
+    fn set_playback(&mut self, playback: MediaPlayback) {
+        if let Some(controls) = self.controls.as_mut() {
+            if let Err(e) = controls.set_playback(playback) {
+                eprintln!("[media controls] cannot set the playback state: {e:?}");
+            }
+        }
     }
 }

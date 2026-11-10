@@ -18,6 +18,12 @@ import { RepeatMode, Song } from "@/shared/types.ts";
 
 export type PlaybackContext = "playlist" | "library";
 
+/** Why the current song could not be played (`playback-error` event of the player). */
+export interface PlaybackError {
+  title: string;
+  message: string;
+}
+
 interface AudioState {
   queue: Song[];
   currentSong: Song | null;
@@ -34,6 +40,8 @@ interface AudioState {
   queueCursor: number | null;
   /** Index of the current song in the list playback was started from. */
   sourceIndex: number | null;
+  /** The current song failed to play; cleared when another song starts or playback resumes. */
+  playbackError: PlaybackError | null;
 
   setQueue: (songs: Song[]) => void;
   fetchQueue: () => Promise<void>;
@@ -70,6 +78,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   repeatMode: RepeatMode.Off,
   queueCursor: null,
   sourceIndex: null,
+  playbackError: null,
   playbackContext: null,
   playbackContextId: null,
 
@@ -161,13 +170,22 @@ export const songChanged = (prev: SongRef, next: SongRef): boolean => {
   return (prev.id ?? null) !== (next.id ?? null);
 };
 
+/** A playback error stays until another song starts or the current one plays again. */
+export const keepPlaybackError = (
+  error: PlaybackError | null,
+  songChanged: boolean,
+  isPlaying: boolean,
+): PlaybackError | null => (songChanged || isPlaying ? null : error);
+
 if (typeof window !== "undefined") {
   listen("player-state", (event) => {
     const state: any = event.payload;
     const previous = useAudioStore.getState().currentSong;
     // a different song starts at 0 right away, whatever position the event still carries
     const changed = songChanged(previous, state.current_song);
+    const { playbackError } = useAudioStore.getState();
     useAudioStore.setState({
+      playbackError: keepPlaybackError(playbackError, changed, Boolean(state.is_playing)),
       isPlaying: state.is_playing,
       isStreaming: Boolean(state.streaming),
       streamLoading: Boolean(state.stream_loading),
@@ -180,5 +198,10 @@ if (typeof window !== "undefined") {
       queueCursor: state.queue_cursor ?? null,
       sourceIndex: state.source_index ?? null,
     });
+  }).catch((e) => console.log(e));
+
+  listen<PlaybackError>("playback-error", (event) => {
+    console.error(`[player] cannot play ${event.payload.title}: ${event.payload.message}`);
+    useAudioStore.setState({ playbackError: event.payload });
   }).catch((e) => console.log(e));
 }
