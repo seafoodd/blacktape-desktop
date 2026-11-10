@@ -1,3 +1,4 @@
+import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { BiArrowBack, BiDownload, BiRightArrowAlt } from "react-icons/bi";
@@ -132,7 +133,7 @@ const AlbumPreview = () => {
       <section className={artistStyles.albumBlock}>
         <div className={artistStyles.albumBlockLeft}>
           <img
-            src={cover ?? placeholderAlbumImage}
+            src={cover ? coverSrc(cover, 200) : placeholderAlbumImage}
             referrerPolicy="no-referrer"
             onError={(e) => {
               if (e.currentTarget.src !== placeholderAlbumImage) {

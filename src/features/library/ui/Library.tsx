@@ -162,9 +162,7 @@ export const Library = ({ className }: LibraryProps) => {
               <img loading="lazy" decoding="async"
                 src={
                   artist.coverUrl
-                    ? artist.coverUrl.startsWith("http")
-                      ? artist.coverUrl
-                      : coverSrc(artist.coverUrl, 200)
+                    ? coverSrc(artist.coverUrl, 200)
                     : placeholderArtistImage
                 }
                 referrerPolicy="no-referrer"

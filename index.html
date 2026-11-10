@@ -4,6 +4,9 @@
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/vite.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- Google image hosts (YouTube covers) sometimes answer requests carrying the app's referrer with a
+             non-image response that the webview blocks (ERR_BLOCKED_BY_ORB); no request needs the referrer. -->
+        <meta name="referrer" content="no-referrer" />
         <title>Blacktape</title>
     </head>
 

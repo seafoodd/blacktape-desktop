@@ -1,3 +1,4 @@
+import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { ItemType, useLibraryStore, type SearchSuggestion, type TrackPlacement } from "@/shared/store/libraryStore.ts";
@@ -82,7 +83,7 @@ const FindAlternativeModal = ({ artist, title, excludePlatform, placement }: Fin
         <div className={styles.list}>
           {results.map((item) => (
             <button key={item.item_url_path} className={styles.candidate} onClick={() => pick(item)}>
-              {item.img ? <img className={styles.cover} src={item.img} alt="" /> : <div className={styles.cover} />}
+              {item.img ? <img className={styles.cover} src={coverSrc(item.img, 48)} alt="" /> : <div className={styles.cover} />}
               <div className={styles.info}>
                 <span className={styles.name}>{item.name}</span>
                 <span className={styles.meta}>{item.band_name}</span>
