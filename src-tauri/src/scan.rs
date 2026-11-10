@@ -58,20 +58,12 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
     entries
         .into_par_iter()
         .filter_map(|path| {
-            // 1. Break open the Probe steps to explicitly log parsing or IO errors
-            let probe = match Probe::open(&path) {
-                Ok(p) => p,
-                Err(err) => {
-                    eprintln!("[Scanner Error] IO/Probe failed to open file structure at {:?}: {}", path, err);
-                    return None;
-                }
-            };
-
-            let tagged_file = match probe.read() {
-                Ok(tf) => tf,
+            // One read gives the generic tags and the source fields (format-specific, see source_tag).
+            let read = match crate::source_tag::read_file(&path) {
+                Ok(read) => read,
                 Err(err) => {
                     eprintln!(
-                        "[Scanner Error] Lofty metadata stream reading failed for extension '{:?}' at {:?}: {}",
+                        "[Scanner Error] Reading tags failed for extension '{:?}' at {:?}: {}",
                         path.extension().unwrap_or_default(),
                         path,
                         err
@@ -79,6 +71,17 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
                     return None;
                 }
             };
+            let tagged_file = read.tagged;
+            let file_source = read.source;
+
+            // Files from older versions keep the source in the comment: move it to its own fields once.
+            if read.legacy {
+                if let Some(source) = &file_source {
+                    if let Err(err) = crate::source_tag::write_source(&path, source) {
+                        eprintln!("[Scanner] Could not move the source out of the comment of {:?}: {}", path, err);
+                    }
+                }
+            }
 
             // Optional metrics tracking print
             println!(
@@ -161,32 +164,10 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
             let canonical_album_slug = make_canonical_slug(&album_artist, &album);
             let quality_tier = determine_quality(actual_ext, &tagged_file);
 
-            let mut source = Platform::Local;
-            let mut source_item_id = None;
-
-            if let Some(t) = tag {
-                if let Some(comment_text) = t.get_string(ItemKey::Comment) {
-                    if comment_text.starts_with("blacktape_source:") {
-                        let parts: Vec<&str> = comment_text.split('|').collect();
-
-                        if let Some(source_part) = parts.first() {
-                            let platform_str = source_part.replace("blacktape_source:", "");
-                            source = match platform_str.to_lowercase().as_str() {
-                                "youtube" | "youtubemusic" => Platform::Youtube,
-                                "bandcamp" => Platform::Bandcamp,
-                                "soundcloud" => Platform::Soundcloud,
-                                _ => Platform::Local,
-                            };
-                        }
-
-                        if source != Platform::Local {
-                            if let Some(id_part) = parts.get(1) {
-                                source_item_id = Some(id_part.replace("id:", "").trim().to_string());
-                            }
-                        }
-                    }
-                }
-            }
+            let (source, source_url, source_item_id) = match file_source {
+                Some(found) => (found.platform, found.url, Some(found.id)),
+                None => (Platform::Local, None, None),
+            };
 
             Some(Song {
                 id: None,
@@ -205,7 +186,7 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
                 lyrics_source: None,
 
                 source,
-                source_url: None,
+                source_url,
                 source_item_id,
                 canonical_track_slug,
                 canonical_album_slug,
@@ -405,6 +386,36 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
     Some(song)
 }
 
+/// Files whose tags name a platform but no track url, while the library still knows the url from the download
+/// (files downloaded before the url was stored in tags). Pairs are (file path, full source to write).
+pub fn source_urls_to_backfill(scanned: &[Song], stored: &[Song]) -> Vec<(PathBuf, crate::source_tag::SourceRef)> {
+    let stored_by_path: std::collections::HashMap<&str, &Song> =
+        stored.iter().map(|s| (s.path.as_str(), s)).collect();
+    scanned
+        .iter()
+        .filter(|song| song.source != Platform::Local && song.source_url.is_none())
+        .filter_map(|song| {
+            let known = stored_by_path.get(song.path.as_str())?;
+            if known.source != song.source {
+                return None;
+            }
+            let url = known
+                .source_url
+                .as_deref()
+                .filter(|u| u.starts_with("https://") || u.starts_with("http://"))?;
+            let id = song.source_item_id.clone().or_else(|| known.source_item_id.clone())?;
+            Some((
+                PathBuf::from(&song.path),
+                crate::source_tag::SourceRef {
+                    platform: song.source,
+                    id,
+                    url: Some(url.to_string()),
+                },
+            ))
+        })
+        .collect()
+}
+
 /// Splits raw metadata strings on standard multi-artist delimiters
 fn parse_artists(raw_artist: &str) -> Vec<String> {
     raw_artist
@@ -445,5 +456,159 @@ mod tests {
         found.sort();
 
         assert_eq!(found, vec!["keep.mp3".to_string(), "song.flac".to_string()]);
+    }
+
+    fn backfill_song(
+        path: &str,
+        source: Platform,
+        source_url: Option<&str>,
+        source_item_id: Option<&str>,
+    ) -> Song {
+        Song {
+            id: None,
+            path: path.to_string(),
+            title: "Track".to_string(),
+            artists: vec!["Artist".to_string()],
+            album_artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            duration_ms: 1000,
+            track_number: Some(1),
+            genre: None,
+            release_year: None,
+            cover_url: None,
+            external_cover_url: None,
+            lyrics: None,
+            lyrics_source: None,
+            source,
+            source_url: source_url.map(str::to_string),
+            source_item_id: source_item_id.map(str::to_string),
+            canonical_track_slug: "artist-track".to_string(),
+            canonical_album_slug: "artist-album".to_string(),
+            quality_tier: QualityTier::Standard,
+        }
+    }
+
+    const BANDCAMP_URL: &str = "https://x.bandcamp.com/track/a";
+
+    #[test]
+    fn backfill_fills_missing_url_from_matching_stored_row() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, Some("a"))];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some(BANDCAMP_URL),
+            Some("a"),
+        )];
+
+        let pairs = source_urls_to_backfill(&scanned, &stored);
+
+        assert_eq!(pairs.len(), 1);
+        let (path, source) = &pairs[0];
+        assert_eq!(path, &PathBuf::from("/m/a.mp3"));
+        assert_eq!(source.platform, Platform::Bandcamp);
+        assert_eq!(source.id, "a");
+        assert_eq!(source.url.as_deref(), Some(BANDCAMP_URL));
+    }
+
+    #[test]
+    fn backfill_skips_song_that_already_has_url() {
+        let scanned = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("https://x.bandcamp.com/track/other"),
+            Some("a"),
+        )];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some(BANDCAMP_URL),
+            Some("a"),
+        )];
+
+        assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
+    }
+
+    #[test]
+    fn backfill_skips_local_songs() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Local, None, None)];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Local,
+            Some(BANDCAMP_URL),
+            Some("a"),
+        )];
+
+        assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
+    }
+
+    #[test]
+    fn backfill_skips_when_stored_platform_differs() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, Some("a"))];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Youtube,
+            Some("https://www.youtube.com/watch?v=a"),
+            Some("a"),
+        )];
+
+        assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
+    }
+
+    #[test]
+    fn backfill_skips_stored_url_that_is_missing_or_not_http() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, Some("a"))];
+
+        let no_url = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, Some("a"))];
+        assert!(source_urls_to_backfill(&scanned, &no_url).is_empty());
+
+        let js_url = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some("javascript:x"),
+            Some("a"),
+        )];
+        assert!(source_urls_to_backfill(&scanned, &js_url).is_empty());
+    }
+
+    #[test]
+    fn backfill_skips_when_no_stored_row_has_the_path() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, Some("a"))];
+        let stored = vec![backfill_song(
+            "/m/other.mp3",
+            Platform::Bandcamp,
+            Some(BANDCAMP_URL),
+            Some("a"),
+        )];
+
+        assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
+    }
+
+    #[test]
+    fn backfill_uses_stored_id_when_scanned_id_missing() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, None)];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some(BANDCAMP_URL),
+            Some("sid"),
+        )];
+
+        let pairs = source_urls_to_backfill(&scanned, &stored);
+
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].1.id, "sid");
+    }
+
+    #[test]
+    fn backfill_skips_when_no_id_on_either_side() {
+        let scanned = vec![backfill_song("/m/a.mp3", Platform::Bandcamp, None, None)];
+        let stored = vec![backfill_song(
+            "/m/a.mp3",
+            Platform::Bandcamp,
+            Some(BANDCAMP_URL),
+            None,
+        )];
+
+        assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
     }
 }

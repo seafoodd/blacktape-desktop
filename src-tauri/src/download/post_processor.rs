@@ -69,19 +69,10 @@ pub fn process_and_move_track(
     let duration_ms = tagged_file.properties().duration().as_millis() as u64;
     let final_cover = resolve_cover_path(cover_path, &tagged_file, track, covers_dir);
     let source_item_id = track.source_item_id.clone().or_else(|| {
-        tagged_file.primary_tag().and_then(|t| {
-            t.get_string(lofty::tag::ItemKey::Comment)
-                .and_then(|comment| {
-                    if comment.starts_with("blacktape_source:") {
-                        let parts: Vec<&str> = comment.split('|').collect();
-                        parts
-                            .get(1)
-                            .map(|id_part| id_part.replace("id:", "").trim().to_string())
-                    } else {
-                        None
-                    }
-                })
-        })
+        crate::source_tag::read_source(&destination_path)
+            .ok()
+            .flatten()
+            .map(|source| source.id)
     });
     Ok(Song {
         id: None,
@@ -135,18 +126,6 @@ fn apply_metadata_tags(
     tag.set_artist(artists.join(", "));
     tag.set_album(album.to_string());
     tag.insert_text(lofty::tag::ItemKey::AlbumArtist, album_artist.to_string());
-    if let Some(ref source_id) = track.source_item_id {
-        let source_str = match source {
-            Platform::Youtube => "YouTube",
-            Platform::Bandcamp => "Bandcamp",
-            Platform::Soundcloud => "SoundCloud",
-            Platform::Local => "Local",
-        };
-        tag.insert_text(
-            lofty::tag::ItemKey::Comment,
-            format!("blacktape_source:{source_str}|id:{source_id}"),
-        );
-    }
     if let Some(year) = track.release_year {
         if let Ok(ts) = Timestamp::from_str(&year.to_string()) {
             tag.set_date(ts);
@@ -164,7 +143,18 @@ fn apply_metadata_tags(
         }
     }
     tag.save_to_path(file_path, WriteOptions::default())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // The source goes into its own fields after the generic save (which would drop them), not into the comment.
+    if let Some(source_id) = &track.source_item_id {
+        let source_ref = crate::source_tag::SourceRef {
+            platform: source,
+            id: source_id.clone(),
+            url: Some(track.url.clone()),
+        };
+        crate::source_tag::write_source(file_path, &source_ref)?;
+    }
+    Ok(())
 }
 
 fn resolve_cover_path(

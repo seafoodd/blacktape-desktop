@@ -21,6 +21,11 @@ pub struct BasicTags<'a> {
 }
 
 pub fn write_basic_tags(path: &Path, info: &BasicTags) -> Result<(), String> {
+    // lofty's generic save rewrites the whole tag and would drop the download source fields.
+    crate::source_tag::preserving_source(path, || write_generic_tags(path, info))
+}
+
+fn write_generic_tags(path: &Path, info: &BasicTags) -> Result<(), String> {
     let mut tagged = Probe::open(path)
         .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?
         .read()
