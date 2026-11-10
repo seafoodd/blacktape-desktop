@@ -1,9 +1,30 @@
 use crate::AuthLock;
 use tauri::State;
 use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tokio::fs::{read_to_string, File};
+use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use url::Url;
+
+/// Label of the window that signs into YouTube (shown only when Google asks for a login).
+pub const LOGIN_WINDOW: &str = "youtube-login";
+/// The login window's browser engine identity; the account check uses the same one.
+pub const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+/// Browser profile that keeps the Google session. yt-dlp reads its cookies (`--cookies-from-browser edge:…`).
+pub fn profile_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("browser-profiles"))
+        .map_err(|e| e.to_string())
+}
+
+/// Copy of the session cookies the login window exports (kept for reference; downloads read the profile).
+pub fn cookie_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("youtube_cookies.txt"))
+        .map_err(|e| e.to_string())
+}
 
 #[command]
 pub async fn cookies_are_ready(
@@ -37,7 +58,7 @@ pub async fn launch_youtube_login(
 
     println!("[blacktape::auth] launch_youtube_login command invoked.");
 
-    if let Some(existing_win) = app.get_webview_window("youtube-login") {
+    if let Some(existing_win) = app.get_webview_window(LOGIN_WINDOW) {
         if force_visible {
             let _ = existing_win.show();
             let _ = existing_win.set_focus();
@@ -64,17 +85,17 @@ pub async fn launch_youtube_login(
 
     let builder = WebviewWindowBuilder::new(
         &app,
-        "youtube-login",
+        LOGIN_WINDOW,
         WebviewUrl::External(target_url),
     )
-        .data_directory(app.path().app_data_dir().unwrap().join("browser-profiles"))
+        .data_directory(profile_dir(&app)?)
         .title("Blacktape | Sign into YouTube")
         .inner_size(500.0, 600.0)
         .resizable(false)
         .always_on_top(true)
         .visible(force_visible)
         .focused(force_visible)
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+        .user_agent(BROWSER_USER_AGENT)
         .initialization_script(r#"
         // Listen for internal state reports from frontend. Only this page's own message counts (posted by the
         // check below on www.youtube.com): an embedded frame, such as an ad, cannot hand over cookies of its own.
@@ -118,7 +139,7 @@ pub async fn launch_youtube_login(
                     // Mark auth as successful before closing window
                     auth_task.store(true, Ordering::SeqCst);
 
-                    if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
+                    if let Some(win) = app_handle_task.get_webview_window(LOGIN_WINDOW) {
                         let _ = win.close();
                     }
 
@@ -132,9 +153,10 @@ pub async fn launch_youtube_login(
             }
 
             // 2. Unhide window if user lands on Google Accounts login
-            if host == Some("accounts.google.com") {
+            // (the cookie-consent page, shown to signed-out visitors in the EU, also needs the user)
+            if host == Some("accounts.google.com") || host == Some("consent.youtube.com") {
                 println!("[blacktape::auth] Login required. Showing window to user...");
-                if let Some(win) = app_handle_clone.get_webview_window("youtube-login") {
+                if let Some(win) = app_handle_clone.get_webview_window(LOGIN_WINDOW) {
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
@@ -147,7 +169,7 @@ pub async fn launch_youtube_login(
                     // Delay slightly to let cookies write to DOM
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
-                    if let Some(win) = app_handle_task.get_webview_window("youtube-login") {
+                    if let Some(win) = app_handle_task.get_webview_window(LOGIN_WINDOW) {
                         let js = r#"
                         (function() {
                             const cookies = document.cookie;
@@ -195,30 +217,8 @@ pub async fn launch_youtube_login(
     }
 
     println!("[blacktape::auth] Authentication verified. Proceeding with download batch.");
+    crate::auth::account::notify_changed(&app, crate::auth::account::AccountProvider::Youtube);
     Ok(())
-}
-
-#[command]
-pub async fn check_auth_status(app: AppHandle) -> bool {
-    let mut cookie_file = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(_) => return false,
-    };
-    cookie_file.push("youtube_cookies.txt");
-
-    if !cookie_file.exists() {
-        return false;
-    }
-
-    let contents = match read_to_string(cookie_file).await {
-        Ok(text) => text,
-        Err(_) => return false,
-    };
-
-    let has_sid = contents.contains("SID");
-    let has_sapisid = contents.contains("SAPISID");
-
-    has_sid && has_sapisid
 }
 
 async fn write_netscape_cookies(app: &AppHandle, cookies_str: &str) -> Result<(), String> {
@@ -227,11 +227,7 @@ async fn write_netscape_cookies(app: &AppHandle, cookies_str: &str) -> Result<()
         cookies_str.len()
     );
 
-    let mut cookie_file_path = app.path().app_data_dir().map_err(|e| {
-        eprintln!("[blacktape::auth ERROR] Failed to get app_data_dir: {}", e);
-        e.to_string()
-    })?;
-    cookie_file_path.push("youtube_cookies.txt");
+    let cookie_file_path = cookie_file(app)?;
 
     let file = File::create(&cookie_file_path).await.map_err(|e| {
         eprintln!(

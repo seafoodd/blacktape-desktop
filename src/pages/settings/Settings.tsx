@@ -17,8 +17,9 @@ import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import styles from "./settings.module.css";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { UpdateSettings } from "@/features/updater/ui/UpdateSettings";
+import { AccountsSettings } from "@/features/accounts/ui/AccountsSettings";
 
-type SettingsTab = "appearance" | "playback" | "library" | "about";
+type SettingsTab = "appearance" | "playback" | "library" | "accounts" | "about";
 
 export const Settings = () => {
   const {
@@ -106,6 +107,12 @@ export const Settings = () => {
             onClick={() => setActiveTab("library")}
           >
             Library
+          </button>
+          <button
+            className={`${styles.navItem} ${activeTab === "accounts" ? styles.active : ""}`}
+            onClick={() => setActiveTab("accounts")}
+          >
+            Accounts
           </button>
           <button
             className={`${styles.navItem} ${activeTab === "about" ? styles.active : ""}`}
@@ -289,6 +296,13 @@ export const Settings = () => {
               </div>
             </section>
             </>
+          )}
+
+          {activeTab === "accounts" && (
+            <section className={styles.section}>
+              <h2>Accounts</h2>
+              <AccountsSettings buttonClassName={styles.actionButton} />
+            </section>
           )}
 
           {activeTab === "about" && (

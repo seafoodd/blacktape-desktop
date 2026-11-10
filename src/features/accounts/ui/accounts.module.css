@@ -1,0 +1,63 @@
+.row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-size: var(--font-md);
+}
+
+.icon {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--color-text);
+}
+
+.info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.name {
+    font-weight: 600;
+}
+
+.purpose,
+.time {
+    color: var(--color-muted);
+    font-size: var(--font-sm, 12px);
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-sm, 12px);
+    color: var(--color-muted);
+    word-break: break-word;
+}
+
+.connected {
+    color: var(--color-success);
+}
+
+.error {
+    color: var(--color-error);
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.actions button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
