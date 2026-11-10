@@ -31,3 +31,5 @@ src-tauri/gen/
 /rustypipe_cache.json
 
 .cache
+# local signing keys
+/~/

@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # audiopus_sys bundles an old Opus CMakeLists that newer CMake rejects
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
+jobs:
+  frontend:
+    name: Frontend (Build & Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and Build Frontend
+        run: npm run build
+
+      - name: Run Vitest Unit Tests
+        run: npm test
+
+  backend:
+    name: Rust Backend (Check, Test & Clippy)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Check Formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+        continue-on-error: true
+
+      - name: Cargo Check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo Test
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
