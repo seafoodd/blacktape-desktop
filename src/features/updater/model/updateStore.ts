@@ -23,7 +23,7 @@ interface UpdateState {
   error: string | null;
   update: Update | null;
   /**
-   * A silent check (on startup and every few hours) keeps network errors out of the interface and flashes the
+   * A silent check (on startup and every hour) keeps network errors out of the interface and flashes the
    * taskbar when it finds a version that was not known yet.
    */
   checkForUpdate: (options?: { silent?: boolean }) => Promise<void>;

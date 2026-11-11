@@ -6,8 +6,8 @@ import styles from "./updater.module.css";
 
 /** Delay before the startup check, so it does not compete with loading the library. */
 const STARTUP_CHECK_DELAY_MS = 5000;
-/** The app can stay open for days: look again every few hours. */
-export const PERIODIC_CHECK_MS = 6 * 60 * 60 * 1000;
+/** The app can stay open for days: look again every hour. */
+export const PERIODIC_CHECK_MS = 60 * 60 * 1000;
 
 /** Header pill that appears only when a newer version is out. Also runs the silent startup and periodic checks. */
 export const UpdateButton = () => {
