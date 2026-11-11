@@ -3,6 +3,7 @@ name = "blacktape-desktop"
 version = "0.4.3"
 description = "A desktop music player that can download and organize music from different platforms."
 authors = ["seafood"]
+license = "GPL-3.0-only"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
