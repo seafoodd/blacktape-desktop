@@ -1,38 +1,24 @@
 # Blacktape
 
-A desktop music player and library manager. You can play your own files, search YouTube, Bandcamp and SoundCloud from the same search bar, and download what you find straight into your library.
+**Your music library and every music site, in one app.** Search YouTube, Bandcamp and SoundCloud, listen right away, and download the good stuff straight into your library.
 
-I made it because I wanted one place for the music I own and the music I'm still looking for, without a browser tab for every site.
+Most players only play what you already have, and most downloaders don't care about your library. Blacktape does both, so you don't need a browser tab for every site.
 
 ## What it does
 
-**Player**
-- Plays a folder of music files, with queue, shuffle, repeat and gapless playback.
-- Streams a track from YouTube, Bandcamp or SoundCloud before you download it, so you can listen first.
-- Lyrics: synced when it can find them (Musixmatch, LRCLIB), plain text otherwise (lyrics.ovh, Genius). You can edit them yourself.
-- Media keys and the system media controls work, and it shows what you're playing in Discord.
-
-**Library**
-- Scans your music folder and keeps the library in a local database.
-- Playlists with their own covers, and a warning when you add a song that is already there.
-- Edit tags of a song or a whole album, saved to the file itself.
-- Deleted songs go to an in-app trash first, so you can bring them back.
-- Shows which tracks of an album are missing and helps you find them or look for a better version.
-
-**Search and download**
-- One search over YouTube, Bandcamp and SoundCloud, with a filter for each.
-- Download a track or a whole album. You see the available formats and quality first (FLAC, MP3, Opus) before you pick one.
-- Songs remember where they came from, so you can download them again in better quality later.
-- You can sign in to your YouTube account in Settings.
-
-**Other**
-- Checks for updates and installs them from inside the app.
+- **Search everywhere.** YouTube, Bandcamp and SoundCloud from one search bar.
+- **Listen first.** Stream any result before you download it.
+- **Pick the quality.** See the FLAC, MP3 and Opus options before you download a track or a whole album.
+- **See what's missing.** Finds the tracks of an album you don't have yet, and better versions of the ones you do.
+- **Synced lyrics.** Scrolls along with the song when it can find them, and you can edit them.
+- **A tidy library.** Playlists, tag editing for songs and albums, and a trash you can restore from.
+- **The basics done right.** Gapless playback, media keys, Discord status and updates from inside the app.
 
 ## Download
 
 Windows builds are on the [Releases page](https://github.com/seafoodd/blacktape-desktop/releases). Other systems are not built yet, so for now you'd need to run it from source.
 
-The app downloads [yt-dlp](https://github.com/yt-dlp/yt-dlp) by itself the first time it needs it, so the first download needs an internet connection.
+The app downloads [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](), which are required for downloading songs.
 
 ## Run from source
 
