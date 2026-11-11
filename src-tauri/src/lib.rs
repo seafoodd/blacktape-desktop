@@ -29,7 +29,7 @@ use crate::audio::commands::{
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
-use crate::db::schema::get_migrations;
+use crate::db::schema::{db_file_path, get_migrations, DB_URL};
 use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
 use crate::lyrics::{fetch_lyrics, fetch_lyrics_from_provider, LyricsSource};
 use crate::playlists::commands::{
@@ -751,7 +751,7 @@ pub fn run() {
         })
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:blacktape.db", get_migrations())
+                .add_migrations(DB_URL, get_migrations())
                 .build(),
         )
         .manage(Mutex::new(None::<discord_presence::DiscordRpcClient>))
@@ -766,14 +766,12 @@ pub fn run() {
             // Start a yt-dlp process ahead of time so the first YouTube stream starts faster.
             preview::resolve::warm_up(app_handle.clone());
 
-            let app_dir = app
+            // The sql plugin has already created this file and run the migrations (preload).
+            let config_dir = app
                 .path()
-                .app_data_dir()
-                .expect("failed to get app data dir");
-            if !app_dir.exists() {
-                std::fs::create_dir_all(&app_dir).expect("failed to create app data directory");
-            }
-            let db_path = app_dir.join("blacktape.db");
+                .app_config_dir()
+                .expect("failed to get app config dir");
+            let db_path = db_file_path(&config_dir);
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
             let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
             // The interface reads covers only from the library and the folders of known covers.
@@ -794,6 +792,18 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = ytdlp::check_and_update(updater_handle).await {
                     eprintln!("[blacktape Error] yt-dlp lifecycle sync failed: {e}");
+                }
+            });
+            let deno_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::download::deno::check_and_update(deno_handle).await {
+                    eprintln!("[blacktape Error] deno install failed, YouTube needs it: {e}");
+                }
+            });
+            let ffmpeg_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::download::ffmpeg::check_and_update(ffmpeg_handle).await {
+                    eprintln!("[blacktape Error] ffmpeg install failed, converting downloads needs it: {e}");
                 }
             });
 

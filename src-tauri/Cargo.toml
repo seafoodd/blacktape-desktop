@@ -44,7 +44,6 @@ jwalk = "0.8.1"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 dashmap = "7.0.0-rc2"
 tempfile = "3.27.0"
-winapi = { version = "0.3.9", features = ["fileapi", "winnt"] }
 strsim = "0.11.1"
 unicode-normalization = "0.1"
 html-escape = "0.2.13"
@@ -56,6 +55,8 @@ opus = "0.3.1"
 futures = "0.3.33"
 base64 = "0.22.1"
 tracing = "0.1.44"
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+flate2 = "1.1.9"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -134,6 +135,7 @@ panic = "abort"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader", "Win32_UI_Controls"] }
+winapi = { version = "0.3.9", features = ["fileapi", "winnt"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-process = "2.4.0"

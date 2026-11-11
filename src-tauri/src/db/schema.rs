@@ -1,4 +1,16 @@
+use std::path::{Path, PathBuf};
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+/// The app database as `tauri-plugin-sql` names it. It must match `plugins.sql.preload` in
+/// `tauri.conf.json`: the plugin creates the file and runs the migrations at startup.
+pub const DB_URL: &str = "sqlite:blacktape.db";
+
+/// Where `tauri-plugin-sql` keeps `DB_URL`: a relative name is resolved against the app *config*
+/// folder. The backend opens the same file through sqlx, so it must use this path too; the data
+/// folder is the same on Windows and macOS but not on Linux.
+pub fn db_file_path(app_config_dir: &Path) -> PathBuf {
+    app_config_dir.join(DB_URL.trim_start_matches("sqlite:"))
+}
 
 /// Trash tables (D10). Idempotent, so it runs both as migration 6 and from
 /// `Database::ensure_trash_schema()` (the app DB is also opened by sqlx directly).
@@ -130,4 +142,23 @@ pub fn get_migrations() -> Vec<Migration> {
             kind: MigrationKind::Up,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_preloads_the_database_the_backend_opens() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        let preload = &conf["plugins"]["sql"]["preload"];
+        assert_eq!(preload, &serde_json::json!([DB_URL]));
+    }
+
+    #[test]
+    fn database_file_sits_in_the_config_folder() {
+        let dir = Path::new("config-dir");
+        assert_eq!(db_file_path(dir), dir.join("blacktape.db"));
+    }
 }

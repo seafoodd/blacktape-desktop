@@ -196,14 +196,11 @@ pub fn audio_formats(info: &Value) -> Vec<AudioFormat> {
 
 /// yt-dlp's arguments to read the formats of one track (no download). The url is checked and comes last, after
 /// `--`. Pure.
-pub fn probe_args(url: &str, cookie_arg: Option<&str>) -> Result<Vec<String>, String> {
+pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, String> {
     let url = crate::download::ytdlp::checked_url(url)?;
     let mut args: Vec<String> =
         ["-J", "--skip-download", "--no-playlist", "--no-warnings"].iter().map(|s| s.to_string()).collect();
-    if let Some(cookie) = cookie_arg {
-        args.push("--cookies-from-browser".to_string());
-        args.push(cookie.to_string());
-    }
+    args.extend(cookie_args.iter().cloned());
     args.push("--".to_string());
     args.push(url.to_string());
     Ok(args)
@@ -255,17 +252,20 @@ pub async fn probe_audio_formats(
         None if is_album => first_track_url(platform, &url).await?,
         None => url,
     };
-    // the same browser profile the downloads use, so a signed-in account shows the formats it unlocks
-    let profile = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("browser-profiles")
-        .join("EBWebView")
-        .join("Default");
-    let cookie = (platform != Platform::Soundcloud && profile.exists())
-        .then(|| format!("edge:{}", profile.to_string_lossy()));
-    let args = probe_args(&track, cookie.as_deref())?;
+    // the same session the downloads use, so a signed-in account shows the formats it unlocks
+    let cookies = match platform {
+        Platform::Soundcloud => crate::download::cookies::CookieSource::None,
+        _ => crate::download::cookies::find(&crate::auth::youtube::profile_dir(&app)?),
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let copy_path = crate::download::cookies::copies_dir(&app_data_dir).join(format!("probe_{stamp}.txt"));
+    // `_cookie_copy` deletes the copy once yt-dlp is done
+    let (cookie_args, _cookie_copy) = cookies.args(&copy_path).unwrap_or_default();
+    let args = probe_args(&track, &cookie_args)?;
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = crate::download::ytdlp::execute(&app, &refs).await?;
     let info: Value = serde_json::from_str(&out).map_err(|e| format!("yt-dlp gave no format list: {e}"))?;
@@ -667,13 +667,14 @@ mod tests {
     #[test]
     fn probe_args_read_the_format_list_without_downloading() {
         let url = "https://artist.bandcamp.com/album/x";
-        let args = probe_args(url, None).unwrap();
+        let args = probe_args(url, &[]).unwrap();
         assert_eq!(args, ["-J", "--skip-download", "--no-playlist", "--no-warnings", "--", url]);
     }
 
     #[test]
     fn probe_args_pass_the_browser_cookies_before_the_separator() {
-        let args = probe_args("https://www.youtube.com/watch?v=abc", Some("edge:C:/profile")).unwrap();
+        let cookies = ["--cookies-from-browser".to_string(), "edge:C:/profile".to_string()];
+        let args = probe_args("https://www.youtube.com/watch?v=abc", &cookies).unwrap();
         let cookies = args.iter().position(|a| a == "--cookies-from-browser").unwrap();
         assert_eq!(args[cookies + 1], "edge:C:/profile");
         let separator = args.iter().position(|a| a == "--").unwrap();
@@ -684,7 +685,7 @@ mod tests {
     #[test]
     fn probe_args_refuse_option_like_and_local_urls() {
         for bad in ["--exec=calc", "-x", "file:///C:/a.mp3", "ftp://x.com/a", ""] {
-            assert!(probe_args(bad, None).is_err(), "accepted {bad:?}");
+            assert!(probe_args(bad, &[]).is_err(), "accepted {bad:?}");
         }
     }
 }

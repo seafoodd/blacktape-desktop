@@ -1,13 +1,15 @@
 use crate::types::QualityTier;
 use lofty::file::AudioFile;
 use std::path::Path;
-use winapi::um::fileapi;
-use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
 
+/// Sets or clears the hidden attribute on Windows. Elsewhere a file is hidden by a leading dot in
+/// its name, not an attribute, so this does nothing.
 pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::prelude::OsStrExt;
+        use winapi::um::fileapi;
+        use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
         let wide: Vec<u16> = std::ffi::OsStr::new(path)
             .encode_wide()
             .chain(std::iter::once(0))
@@ -31,6 +33,7 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = (path, hidden);
         Ok(())
     }
 }
@@ -139,51 +142,73 @@ pub fn is_lossless_mp4(bit_depth: Option<u8>, bitrate_kbps: u32) -> bool {
 }
 
 pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> QualityTier {
-    let bitrate = tagged_file.properties().audio_bitrate().unwrap_or(0);
+    let properties = tagged_file.properties();
+    quality_tier(ext, properties.audio_bitrate().unwrap_or(0), properties.bit_depth())
+}
 
+/// Whether a measured bitrate reaches a nominal one. A stream encoded at a nominal rate measures a little under it
+/// as often as over it (YouTube's 128 kbps AAC measures 127.999 kbps, which reads as 127), so 5% below still
+/// counts. Pure.
+fn reaches(bitrate_kbps: u32, nominal_kbps: u32) -> bool {
+    u64::from(bitrate_kbps) * 100 >= u64::from(nominal_kbps) * 95
+}
+
+/// The quality tier of an audio file from its extension, average bitrate and bit depth. Pure.
+fn quality_tier(ext: &str, bitrate: u32, bit_depth: Option<u8>) -> QualityTier {
+    let tier = |high: u32, standard: u32| {
+        if reaches(bitrate, high) {
+            QualityTier::High
+        } else if reaches(bitrate, standard) {
+            QualityTier::Standard
+        } else {
+            QualityTier::Low
+        }
+    };
     match ext.to_lowercase().as_str() {
         "flac" | "wav" | "alac" | "aiff" => QualityTier::Lossless,
-
-        "opus" => {
-            if bitrate >= 128 {
-                QualityTier::High
-            } else if bitrate >= 64 {
-                QualityTier::Standard
-            } else {
-                QualityTier::Low
-            }
-        }
-
+        "opus" => tier(128, 64),
         // ALAC also lives in .m4a: it is lossless, not an AAC bitrate tier
-        "m4a" | "mp4" if is_lossless_mp4(tagged_file.properties().bit_depth(), bitrate) => QualityTier::Lossless,
-
-        "m4a" | "aac" | "ogg" => {
-            if bitrate >= 192 {
-                QualityTier::High
-            } else if bitrate >= 128 {
-                QualityTier::Standard
-            } else {
-                QualityTier::Low
-            }
-        }
-
-        "mp3" => {
-            if bitrate >= 256 {
-                QualityTier::High
-            } else if bitrate >= 192 {
-                QualityTier::Standard
-            } else {
-                QualityTier::Low
-            }
-        }
-
+        "m4a" | "mp4" if is_lossless_mp4(bit_depth, bitrate) => QualityTier::Lossless,
+        "m4a" | "aac" | "ogg" => tier(192, 128),
+        "mp3" => tier(256, 192),
         _ => QualityTier::Low,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{is_lossless_mp4, sanitize, sanitize_fs};
+    use crate::types::QualityTier;
+    use crate::utils::{is_lossless_mp4, quality_tier, reaches, sanitize, sanitize_fs, set_hidden};
+
+    #[test]
+    fn set_hidden_succeeds_on_an_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(set_hidden(dir.path(), true).is_ok());
+        assert!(set_hidden(dir.path(), false).is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn set_hidden_toggles_the_windows_hidden_attribute() {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        let dir = tempfile::tempdir().unwrap();
+        let hidden = |p: &std::path::Path| {
+            std::fs::metadata(p).unwrap().file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+        };
+
+        set_hidden(dir.path(), true).unwrap();
+        assert!(hidden(dir.path()));
+        set_hidden(dir.path(), false).unwrap();
+        assert!(!hidden(dir.path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn set_hidden_reports_a_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(set_hidden(&dir.path().join("missing"), true).is_err());
+    }
 
     #[test]
     fn test_sanitize_removes_illegal_windows_chars() {
@@ -249,6 +274,88 @@ mod tests {
     #[test]
     fn is_lossless_mp4_false_just_below_bitrate_threshold() {
         assert!(!is_lossless_mp4(None, 499));
+    }
+
+    #[test]
+    fn youtube_128k_aac_measured_as_127_is_standard() {
+        assert_eq!(quality_tier("m4a", 127, None), QualityTier::Standard);
+    }
+
+    #[test]
+    fn aac_bitrate_tiers_follow_the_95_percent_thresholds() {
+        assert_eq!(quality_tier("m4a", 192, None), QualityTier::High);
+        assert_eq!(quality_tier("m4a", 183, None), QualityTier::High);
+        assert_eq!(quality_tier("m4a", 182, None), QualityTier::Standard);
+        assert_eq!(quality_tier("m4a", 128, None), QualityTier::Standard);
+        assert_eq!(quality_tier("m4a", 122, None), QualityTier::Standard);
+        assert_eq!(quality_tier("m4a", 121, None), QualityTier::Low);
+        assert_eq!(quality_tier("m4a", 0, None), QualityTier::Low);
+    }
+
+    #[test]
+    fn opus_bitrate_tiers_follow_the_95_percent_thresholds() {
+        assert_eq!(quality_tier("opus", 128, None), QualityTier::High);
+        assert_eq!(quality_tier("opus", 122, None), QualityTier::High);
+        assert_eq!(quality_tier("opus", 121, None), QualityTier::Standard);
+        assert_eq!(quality_tier("opus", 61, None), QualityTier::Standard);
+        assert_eq!(quality_tier("opus", 60, None), QualityTier::Low);
+    }
+
+    #[test]
+    fn mp3_bitrate_tiers_follow_the_95_percent_thresholds() {
+        assert_eq!(quality_tier("mp3", 256, None), QualityTier::High);
+        assert_eq!(quality_tier("mp3", 244, None), QualityTier::High);
+        assert_eq!(quality_tier("mp3", 243, None), QualityTier::Standard);
+        assert_eq!(quality_tier("mp3", 183, None), QualityTier::Standard);
+        assert_eq!(quality_tier("mp3", 182, None), QualityTier::Low);
+    }
+
+    #[test]
+    fn lossless_extensions_are_lossless_regardless_of_bitrate() {
+        assert_eq!(quality_tier("flac", 0, None), QualityTier::Lossless);
+        assert_eq!(quality_tier("wav", 0, None), QualityTier::Lossless);
+        assert_eq!(quality_tier("alac", 0, None), QualityTier::Lossless);
+        assert_eq!(quality_tier("aiff", 0, None), QualityTier::Lossless);
+    }
+
+    #[test]
+    fn m4a_with_bit_depth_is_lossless_alac() {
+        assert_eq!(quality_tier("m4a", 0, Some(16)), QualityTier::Lossless);
+    }
+
+    #[test]
+    fn m4a_at_lossless_bitrate_without_bit_depth_is_lossless() {
+        assert_eq!(quality_tier("m4a", 900, None), QualityTier::Lossless);
+    }
+
+    #[test]
+    fn extension_case_does_not_change_the_tier() {
+        assert_eq!(quality_tier("M4A", 128, None), QualityTier::Standard);
+    }
+
+    #[test]
+    fn unknown_extension_is_low_even_at_high_bitrate() {
+        assert_eq!(quality_tier("xyz", 320, None), QualityTier::Low);
+    }
+
+    #[test]
+    fn reaches_is_true_at_exact_nominal_bitrate() {
+        assert!(reaches(100, 100));
+    }
+
+    #[test]
+    fn reaches_is_true_at_exactly_95_percent_of_nominal() {
+        assert!(reaches(95, 100));
+    }
+
+    #[test]
+    fn reaches_is_false_just_below_95_percent_of_nominal() {
+        assert!(!reaches(94, 100));
+    }
+
+    #[test]
+    fn reaches_does_not_overflow_at_max_values() {
+        assert!(reaches(u32::MAX, u32::MAX));
     }
 }
 

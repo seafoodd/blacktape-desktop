@@ -1,6 +1,9 @@
 pub mod album;
 pub mod album_preview;
 pub mod bandcamp;
+pub mod cookies;
+pub mod deno;
+pub mod ffmpeg;
 pub mod opus_source;
 pub mod orchestrator;
 pub mod post_processor;
