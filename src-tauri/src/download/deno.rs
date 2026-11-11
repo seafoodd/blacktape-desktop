@@ -1,13 +1,74 @@
 //! The JavaScript runtime yt-dlp needs for YouTube: without one it cannot solve YouTube's signature and "n"
 //! challenges, and YouTube then answers with images only ("Requested format is not available") or "The page
-//! needs to be reloaded". The app keeps its own deno next to yt-dlp, so YouTube works with nothing installed.
+//! needs to be reloaded". A deno the user installed is used when it is new enough; otherwise the app keeps its
+//! own next to yt-dlp, so YouTube works with nothing installed.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tauri::{path::BaseDirectory, AppHandle, Manager};
+
+/// yt-dlp's challenge solver needs deno 2.0 or newer.
+const MIN_MAJOR: u32 = 2;
+
+/// The version in `deno --version` output ("deno 2.7.7 (stable, release, x86_64-pc-windows-msvc)"). Pure.
+fn parse_version(output: &str) -> Option<(u32, u32, u32)> {
+    let version = output.lines().next()?.trim().strip_prefix("deno ")?.split_whitespace().next()?;
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
+/// The first candidate that exists and whose version yt-dlp can use. Pure apart from `exists` and `version_of`.
+fn first_usable(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    exists: impl Fn(&Path) -> bool,
+    version_of: impl Fn(&Path) -> Option<(u32, u32, u32)>,
+) -> Option<PathBuf> {
+    candidates
+        .into_iter()
+        .filter(|path| exists(path))
+        .find(|path| version_of(path).is_some_and(|(major, _, _)| major >= MIN_MAJOR))
+}
+
+/// Where a deno the user installed can be: on PATH, in deno's own install folder, or where distributions and
+/// Homebrew put it.
+fn system_candidates(os: &str) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    if let Some(home) = std::env::var_os(if os == "windows" { "USERPROFILE" } else { "HOME" }) {
+        dirs.push(PathBuf::from(home).join(".deno").join("bin"));
+    }
+    if os != "windows" {
+        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from));
+    }
+    // a relative entry (".") would run whatever deno sits in the current folder
+    dirs.into_iter().filter(|dir| dir.is_absolute()).map(|dir| dir.join(binary_name(os))).collect()
+}
+
+/// `deno --version` of the binary at `path`.
+fn version_of(path: &Path) -> Option<(u32, u32, u32)> {
+    let mut cmd = std::process::Command::new(path);
+    cmd.arg("--version").stdin(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().ok().filter(|o| o.status.success())?;
+    parse_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// A deno the user installed that yt-dlp can use. Looked up once per app run: it starts a process.
+fn system_deno() -> Option<&'static Path> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| first_usable(system_candidates(std::env::consts::OS), Path::is_file, version_of))
+        .as_deref()
+}
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -54,9 +115,12 @@ fn sha256_in(sums: &str) -> Option<String> {
     hashes.next().is_none().then(|| hash.to_ascii_lowercase())
 }
 
-/// yt-dlp's arguments to use the app's deno, empty while it is not installed (yt-dlp then looks for one itself).
+/// yt-dlp's arguments to use the user's deno, else the app's, else none (yt-dlp then looks for one itself).
 pub fn runtime_args(app: &AppHandle) -> Vec<String> {
-    runtime_args_for(&get_path(app))
+    match system_deno() {
+        Some(deno) => runtime_args_for(deno),
+        None => runtime_args_for(&get_path(app)),
+    }
 }
 
 fn runtime_args_for(deno: &Path) -> Vec<String> {
@@ -86,8 +150,24 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<reqwest::Response,
         .map_err(|e| e.to_string())
 }
 
-/// Installs or updates the app's deno to the latest release, verified against its published checksum.
+/// Installs or updates the app's deno to the latest release, verified against its published checksum. Nothing is
+/// downloaded when the user has a usable deno, and an earlier app copy is then removed (about 100 MB).
 pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
+    // the lookup starts `deno --version`: keep it off the async workers
+    let system = tauri::async_runtime::spawn_blocking(|| system_deno().map(Path::to_path_buf))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(deno) = system {
+        println!("[deno] Using the installed deno at {deno:?}");
+        let own = get_path(&app);
+        if own.is_file() {
+            // Windows refuses while the app's copy runs; it is then removed on a later start
+            if fs::remove_file(&own).is_ok() {
+                let _ = fs::remove_file(own.with_extension("version"));
+            }
+        }
+        return Ok(());
+    }
     let os = std::env::consts::OS;
     let Some(asset) = release_asset(os, std::env::consts::ARCH) else {
         return Ok(()); // no deno build for this machine: yt-dlp falls back to a runtime it finds itself
@@ -161,6 +241,50 @@ mod tests {
         assert_eq!(release_asset("windows", "x86_64"), Some("deno-x86_64-pc-windows-msvc.zip"));
         assert_eq!(release_asset("macos", "aarch64"), Some("deno-aarch64-apple-darwin.zip"));
         assert_eq!(release_asset("linux", "arm"), None);
+    }
+
+    #[test]
+    fn version_is_read_from_deno_version_output() {
+        let out = "deno 2.7.7 (stable, release, x86_64-pc-windows-msvc)\nv8 14.6.202.9-rusty\ntypescript 5.9.2\n";
+        assert_eq!(parse_version(out), Some((2, 7, 7)));
+        assert_eq!(parse_version("deno 1.46.3 (release, x86_64-unknown-linux-gnu)"), Some((1, 46, 3)));
+    }
+
+    #[test]
+    fn output_that_is_not_deno_version_has_no_version() {
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("node v22.1.0"), None);
+        assert_eq!(parse_version("deno 2.x.1"), None);
+        assert_eq!(parse_version("deno 2.7"), None);
+    }
+
+    #[test]
+    fn the_first_installed_deno_2_or_newer_is_chosen() {
+        let candidates = ["/a/deno", "/b/deno", "/c/deno", "/d/deno"].map(PathBuf::from);
+        let exists = |p: &Path| p != Path::new("/a/deno");
+        let version = |p: &Path| match p.to_str() {
+            Some("/b/deno") => Some((1, 46, 3)), // too old for yt-dlp
+            Some("/c/deno") => Some((2, 0, 0)),
+            _ => Some((2, 9, 8)),
+        };
+        assert_eq!(first_usable(candidates, exists, version), Some(PathBuf::from("/c/deno")));
+    }
+
+    #[test]
+    fn no_deno_is_chosen_when_none_is_usable() {
+        let candidates = ["/a/deno", "/b/deno"].map(PathBuf::from);
+        let version = |p: &Path| (p == Path::new("/a/deno")).then_some((1, 0, 0));
+        assert_eq!(first_usable(candidates, |_| true, version), None);
+    }
+
+    #[test]
+    fn system_candidates_are_absolute_and_named_for_the_platform() {
+        let os = std::env::consts::OS;
+        let candidates = system_candidates(os);
+        assert!(candidates.iter().all(|p| p.is_absolute()), "{candidates:?}");
+        assert!(candidates.iter().all(|p| p.file_name() == Some(binary_name(os).as_ref())));
+        #[cfg(unix)]
+        assert!(candidates.contains(&PathBuf::from("/usr/bin/deno")));
     }
 
     #[test]
