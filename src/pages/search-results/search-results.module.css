@@ -192,6 +192,7 @@
 
 .selectInput {
     cursor: pointer;
+    padding-right: 26px; /* room for the arrow (globals.css) */
 }
 
 .iconBtn,

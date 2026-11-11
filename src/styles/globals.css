@@ -20,6 +20,50 @@ html {
     background-color: var(--bg-background);
 }
 
+/* WebKitGTK (Linux) draws a native <select> in the GTK theme's light colours under the app's light text, which
+   leaves it unreadable. The app draws it instead, the same on every platform; the class sets padding for the arrow. */
+select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 6px;
+}
+
+select option {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+}
+
+/* Linux gives a window without decorations no frame, rounded corners or shadow, so the settings window and the
+   main window run into each other. The app draws a rounded edge itself (see windowFrame.ts); the window is
+   transparent, so the tint moves from <html>, whose background always fills the whole window, to <body>. */
+:root[data-platform="linux"] {
+    --window-radius: 10px;
+    background-color: transparent;
+}
+
+:root[data-platform="linux"][data-maximized] {
+    --window-radius: 0px;
+}
+
+:root[data-platform="linux"] body {
+    background-color: var(--bg-background);
+    border-radius: var(--window-radius);
+    clip-path: inset(0 round var(--window-radius));
+}
+
+:root[data-platform="linux"]:not([data-maximized]) body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--window-radius);
+    pointer-events: none;
+    z-index: 2147483647;
+}
+
 *:focus-visible {
     outline: 2px solid var(--color-primaryLight);
     z-index: 0;

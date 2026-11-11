@@ -8,6 +8,9 @@ import "./styles/globals.css";
 import "./styles/utilities.css";
 import { ThemeProvider } from "./shared/providers/theme-provider/ThemeProvider.tsx";
 import { ModalHost } from "@/shared/ui/modal";
+import { setupWindowFrame } from "./windowFrame.ts";
+
+setupWindowFrame().catch((err) => console.error("Failed to set up the window frame:", err));
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
