@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BG_BLUR,
   DEFAULT_BG_OPACITY,
+  hexToRgb,
+  parseBlurSetting,
   parseUnitSetting,
   windowBlurEnabled,
 } from "@/shared/providers/theme-provider/appearance.ts";
@@ -9,7 +11,7 @@ import {
 describe("defaults", () => {
   it("start fully opaque with no blur", () => {
     expect(DEFAULT_BG_OPACITY).toBe(1);
-    expect(DEFAULT_BG_BLUR).toBe(0);
+    expect(DEFAULT_BG_BLUR).toBe(false);
   });
 });
 
@@ -54,20 +56,58 @@ describe("parseUnitSetting", () => {
   });
 });
 
+describe("parseBlurSetting", () => {
+  it("gives the fallback when nothing is stored", () => {
+    expect(parseBlurSetting(null, false)).toBe(false);
+    expect(parseBlurSetting(null, true)).toBe(true);
+  });
+
+  it("reads true and false, ignoring surrounding whitespace", () => {
+    expect(parseBlurSetting("true", false)).toBe(true);
+    expect(parseBlurSetting(" false ", true)).toBe(false);
+  });
+
+  it("reads an old slider value: above 0 is on, 0 is off", () => {
+    expect(parseBlurSetting("0.5", false)).toBe(true);
+    expect(parseBlurSetting("0", true)).toBe(false);
+  });
+
+  it("gives the fallback for empty or unknown text", () => {
+    expect(parseBlurSetting("", true)).toBe(true);
+    expect(parseBlurSetting("yes", false)).toBe(false);
+    expect(parseBlurSetting("NaN", true)).toBe(true);
+  });
+});
+
 describe("windowBlurEnabled", () => {
-  it("is off at full opacity even with blur", () => {
-    expect(windowBlurEnabled(1, 0.5)).toBe(false);
+  it("is off at full opacity even with blur on", () => {
+    expect(windowBlurEnabled(1, true)).toBe(false);
   });
 
-  it("is off with no blur, even when see-through", () => {
-    expect(windowBlurEnabled(0.5, 0)).toBe(false);
+  it("is off with blur off, even when see-through", () => {
+    expect(windowBlurEnabled(0.5, false)).toBe(false);
   });
 
-  it("is on when see-through and blurred", () => {
-    expect(windowBlurEnabled(0.5, 0.3)).toBe(true);
+  it("is on when see-through and blur is on", () => {
+    expect(windowBlurEnabled(0.5, true)).toBe(true);
+    expect(windowBlurEnabled(0, true)).toBe(true);
+  });
+});
+
+describe("hexToRgb", () => {
+  it("reads six-digit colours, with or without #, in any case", () => {
+    expect(hexToRgb("#0F1015")).toEqual([15, 16, 21]);
+    expect(hexToRgb("0f1015")).toEqual([15, 16, 21]);
   });
 
-  it("is on when fully transparent and blurred", () => {
-    expect(windowBlurEnabled(0, 1)).toBe(true);
+  it("expands three-digit colours", () => {
+    expect(hexToRgb("#fa0")).toEqual([255, 170, 0]);
+  });
+
+  it("gives black for anything that is not a hex colour", () => {
+    expect(hexToRgb("")).toEqual([0, 0, 0]);
+    expect(hexToRgb("rgb(1, 2, 3)")).toEqual([0, 0, 0]);
+    expect(hexToRgb("#12345")).toEqual([0, 0, 0]);
+    expect(hexToRgb("#gggggg")).toEqual([0, 0, 0]);
   });
 });

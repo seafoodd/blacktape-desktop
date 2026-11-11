@@ -73,3 +73,13 @@ export const toggleShuffle = (): void => {
 export const setRepeatMode = (repeatMode: RepeatMode): void => {
   invoke("set_repeat_mode", { repeatMode: repeatMode });
 };
+
+/** Whether this platform can blur what is behind the window (Windows and macOS). */
+export const windowBlurSupported = (): Promise<boolean> =>
+  invoke<boolean>("window_blur_supported");
+
+/** Turns the native blur behind the calling window on or off; `tint` is the theme background. */
+export const setWindowBlur = (
+  enabled: boolean,
+  tint: [number, number, number],
+): Promise<void> => invoke("set_window_blur", { enabled, tint });

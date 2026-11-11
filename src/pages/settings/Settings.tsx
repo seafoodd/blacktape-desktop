@@ -3,7 +3,7 @@ import { WindowControls } from "@/layouts/WindowControls";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
 import { pickFolder } from "@/shared/lib/ui/dialog.ts";
-import { scanMusic } from "@/shared/lib/audio.ts";
+import { scanMusic, windowBlurSupported } from "@/shared/lib/audio.ts";
 import {
   MAX_SIZE_OPTIONS,
   RETENTION_OPTIONS,
@@ -40,6 +40,13 @@ export const Settings = () => {
   });
 
   const [trashConfig, setTrashConfig] = useState<TrashSettings | null>(null);
+  const [blurSupported, setBlurSupported] = useState(false);
+
+  useEffect(() => {
+    windowBlurSupported()
+      .then(setBlurSupported)
+      .catch((err) => console.error("Failed to check window blur support:", err));
+  }, []);
 
   useEffect(() => {
     getTrashSettings()
@@ -173,27 +180,26 @@ export const Settings = () => {
                 />
               </div>
 
-              <div className={styles.settingRow}>
-                <label htmlFor="bg-blur-slider">
-                  Background Blur ({Math.round(bgBlur * 100)}%)
-                  {bgOpacity >= 1 && (
-                    <span className={styles.mutedText}>
-                      {" "}
-                      (lower the opacity to see it)
-                    </span>
-                  )}
-                </label>
-                <input
-                  id="bg-blur-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={bgBlur}
-                  disabled={bgOpacity >= 1}
-                  onChange={(e) => setBgBlur(parseFloat(e.target.value))}
-                />
-              </div>
+              {blurSupported && (
+                <div className={styles.settingRow}>
+                  <label htmlFor="bg-blur-toggle">
+                    Background Blur
+                    {bgOpacity >= 1 && (
+                      <span className={styles.mutedText}>
+                        {" "}
+                        (lower the opacity to see it)
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    id="bg-blur-toggle"
+                    type="checkbox"
+                    checked={bgBlur}
+                    disabled={bgOpacity >= 1}
+                    onChange={(e) => setBgBlur(e.target.checked)}
+                  />
+                </div>
+              )}
             </section>
           )}
 
