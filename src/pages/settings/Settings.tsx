@@ -18,8 +18,9 @@ import styles from "./settings.module.css";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { UpdateSettings } from "@/features/updater/ui/UpdateSettings";
 import { AccountsSettings } from "@/features/accounts/ui/AccountsSettings";
+import { DownloaderSettings } from "@/features/downloader-setup";
 
-type SettingsTab = "appearance" | "playback" | "library" | "accounts" | "about";
+type SettingsTab = "appearance" | "playback" | "library" | "downloader" | "accounts" | "about";
 
 export const Settings = () => {
   const {
@@ -116,6 +117,12 @@ export const Settings = () => {
             onClick={() => setActiveTab("library")}
           >
             Library
+          </button>
+          <button
+            className={`${styles.navItem} ${activeTab === "downloader" ? styles.active : ""}`}
+            onClick={() => setActiveTab("downloader")}
+          >
+            Downloader
           </button>
           <button
             className={`${styles.navItem} ${activeTab === "accounts" ? styles.active : ""}`}
@@ -332,6 +339,17 @@ export const Settings = () => {
             <section className={styles.section}>
               <h2>Accounts</h2>
               <AccountsSettings buttonClassName={styles.actionButton} />
+            </section>
+          )}
+
+          {activeTab === "downloader" && (
+            <section className={styles.section}>
+              <h2>Downloader</h2>
+              <DownloaderSettings
+                rowClassName={styles.settingRow}
+                buttonClassName={styles.actionButton}
+                mutedClassName={styles.mutedText}
+              />
             </section>
           )}
 

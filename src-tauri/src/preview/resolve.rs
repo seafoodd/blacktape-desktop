@@ -382,6 +382,11 @@ pub fn warm_up(app: AppHandle) {
     spare::refill(app);
 }
 
+/// Replaces the waiting process with one of the yt-dlp now on disk (after an update).
+pub fn restart_spare(app: AppHandle) {
+    spare::restart(app);
+}
+
 async fn run_ytdlp(app: &AppHandle, clients: &str, url: &str) -> Result<String, String> {
     let mut args = youtube_args(clients);
     args.push("--".to_string());
@@ -438,6 +443,15 @@ mod spare {
                 None
             }
         }
+    }
+
+    /// Ends the waiting process (killed when dropped) and starts a new one.
+    pub fn restart(app: AppHandle) {
+        tauri::async_runtime::spawn(async move {
+            let mut slot = slot().lock().await;
+            *slot = None;
+            *slot = spawn(&app);
+        });
     }
 
     /// Makes sure a process is waiting for the next url.

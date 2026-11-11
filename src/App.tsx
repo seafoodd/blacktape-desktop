@@ -10,6 +10,7 @@ import { Settings } from "@/pages/settings/Settings";
 import Playlist from "@/pages/playlist/Playlist.tsx";
 import Trash from "@/pages/trash/Trash.tsx";
 import AlbumPreview from "@/pages/album-preview/AlbumPreview.tsx";
+import { SetupBanner } from "@/features/downloader-setup";
 import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrackMenuHost.tsx";
 
 function PlayerView() {
@@ -28,6 +29,7 @@ function PlayerView() {
       rightSidebar={<RightSidebar />}
       footer={<PlayerControls />}
     >
+      <SetupBanner />
       {activeView === "ARTIST_ALBUMS" && <ArtistAlbums />}
       {activeView === "SEARCH_RESULTS" && <SearchResults />}
       {activeView === "ALBUM_PREVIEW" && <AlbumPreview />}

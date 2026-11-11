@@ -83,3 +83,32 @@ export const setWindowBlur = (
   enabled: boolean,
   tint: [number, number, number],
 ): Promise<void> => invoke("set_window_blur", { enabled, tint });
+
+/** The helper programs behind downloads and previews. */
+export type ToolName = "ytDlp" | "deno" | "ffmpeg";
+
+export interface ToolStatus {
+  phase: "checking" | "downloading" | "ready" | "failed" | "unsupported";
+  /** A working copy is installed (possibly an older one while an update downloads or after one failed). */
+  usable: boolean;
+  version: string | null;
+  /** "system": installed by the user; "app": the app's own copy. */
+  source: "system" | "app" | null;
+  /** Bytes on disk of the app's copy. */
+  size: number | null;
+  downloaded: number;
+  total: number | null;
+  error: string | null;
+}
+
+export type ToolsStatus = Record<ToolName, ToolStatus> & {
+  /** Grows with every change: of two snapshots, the higher one is newer. */
+  seq: number;
+};
+
+/** Setup state of yt-dlp, deno and ffmpeg; later changes arrive as `tools-status` events. */
+export const getToolsStatus = (): Promise<ToolsStatus> =>
+  invoke<ToolsStatus>("get_tools_status");
+
+/** Looks for newer yt-dlp, deno and ffmpeg releases now and retries setups that failed. */
+export const checkTools = (): Promise<void> => invoke("check_tools");

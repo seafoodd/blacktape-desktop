@@ -8,10 +8,21 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
+/// What the queue shows while a download waits for yt-dlp, deno or ffmpeg to be installed the first time.
+const WAITING_FOR_SETUP: &str = "Waiting for downloader setup…";
+
 pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Result<(), String> {
     let task_id = task.id.clone();
     let mut is_album = task.payload.is_album();
 
+    {
+        use crate::download::tools::{self, Tool};
+        if tools::setting_up(&tools::snapshot(), &Tool::ALL) {
+            emit_event(&app_handle, "download-task-started", &task_id, WAITING_FOR_SETUP);
+            // a setup that failed is reported once the download starts
+            let _ = tools::wait_for(&Tool::ALL, tools::SETUP_WAIT).await;
+        }
+    }
     emit_event(
         &app_handle,
         "download-task-started",

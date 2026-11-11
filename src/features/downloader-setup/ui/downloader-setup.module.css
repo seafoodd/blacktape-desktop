@@ -1,0 +1,59 @@
+.banner {
+    position: sticky;
+    top: 8px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 12px 0;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--color-muted);
+    font-size: var(--font-sm, 12px);
+    overflow: hidden;
+}
+
+.bannerButton {
+    margin-left: auto;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--color-primary);
+    background: transparent;
+    color: var(--color-primaryLight);
+    cursor: pointer;
+    white-space: nowrap;
+
+    &:hover {
+        background-color: var(--color-primary);
+        color: var(--color-on);
+    }
+}
+
+.bannerProgress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    background: var(--color-primary);
+    transition: width 0.2s linear;
+}
+
+.toolName {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.toolFailed {
+    color: var(--color-error);
+    max-width: 50%;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+.toolStatus {
+    flex-shrink: 0;
+    white-space: nowrap;
+}

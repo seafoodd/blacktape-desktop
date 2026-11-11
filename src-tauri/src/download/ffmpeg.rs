@@ -4,9 +4,7 @@
 
 use flate2::read::GzDecoder;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
@@ -93,96 +91,86 @@ pub fn location_args(app: &AppHandle) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Unpacks one gzipped binary.
-fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    GzDecoder::new(bytes).read_to_end(&mut out).map_err(|e| format!("cannot unpack ffmpeg: {e}"))?;
-    Ok(out)
+/// Unpacks the downloaded gzipped binary `gz` into `dest`.
+fn gunzip_file(gz: &Path, dest: &Path) -> Result<(), String> {
+    let input = fs::File::open(gz).map_err(|e| e.to_string())?;
+    let mut out = fs::File::create(dest).map_err(|e| e.to_string())?;
+    let result = std::io::copy(&mut GzDecoder::new(std::io::BufReader::new(input)), &mut out)
+        .map_err(|e| format!("cannot unpack ffmpeg: {e}"))
+        .and_then(|_| out.sync_all().map_err(|e| e.to_string()));
+    if result.is_err() {
+        let _ = fs::remove_file(dest);
+    }
+    result
 }
 
-/// Installs or updates the app's ffmpeg and ffprobe, verified against GitHub's checksums. Nothing is downloaded
-/// when the user has their own ffmpeg.
-pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
-    if let Some(dir) = system_dir() {
+/// Installs or updates the app's ffmpeg and ffprobe when a check is due (`force`: now), verified against GitHub's
+/// checksums. Nothing is downloaded when the user has their own ffmpeg.
+pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String> {
+    use crate::download::tools::{self, Source, Tool};
+    if let Some(dir) = tauri::async_runtime::spawn_blocking(system_dir).await.map_err(|e| e.to_string())? {
         println!("[ffmpeg] Using the installed ffmpeg in {dir:?}");
+        tools::ready(app, Tool::Ffmpeg, None, Source::System, &[]);
         return Ok(());
     }
     let os = std::env::consts::OS;
     let Some(suffix) = platform_suffix(os, std::env::consts::ARCH) else {
-        return Ok(()); // no build for this machine: downloads that need converting report ffmpeg missing
-    };
-    let client = reqwest::Client::builder()
-        .user_agent("blacktape-desktop")
-        .build()
-        .map_err(|e| e.to_string())?;
-    let release: GithubRelease = client
-        .get(RELEASE_API)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let dir = app_dir(&app);
-    let version_file = dir.join("version");
-    let marker = format!("{} {suffix}", release.tag_name.trim());
-    let installed = TOOLS.iter().all(|tool| dir.join(exe_name(tool, os)).is_file());
-    if installed && fs::read_to_string(&version_file).unwrap_or_default().trim() == marker {
+        // no build for this machine: downloads that need converting report ffmpeg missing
+        tools::unsupported(app, Tool::Ffmpeg);
         return Ok(());
-    }
-    println!("[ffmpeg] Installing {}...", release.tag_name);
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-
-    for tool in TOOLS {
-        let name = asset_name(tool, suffix);
-        let asset = release
-            .assets
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| format!("{name} not found in the ffmpeg release"))?;
-        if !asset.browser_download_url.starts_with(DOWNLOAD_PREFIX) {
-            return Err(format!("unexpected ffmpeg download url {}", asset.browser_download_url));
-        }
-        let expected = asset
-            .digest
-            .as_deref()
-            .and_then(sha256_of_digest)
-            .ok_or_else(|| format!("no checksum for {name}"))?;
-        let gz = client
-            .get(&asset.browser_download_url)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map_err(|e| e.to_string())?;
-        let actual: String = Sha256::digest(&gz).iter().map(|b| format!("{b:02x}")).collect();
-        if actual != expected {
-            return Err(format!("{name} checksum mismatch: expected {expected}, got {actual}"));
-        }
-        let binary = gunzip(&gz)?;
-
-        // written beside the binary and swapped in whole, so a failed install never leaves half a file
-        let target = dir.join(exe_name(tool, os));
-        let partial = target.with_extension("download");
-        let written = fs::write(&partial, &binary).map_err(|e| e.to_string()).and_then(|()| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&partial, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-            }
-            fs::rename(&partial, &target).map_err(|e| format!("cannot replace {tool}: {e}"))
-        });
-        if let Err(e) = written {
-            let _ = fs::remove_file(&partial);
-            return Err(e);
+    };
+    let dir = app_dir(app);
+    let version_file = dir.join("version");
+    let stamp = dir.join("checked");
+    let files: Vec<PathBuf> = TOOLS.iter().map(|tool| dir.join(exe_name(tool, os))).collect();
+    let installed = files.iter().all(|f| f.is_file());
+    let local_marker = fs::read_to_string(&version_file).unwrap_or_default();
+    if installed {
+        tools::found(app, Tool::Ffmpeg, tools::version_of_marker(&local_marker), Source::App, &files);
+        if !force && !tools::check_due(Tool::Ffmpeg, &stamp) {
+            tools::ready(app, Tool::Ffmpeg, tools::version_of_marker(&local_marker), Source::App, &files);
+            return Ok(());
         }
     }
-    fs::write(&version_file, &marker).map_err(|e| e.to_string())?;
-    println!("[ffmpeg] Install complete!");
+
+    let client = tools::http_client()?;
+    let release: GithubRelease = tools::get_json(&client, RELEASE_API).await?;
+    let marker = format!("{} {suffix}", release.tag_name.trim());
+    if !installed || local_marker.trim() != marker {
+        println!("[ffmpeg] Installing {}...", release.tag_name);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        for (tool, target) in TOOLS.iter().zip(&files) {
+            let name = asset_name(tool, suffix);
+            let asset = release
+                .assets
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or_else(|| format!("{name} not found in the ffmpeg release"))?;
+            let expected = asset
+                .digest
+                .as_deref()
+                .and_then(sha256_of_digest)
+                .ok_or_else(|| format!("no checksum for {name}"))?;
+            let gz = target.with_extension("gz.download");
+            tools::download(app, Tool::Ffmpeg, &client, &asset.browser_download_url, DOWNLOAD_PREFIX, &expected, &gz)
+                .await?;
+
+            // unpacked beside the binary and swapped in whole, so a failed install never leaves half a file
+            let partial = target.with_extension("download");
+            let (gz_for_unpack, partial_for_unpack) = (gz.clone(), partial.clone());
+            let unpacked = tauri::async_runtime::spawn_blocking(move || gunzip_file(&gz_for_unpack, &partial_for_unpack))
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r);
+            let _ = fs::remove_file(&gz);
+            unpacked?;
+            tools::swap_in(&partial, target)?;
+        }
+        fs::write(&version_file, &marker).map_err(|e| e.to_string())?;
+        println!("[ffmpeg] Install complete!");
+    }
+    tools::mark_checked(&stamp);
+    tools::ready(app, Tool::Ffmpeg, tools::version_of_marker(&marker), Source::App, &files);
     Ok(())
 }
 
@@ -280,12 +268,19 @@ mod tests {
         let data = b"ffprobe binary".to_vec();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&data).unwrap();
-        let gz = encoder.finish().unwrap();
-        assert_eq!(gunzip(&gz).unwrap(), data);
+        let dir = tempfile::tempdir().unwrap();
+        let (gz, out) = (dir.path().join("ffprobe.gz"), dir.path().join("ffprobe"));
+        fs::write(&gz, encoder.finish().unwrap()).unwrap();
+        gunzip_file(&gz, &out).unwrap();
+        assert_eq!(fs::read(&out).unwrap(), data);
     }
 
     #[test]
     fn gunzip_refuses_data_that_is_not_gzip() {
-        assert!(gunzip(b"not gzip").is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let (gz, out) = (dir.path().join("ffmpeg.gz"), dir.path().join("ffmpeg"));
+        fs::write(&gz, b"not gzip").unwrap();
+        assert!(gunzip_file(&gz, &out).is_err());
+        assert!(!out.exists(), "a half-unpacked file is removed");
     }
 }
