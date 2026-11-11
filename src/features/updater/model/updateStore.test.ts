@@ -1,13 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { downloadPercent, installLabel, useUpdateStore } from "./updateStore.ts";
+import {
+  downloadPercent,
+  installLabel,
+  shouldFlash,
+  useUpdateStore,
+} from "./updateStore.ts";
+import { flashTaskbar } from "../lib/flashTaskbar";
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
+vi.mock("../lib/flashTaskbar", () => ({ flashTaskbar: vi.fn(async () => {}) }));
 
 const checkMock = vi.mocked(check);
 const relaunchMock = vi.mocked(relaunch);
+const flashTaskbarMock = vi.mocked(flashTaskbar);
 
 const makeUpdate = (downloadAndInstall = vi.fn(async () => {})) =>
   ({ version: "0.5.0", body: "  notes  ", downloadAndInstall }) as any;
@@ -15,6 +23,8 @@ const makeUpdate = (downloadAndInstall = vi.fn(async () => {})) =>
 beforeEach(() => {
   checkMock.mockReset();
   relaunchMock.mockReset();
+  flashTaskbarMock.mockReset();
+  flashTaskbarMock.mockImplementation(async () => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   useUpdateStore.setState({
@@ -207,5 +217,63 @@ describe("installUpdate", () => {
     expect(downloadAndInstall).not.toHaveBeenCalled();
     expect(relaunchMock).not.toHaveBeenCalled();
     expect(useUpdateStore.getState().status).toBe("downloading");
+  });
+});
+
+describe("shouldFlash", () => {
+  it("is true for a background check that finds a new version", () => {
+    expect(shouldFlash(true, "0.4.9", "0.5.0")).toBe(true);
+  });
+
+  it("is false for a check the user asked for", () => {
+    expect(shouldFlash(false, null, "0.5.0")).toBe(false);
+  });
+
+  it("is false for a background check that finds the already known version", () => {
+    expect(shouldFlash(true, "0.5.0", "0.5.0")).toBe(false);
+  });
+
+  it("is true for a background check when no version was known yet", () => {
+    expect(shouldFlash(true, null, "0.5.0")).toBe(true);
+  });
+});
+
+describe("checkForUpdate taskbar flash", () => {
+  it("flashes once when a silent check finds a version from idle", async () => {
+    checkMock.mockResolvedValue(makeUpdate());
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    expect(flashTaskbarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not flash again when a second silent check finds the same version", async () => {
+    checkMock.mockResolvedValue(makeUpdate());
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    expect(flashTaskbarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not flash for a check the user asked for", async () => {
+    checkMock.mockResolvedValue(makeUpdate());
+    await useUpdateStore.getState().checkForUpdate();
+    expect(flashTaskbarMock).not.toHaveBeenCalled();
+  });
+
+  it("flashes when a silent check finds 0.5.0 while 0.4.9 was known", async () => {
+    useUpdateStore.setState({ version: "0.4.9" });
+    checkMock.mockResolvedValue(makeUpdate());
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    expect(flashTaskbarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not flash when the check finds no update", async () => {
+    checkMock.mockResolvedValue(null);
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    expect(flashTaskbarMock).not.toHaveBeenCalled();
+  });
+
+  it("does not flash when the check is rejected", async () => {
+    checkMock.mockRejectedValue(new Error("offline"));
+    await useUpdateStore.getState().checkForUpdate({ silent: true });
+    expect(flashTaskbarMock).not.toHaveBeenCalled();
   });
 });

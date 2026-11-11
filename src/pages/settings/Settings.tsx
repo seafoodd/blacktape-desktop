@@ -312,6 +312,7 @@ export const Settings = () => {
                 rowClassName={styles.settingRow}
                 buttonClassName={styles.actionButton}
                 mutedClassName={styles.mutedText}
+                selectClassName={styles.select}
               />
             </section>
           )}

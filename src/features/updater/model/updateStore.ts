@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { flashTaskbar } from "../lib/flashTaskbar";
 
 export type UpdateStatus =
   | "idle"
@@ -21,7 +22,10 @@ interface UpdateState {
   total: number | null;
   error: string | null;
   update: Update | null;
-  /** A silent check (on startup) keeps network errors out of the interface. */
+  /**
+   * A silent check (on startup and every hour) keeps network errors out of the interface and flashes the
+   * taskbar when it finds a version that was not known yet.
+   */
   checkForUpdate: (options?: { silent?: boolean }) => Promise<void>;
   /** Downloads and installs the found update, then restarts the app. */
   installUpdate: () => Promise<void>;
@@ -48,12 +52,14 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         set({ status: "upToDate", update: null, version: null, notes: null });
         return;
       }
+      const known = get().version;
       set({
         status: "available",
         update,
         version: update.version,
         notes: update.body?.trim() || null,
       });
+      if (shouldFlash(silent, known, update.version)) void flashTaskbar();
     } catch (e) {
       console.warn("[updater] check failed:", e);
       set(
@@ -90,6 +96,14 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Whether finding `found` should draw attention: only a background check (the user did not ask), and only once
+ * per version (the periodic check finds the same update again and again). Pure.
+ */
+export function shouldFlash(silent: boolean, known: string | null, found: string): boolean {
+  return silent && known !== found;
+}
 
 /** Download progress in whole percent, or null while the size is unknown. */
 export function downloadPercent(downloaded: number, total: number | null): number | null {
