@@ -82,6 +82,14 @@ describe("isSettingUp", () => {
 });
 
 describe("bannerState", () => {
+  it("stays hidden while tools are only being looked up at start", () => {
+    const status = all({
+      deno: tool({ phase: "checking", usable: false }),
+      ffmpeg: tool({ phase: "checking", usable: false }),
+    });
+    expect(bannerState(status)).toBeNull();
+  });
+
   it("is null without a status", () => {
     expect(bannerState(null)).toBeNull();
   });
@@ -183,13 +191,13 @@ describe("toolStatusText", () => {
     ).toBe("Downloading… 4.2 MB");
   });
 
-  it("says a system install is installed on this computer when ready", () => {
+  it("says a system install is ready", () => {
     expect(toolStatusText(tool({ phase: "ready", source: "system" }))).toBe(
-      "Installed on this computer",
+      "Ready",
     );
   });
 
-  it("says the app copy is up to date when ready", () => {
+  it("says the downloaded copy is ready", () => {
     expect(toolStatusText(tool({ phase: "ready", source: "app" }))).toBe("Ready");
   });
 
@@ -219,16 +227,16 @@ describe("toolStatusText", () => {
 });
 
 describe("toolDetails", () => {
-  it("joins version, app copy and size", () => {
+  it("joins version, who installed it and size", () => {
     expect(
       toolDetails(tool({ version: "2026.10.26", source: "app", size: 22 * MB })),
-    ).toBe("2026.10.26 · app copy · 22 MB");
+    ).toBe("2026.10.26 · downloaded by Blacktape · 22 MB");
   });
 
   it("shows a system install without a size", () => {
     expect(
       toolDetails(tool({ version: "2026.10.26", source: "system", size: 22 * MB })),
-    ).toBe("2026.10.26 · system install");
+    ).toBe("2026.10.26 · installed on your system");
   });
 
   it("is empty when nothing is known about the tool", () => {

@@ -32,13 +32,14 @@ export type BannerState =
   | { kind: "failed"; error: string };
 
 /**
- * The first-run banner: shown while any tool is installed for the first time, or when yt-dlp, without which
+ * The first-run banner: shown while a tool downloads for its first install, or when yt-dlp, without which
  * nothing downloads, could not be installed. `null` once everything is in place.
  */
 export function bannerState(status: ToolsStatus | null): BannerState | null {
   if (!status) return null;
   const settingUp = TOOL_NAMES.map((name) => status[name]).filter(isSettingUp);
-  if (settingUp.length > 0) {
+  // Only once a download runs: the quick look for installed copies at every start must not flash the banner.
+  if (settingUp.some((t) => t.phase === "downloading")) {
     const downloaded = settingUp.reduce((sum, t) => sum + t.downloaded, 0);
     const totals = settingUp.map((t) => t.total);
     const total = totals.every((t) => t !== null)
@@ -72,7 +73,7 @@ export function toolStatusText(tool: ToolStatus): string {
       return `Downloading… ${formatMb(tool.downloaded)}${total}`;
     }
     case "ready":
-      return tool.source === "system" ? "Installed on this computer" : "Ready";
+      return "Ready";
     case "failed":
       return `${tool.usable ? "Update failed" : "Setup failed"}: ${tool.error ?? "unknown error"}`;
     case "unsupported":
@@ -80,12 +81,12 @@ export function toolStatusText(tool: ToolStatus): string {
   }
 }
 
-/** Version, where it comes from and its size ("2026.10.26 · app copy · 22 MB"). */
+/** Version, who installed it and its size ("2026.10.26 · downloaded by Blacktape · 22 MB"). */
 export function toolDetails(tool: ToolStatus): string {
   const parts: string[] = [];
   if (tool.version) parts.push(tool.version);
-  if (tool.source === "system") parts.push("system install");
-  if (tool.source === "app") parts.push("app copy");
+  if (tool.source === "system") parts.push("installed on your system");
+  if (tool.source === "app") parts.push("downloaded by Blacktape");
   if (tool.source === "app" && tool.size) parts.push(formatMb(tool.size));
   return parts.join(" · ");
 }

@@ -38,7 +38,7 @@ export const DownloaderSettings = ({ rowClassName, buttonClassName, mutedClassNa
               <span className={mutedClassName}>{TOOL_PURPOSE[name]}</span>
             </span>
             <span
-              className={tool?.phase === "failed" ? styles.toolFailed : mutedClassName}
+              className={tool?.phase === "failed" ? styles.toolFailed : `${mutedClassName} ${styles.toolStatus}`}
               title={tool?.error ?? undefined}
             >
               {tool ? toolStatusText(tool) : "Loading…"}
@@ -48,7 +48,7 @@ export const DownloaderSettings = ({ rowClassName, buttonClassName, mutedClassNa
       })}
       <div className={rowClassName}>
         <span className={mutedClassName}>
-          yt-dlp is checked for updates daily, Deno and FFmpeg weekly. A Deno or FFmpeg you installed yourself is used as is.
+          yt-dlp is checked for updates daily, Deno and FFmpeg weekly. If Deno or FFmpeg is already installed on your system, Blacktape uses it.
         </span>
         <button
           className={buttonClassName}
