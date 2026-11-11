@@ -1,3 +1,4 @@
+import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import {
@@ -105,7 +106,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
               onClick={() => handlePick(candidate)}
             >
               {candidate.cover_url ? (
-                <img className={styles.cover} src={candidate.cover_url} alt="" />
+                <img className={styles.cover} src={coverSrc(candidate.cover_url, 48)} alt="" />
               ) : (
                 <div className={styles.cover} />
               )}

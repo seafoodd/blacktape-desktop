@@ -666,9 +666,7 @@ const ArtistAlbums = () => {
                 <img loading="lazy" decoding="async"
                   src={
                     download.coverUrl
-                      ? download.coverUrl.startsWith("http")
-                        ? download.coverUrl
-                        : coverSrc(download.coverUrl, 200)
+                      ? coverSrc(download.coverUrl, 200)
                       : placeholderAlbumImage
                   }
                   referrerPolicy="no-referrer"

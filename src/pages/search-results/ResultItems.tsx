@@ -18,22 +18,25 @@ import {
   trackAlbumItem,
   trackSubline,
 } from "./searchResultsFormat.ts";
+import { coverSrc } from "@/shared/lib/cover";
 import styles from "./search-results.module.css";
 
-/** Cover image; a flat placeholder when the item has no image. */
+/** Cover image shown at `size` CSS px; a flat placeholder when the item has no image. */
 export const Cover = ({
   src,
   alt,
   className,
+  size,
 }: {
   src: string;
   alt: string;
   className: string;
+  size: number;
 }) =>
   src ? (
     <img
       className={className}
-      src={src}
+      src={coverSrc(src, size)}
       alt={alt}
       referrerPolicy="no-referrer"
       loading="lazy"
@@ -63,7 +66,7 @@ export const TrackRow = ({ item, list, progress, compact = false }: TrackRowProp
       }
     >
       <div className={styles.trackCoverBox}>
-        <Cover src={item.img} alt={item.name} className={styles.trackCover} />
+        <Cover src={item.img} alt={item.name} className={styles.trackCover} size={44} />
         <StreamButton item={item} list={list} className={styles.trackPreview} />
       </div>
       <div className={styles.trackInfo}>
@@ -129,7 +132,7 @@ export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) =
       }}
     >
       <div className={styles.coverWrap}>
-        <Cover src={item.img} alt={item.name} className={styles.cover} />
+        <Cover src={item.img} alt={item.name} className={styles.cover} size={240} />
         {/* the library state (check / dashed check) sits in place of the download button */}
         <DownloadButton item={item} progress={progress} variant="overlay" />
       </div>
@@ -158,7 +161,7 @@ export const ArtistCard = ({ item }: { item: SearchSuggestion }) => {
   return (
     <article className={clsx(styles.card, styles.artistCard)}>
       <div className={clsx(styles.coverWrap, styles.coverRound)}>
-        <Cover src={item.img} alt={item.name} className={styles.cover} />
+        <Cover src={item.img} alt={item.name} className={styles.cover} size={240} />
       </div>
       <div className={clsx(styles.cardText, styles.centered)}>
         <p className={clsx(styles.cardTitle, styles.ellipsis)} title={item.name}>
