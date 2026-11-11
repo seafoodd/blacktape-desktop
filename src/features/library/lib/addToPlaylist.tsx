@@ -1,7 +1,7 @@
 import { playlistApi } from "@/shared/api/playlists.ts";
 import { usePlaylistStore } from "@/shared/store/playlistStore.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { splitDuplicates } from "@/shared/lib/playlistDuplicates.ts";
+import { splitDuplicates } from "@/features/library/lib/playlistDuplicates.ts";
 import {
   DuplicateChoice,
   DuplicateSongsModal,

@@ -20,9 +20,9 @@ import {
   type SelectionState,
 } from "@/shared/lib/selection.ts";
 import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
-import { albumMetaLine } from "@/shared/lib/albumMeta.ts";
+import { albumMetaLine } from "@/pages/artist-albums/albumMeta.ts";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
-import { setDragGhost } from "@/shared/lib/dragGhost.ts";
+import { setDragGhost } from "@/pages/artist-albums/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { MdWarningAmber } from "react-icons/md";
 import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/trash.ts";

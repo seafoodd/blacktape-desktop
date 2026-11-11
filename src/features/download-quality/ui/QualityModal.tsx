@@ -10,7 +10,7 @@ import {
   formatDetails,
   probeAudioFormats,
   type AudioFormat,
-} from "@/shared/lib/downloadQuality.ts";
+} from "@/features/download-quality/lib/downloadQuality.ts";
 import styles from "./quality-modal.module.css";
 
 export interface QualityMenuOptions {
