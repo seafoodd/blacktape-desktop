@@ -3,7 +3,7 @@ import {
   useRemoteTrackMenuStore,
   type RemoteTrackMenuOptions,
 } from "@/features/remote-track-menu/model/remoteTrackMenuStore.ts";
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 
 /**
  * The ONE way to open the context menu of a remote track (Album Preview rows, search-result track rows, ghost

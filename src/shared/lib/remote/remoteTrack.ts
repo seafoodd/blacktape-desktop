@@ -3,8 +3,8 @@
  * and "missing" rows, used by the shared remote-track menu and the stream actions. Pure helpers.
  */
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
-import type { StreamRequest } from "@/shared/lib/stream.ts";
+import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
+import type { StreamRequest } from "@/shared/lib/remote/stream.ts";
 import type { Platform } from "@/shared/types.ts";
 
 export interface RemoteTrack {

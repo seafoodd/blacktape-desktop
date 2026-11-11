@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import type { SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import type { ArtistProfile } from "@/shared/lib/searchFull.ts";
-import { formatCompactNumber } from "@/shared/lib/number.ts";
+import type { ArtistProfile } from "@/shared/lib/search/searchFull.ts";
+import { formatCompactNumber } from "@/shared/lib/search/number.ts";
 import { AlbumCard, Cover, TrackRow } from "./ResultItems.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {

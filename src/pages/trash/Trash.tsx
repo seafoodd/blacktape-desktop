@@ -9,8 +9,8 @@ import {
   MdRestore,
 } from "react-icons/md";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { coverSrc } from "@/shared/lib/cover";
-import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
+import { coverSrc } from "@/shared/lib/remote/cover";
+import { refreshLibrary } from "@/shared/lib/library/libraryRefresh.ts";
 import {
   TRASH_CHANGED_EVENT,
   deleteTrash,
@@ -26,7 +26,7 @@ import {
   type TrashItem,
   type TrashOutcome,
   type TrashSettings,
-} from "@/shared/lib/trash.ts";
+} from "@/shared/lib/library/trash.ts";
 import styles from "./trash.module.css";
 
 const nowSecs = () => Math.floor(Date.now() / 1000);

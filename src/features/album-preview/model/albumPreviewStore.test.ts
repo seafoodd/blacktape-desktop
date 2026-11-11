@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
+import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 import { useAlbumPreviewStore } from "./albumPreviewStore.ts";
 
 type ActiveTask = { status: string; overallPercent: number };
@@ -17,9 +17,9 @@ const { getAlbumPreviewMock, setActiveViewMock, startDownloadMock, activeDownloa
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("@/shared/lib/albumPreview.ts", async () => ({
-  ...(await vi.importActual<typeof import("@/shared/lib/albumPreview.ts")>(
-    "@/shared/lib/albumPreview.ts",
+vi.mock("@/shared/lib/remote/albumPreview.ts", async () => ({
+  ...(await vi.importActual<typeof import("@/shared/lib/remote/albumPreview.ts")>(
+    "@/shared/lib/remote/albumPreview.ts",
   )),
   getAlbumPreview: getAlbumPreviewMock,
 }));

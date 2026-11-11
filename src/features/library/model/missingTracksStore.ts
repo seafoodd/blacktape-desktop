@@ -7,9 +7,9 @@ import {
   unlinkAlbumSource,
   type LibraryAlbumSource,
   type MissingTracks,
-} from "@/shared/lib/libraryIndex.ts";
-import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
-import { createLatestGuard, type LatestGuard } from "@/shared/lib/searchGuard.ts";
+} from "@/shared/lib/library/libraryIndex.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
+import { createLatestGuard, type LatestGuard } from "@/shared/lib/search/searchGuard.ts";
 import type { Platform } from "@/shared/types.ts";
 import { useLibraryIndexStore } from "@/shared/store/libraryIndexStore.ts";
 import {

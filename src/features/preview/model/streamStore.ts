@@ -8,7 +8,7 @@ import {
   streamQueue,
   type StreamError,
   type StreamRequest,
-} from "@/shared/lib/stream.ts";
+} from "@/shared/lib/remote/stream.ts";
 
 /** Hovering a track this long (ms) warms its stream url, so the click that follows starts faster. */
 export const PREFETCH_HOVER_MS = 60;

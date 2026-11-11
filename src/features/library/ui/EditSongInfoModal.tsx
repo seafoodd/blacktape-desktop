@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
+import { refreshLibrary } from "@/shared/lib/library/libraryRefresh.ts";
 import { Song } from "@/shared/types.ts";
 import styles from "./edit-song-info-modal.module.css";
 

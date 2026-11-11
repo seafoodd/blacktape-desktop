@@ -1,5 +1,5 @@
 import type { DownloadProgress, StartDownloadParams } from "@/shared/store/libraryStore.ts";
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 
 type Download = Pick<DownloadProgress, "url" | "status" | "trackUrls">;
 

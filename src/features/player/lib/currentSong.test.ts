@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { albumTarget, remoteTrackRef, streamSongToRemoteTrack } from "./currentSong.ts";
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 
 describe("albumTarget", () => {
   it("opens the artist page for a library song with an album and an album artist", () => {

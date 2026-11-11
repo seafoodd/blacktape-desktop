@@ -3,7 +3,7 @@ import styles from "@/layouts/left-sidebar.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
 import { HiX } from "react-icons/hi";
 import clsx from "clsx";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import placeholderArtistImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import Fuse from "fuse.js";
 import {

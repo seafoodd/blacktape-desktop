@@ -1,4 +1,4 @@
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import placeholderPlaylistImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import { Song } from "@/shared/types.ts";
 import styles from "./playlist-cover.module.css";

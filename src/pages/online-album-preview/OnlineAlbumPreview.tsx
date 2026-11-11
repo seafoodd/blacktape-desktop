@@ -3,7 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import placeholderAlbumImage from "@/assets/react.svg";
 import clsx from "clsx";
 import { HiDotsHorizontal } from "react-icons/hi";
-import { formatDuration } from "@/shared/lib/time.ts";
+import { formatDuration } from "@/shared/lib/ui/time.ts";
 import { Platform, Song } from "@/shared/types.ts";
 
 export type OnlineAlbum = {

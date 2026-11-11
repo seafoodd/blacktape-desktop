@@ -1,5 +1,5 @@
 import { addSongsToPlaylist } from "@/features/library/lib/addToPlaylist.tsx";
-import { SONG_DRAG_MIME, decodeSongDrag } from "@/shared/lib/dragSongs.ts";
+import { SONG_DRAG_MIME, decodeSongDrag } from "@/shared/lib/ui/dragSongs.ts";
 import styles from "./playlists.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
 import { useEffect, useState } from "react";

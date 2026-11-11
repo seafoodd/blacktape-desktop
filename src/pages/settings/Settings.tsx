@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { WindowControls } from "@/layouts/WindowControls";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
-import { pickFolder } from "@/shared/lib/dialog.ts";
+import { pickFolder } from "@/shared/lib/ui/dialog.ts";
 import { scanMusic } from "@/shared/lib/audio.ts";
 import {
   MAX_SIZE_OPTIONS,
@@ -12,7 +12,7 @@ import {
   mbToGb,
   setTrashSettings,
   type TrashSettings,
-} from "@/shared/lib/trash.ts";
+} from "@/shared/lib/library/trash.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import styles from "./settings.module.css";
 import { openPath } from "@tauri-apps/plugin-opener";

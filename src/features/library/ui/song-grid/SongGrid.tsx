@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import styles from "./song-grid.module.css";
-import { formatDuration } from "@/shared/lib/time.ts";
+import { formatDuration } from "@/shared/lib/ui/time.ts";
 import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
 import { Song } from "@/shared/types.ts";
 import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
@@ -13,13 +13,13 @@ import {
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { MdPause, MdPlayArrow } from "react-icons/md";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import {
   EMPTY_SELECTION,
   nextSelection,
   selectionForContextMenu,
   type SelectionState,
-} from "@/shared/lib/selection.ts";
+} from "@/shared/lib/ui/selection.ts";
 import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";

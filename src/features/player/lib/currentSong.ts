@@ -2,8 +2,8 @@
  * What the player's "now playing" block can do with the current song: open its album and download it when it is
  * only a stream. Pure helpers; the component wires them to the stores.
  */
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
-import type { RemoteRef } from "@/shared/lib/libraryIndex.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
+import type { RemoteRef } from "@/shared/lib/library/libraryIndex.ts";
 import type { Song } from "@/shared/types.ts";
 
 /** Where the album of the current song opens: the library's artist page, or the preview of the album page. */

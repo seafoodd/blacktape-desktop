@@ -7,7 +7,7 @@ import {
   getDownloadStatus,
   type RemoteRef,
   refKey,
-} from "@/shared/lib/libraryIndex.ts";
+} from "@/shared/lib/library/libraryIndex.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 
 /**

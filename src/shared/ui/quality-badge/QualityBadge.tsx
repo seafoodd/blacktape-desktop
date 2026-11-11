@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { songQuality } from "@/shared/lib/songQuality.ts";
+import { songQuality } from "@/shared/ui/quality-badge/songQuality.ts";
 import type { QualityTier } from "@/shared/types.ts";
 import styles from "./quality-badge.module.css";
 

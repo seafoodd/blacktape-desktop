@@ -9,7 +9,7 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import type { Platform } from "@/shared/types.ts";
 import type { SearchPageFilters } from "@/features/search/model/searchPageFilters.ts";
-import { formatCompactNumber } from "@/shared/lib/number.ts";
+import { formatCompactNumber } from "@/shared/lib/search/number.ts";
 
 /** Download progress keyed by the item url (`item_url_path`), first/active download wins. */
 export type DownloadMap = ReadonlyMap<string, DownloadProgress>;

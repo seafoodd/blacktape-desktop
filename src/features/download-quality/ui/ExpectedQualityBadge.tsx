@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { expectedQualityOf, getExpectedQuality, type ExpectedQuality } from "@/shared/lib/downloadQuality.ts";
+import { expectedQualityOf, getExpectedQuality, type ExpectedQuality } from "@/features/download-quality/lib/downloadQuality.ts";
 import styles from "./expected-quality-badge.module.css";
 
 interface ExpectedQualityBadgeProps {

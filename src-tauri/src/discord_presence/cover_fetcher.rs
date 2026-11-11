@@ -46,7 +46,6 @@ pub struct CoverArtArchiveResponse {
 pub struct CoverImage {
     pub front: bool,
     pub approved: bool,
-    pub image: String,
     pub thumbnails: Thumbnails,
 }
 

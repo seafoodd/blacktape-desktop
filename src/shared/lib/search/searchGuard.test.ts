@@ -6,7 +6,7 @@ const { searchPlatformsMock } = vi.hoisted(() => ({
   searchPlatformsMock: vi.fn(),
 }));
 
-vi.mock("@/shared/lib/search.ts", () => ({
+vi.mock("@/shared/lib/search/search.ts", () => ({
   searchPlatforms: searchPlatformsMock,
 }));
 vi.mock("@/shared/lib/audio.ts", () => ({

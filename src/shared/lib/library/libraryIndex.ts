@@ -5,7 +5,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { Platform } from "@/shared/types.ts";
-import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 
 export type DownloadState = "none" | "partial" | "downloaded";
 

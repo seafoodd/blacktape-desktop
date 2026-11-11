@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
+import type { DownloadState } from "@/shared/lib/library/libraryIndex.ts";
 import { ItemType } from "@/shared/store/libraryStore.ts";
 import {
   albumAction,
@@ -27,7 +27,7 @@ vi.mock("@/shared/lib/audio.ts", () => ({
   getArtistAlbums: vi.fn(),
   getArtists: vi.fn(),
 }));
-vi.mock("@/shared/lib/search.ts", () => ({ searchPlatforms: vi.fn() }));
+vi.mock("@/shared/lib/search/search.ts", () => ({ searchPlatforms: vi.fn() }));
 
 const track = (index: number, over: Partial<AlbumTrackInfo> = {}): AlbumTrackInfo => ({
   index,

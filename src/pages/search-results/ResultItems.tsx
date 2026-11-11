@@ -4,11 +4,11 @@ import {
   type DownloadProgress,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
-import type { SearchKind } from "@/shared/lib/searchFull.ts";
+import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import { DownloadButton } from "./DownloadButton.tsx";
 import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
-import { searchItemToRemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import { searchItemToRemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
@@ -18,7 +18,7 @@ import {
   trackAlbumItem,
   trackSubline,
 } from "./searchResultsFormat.ts";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import styles from "./search-results.module.css";
 
 /** Cover image shown at `size` CSS px; a flat placeholder when the item has no image. */

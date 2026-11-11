@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RemoteRef } from "@/shared/lib/libraryIndex.ts";
+import type { RemoteRef } from "@/shared/lib/library/libraryIndex.ts";
 import { pickStatuses, readStatus, refsKey, remoteRefOf } from "./useDownloadStatus.ts";
 
 // The hooks module imports the store, which reads the library store at load time; the pure helpers need neither.

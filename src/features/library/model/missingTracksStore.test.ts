@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
-import type { LibraryAlbumSource, MissingTracks } from "@/shared/lib/libraryIndex.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
+import type { LibraryAlbumSource, MissingTracks } from "@/shared/lib/library/libraryIndex.ts";
 import {
   busyAlbumUrls,
   failedSongs,
@@ -38,7 +38,7 @@ const {
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("@/shared/lib/libraryIndex.ts", () => ({
+vi.mock("@/shared/lib/library/libraryIndex.ts", () => ({
   getArtistAlbumSources: getArtistAlbumSourcesMock,
   getMissingTracks: getMissingTracksMock,
   linkAlbumSource: linkAlbumSourceMock,

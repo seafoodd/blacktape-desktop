@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
+import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import type { DownloadStatus } from "@/shared/store/libraryStore.ts";
 
 type Entry = { url: string; status: DownloadStatus; trackUrls?: string[] };

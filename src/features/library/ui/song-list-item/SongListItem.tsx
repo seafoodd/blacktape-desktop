@@ -2,14 +2,14 @@ import clsx from "clsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import { MdPause, MdPlayArrow } from "react-icons/md";
-import { formatDuration } from "@/shared/lib/time.ts";
+import { formatDuration } from "@/shared/lib/ui/time.ts";
 import React from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { Song } from "@/shared/types.ts";
 import { ContextMenuPosition } from "@/shared/ui/context-menu";
-import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
+import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/ui/dragSongs.ts";
 import { QualityBadge } from "@/shared/ui/quality-badge/QualityBadge.tsx";
 
 interface SongListItemProps {

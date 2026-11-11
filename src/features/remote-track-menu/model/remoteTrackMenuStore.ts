@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
+import type { DownloadState } from "@/shared/lib/library/libraryIndex.ts";
 import type { MenuItemOption } from "@/shared/ui/context-menu/ContextMenu.tsx";
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 
 export interface RemoteTrackMenuOptions {
   /** The list the track belongs to (queue actions may use it). */

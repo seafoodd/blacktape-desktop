@@ -4,7 +4,7 @@ import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
-import { formatDuration } from "@/shared/lib/time.ts";
+import { formatDuration } from "@/shared/lib/ui/time.ts";
 import {
   MdCloudQueue,
   MdCheck,
@@ -22,7 +22,7 @@ import {
   MdVolumeUp,
 } from "react-icons/md";
 import clsx from "clsx";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import placeholderSongImage from "@/assets/react.svg";
 import { ItemType, useLibraryStore, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
@@ -30,8 +30,8 @@ import { remoteTrackDownloadParams } from "@/features/remote-track-menu/model/bu
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
-import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
-import { streamAlbumUrl } from "@/shared/lib/stream.ts";
+import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
+import { streamAlbumUrl } from "@/shared/lib/remote/stream.ts";
 import { albumTarget, remoteTrackRef, streamSongToRemoteTrack } from "../lib/currentSong.ts";
 import { RepeatMode } from "@/shared/types.ts";
 
