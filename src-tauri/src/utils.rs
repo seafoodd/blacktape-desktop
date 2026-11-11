@@ -1,13 +1,15 @@
 use crate::types::QualityTier;
 use lofty::file::AudioFile;
 use std::path::Path;
-use winapi::um::fileapi;
-use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
 
+/// Sets or clears the hidden attribute on Windows. Elsewhere a file is hidden by a leading dot in
+/// its name, not an attribute, so this does nothing.
 pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::prelude::OsStrExt;
+        use winapi::um::fileapi;
+        use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
         let wide: Vec<u16> = std::ffi::OsStr::new(path)
             .encode_wide()
             .chain(std::iter::once(0))
@@ -31,6 +33,7 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = (path, hidden);
         Ok(())
     }
 }
@@ -183,7 +186,37 @@ pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> Qu
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{is_lossless_mp4, sanitize, sanitize_fs};
+    use crate::utils::{is_lossless_mp4, sanitize, sanitize_fs, set_hidden};
+
+    #[test]
+    fn set_hidden_succeeds_on_an_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(set_hidden(dir.path(), true).is_ok());
+        assert!(set_hidden(dir.path(), false).is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn set_hidden_toggles_the_windows_hidden_attribute() {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        let dir = tempfile::tempdir().unwrap();
+        let hidden = |p: &std::path::Path| {
+            std::fs::metadata(p).unwrap().file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+        };
+
+        set_hidden(dir.path(), true).unwrap();
+        assert!(hidden(dir.path()));
+        set_hidden(dir.path(), false).unwrap();
+        assert!(!hidden(dir.path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn set_hidden_reports_a_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(set_hidden(&dir.path().join("missing"), true).is_err());
+    }
 
     #[test]
     fn test_sanitize_removes_illegal_windows_chars() {
