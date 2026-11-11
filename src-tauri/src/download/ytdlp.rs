@@ -250,7 +250,10 @@ struct DownloadContext {
     app: AppHandle,
     task_id: String,
     binary_path: PathBuf,
-    cookie_arg: String,
+    /// The login window's session, if yt-dlp can read it (see `cookies::find`).
+    cookies: crate::download::cookies::CookieSource,
+    /// Where a run's private copy of a cookie file goes (see `CookieSource::args`).
+    cookie_copies: PathBuf,
     /// Format the user picked for this download (see `quality::prefer_format`).
     format: Option<String>,
     temp_dir: PathBuf,
@@ -327,7 +330,7 @@ fn download_site(url: &str) -> DownloadSite {
 fn download_args(
     url: &str,
     output_template: &str,
-    cookie_arg: &str,
+    cookie_args: &[String],
     format: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let url = checked_url(url)?;
@@ -358,10 +361,10 @@ fn download_args(
                 "0", // Ensures maximum VBR quality if ffmpeg runs
                 "--extractor-args",
                 "youtube:player-client=web_embedded,web,tv", // Fixed client to eliminate 403 / low-bitrate lockouts
-                "--cookies-from-browser",
-                cookie_arg,
             ]
-            .map(String::from),
+            .map(String::from)
+            .into_iter()
+            .chain(cookie_args.iter().cloned()),
         ),
         DownloadSite::Bandcamp => args.extend(
             [
@@ -374,10 +377,10 @@ fn download_args(
                 "best",
                 "--audio-quality",
                 "0",
-                "--cookies-from-browser",
-                cookie_arg,
             ]
-            .map(String::from),
+            .map(String::from)
+            .into_iter()
+            .chain(cookie_args.iter().cloned()),
         ),
         DownloadSite::Soundcloud => args.extend(soundcloud_format_args()),
         DownloadSite::Other => args.extend(["-f", "bestaudio/best"].map(String::from)),
@@ -439,11 +442,8 @@ impl DownloadContext {
         }
 
         let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let edge_profile_path = app_data_dir
-            .join("browser-profiles")
-            .join("EBWebView")
-            .join("Default");
-        let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
+        let cookies = crate::download::cookies::find(&crate::auth::youtube::profile_dir(app)?);
+        let cookie_copies = crate::download::cookies::copies_dir(&app_data_dir);
         let format = match app.try_state::<crate::download::TaskRegistry>() {
             Some(registry) => registry.format(task_id).await,
             None => None,
@@ -453,7 +453,8 @@ impl DownloadContext {
             app: app.clone(),
             task_id: task_id.to_string(),
             binary_path,
-            cookie_arg,
+            cookies,
+            cookie_copies,
             format,
             temp_dir,
             session_id,
@@ -499,7 +500,19 @@ async fn download_track_internal(
     total_tracks: usize,
 ) -> Option<PathBuf> {
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
-    let args = match download_args(&track.url, &output_template.to_string_lossy(), &ctx.cookie_arg, ctx.format.as_deref()) {
+    // `_cookie_copy` deletes this run's cookie file copy when the track is done
+    let copy_path = ctx.cookie_copies.join(format!("{}_{}.txt", ctx.session_id, track_num));
+    let (cookie_args, _cookie_copy) = match ctx.cookies.args(&copy_path) {
+        Ok(cookies) => cookies,
+        Err(err) => {
+            eprintln!(
+                "[yt-dlp] [{}] [Track {}/{}] Downloading without cookies, the cookie file could not be copied: {}",
+                ctx.session_id, track_num, total_tracks, err
+            );
+            (Vec::new(), None)
+        }
+    };
+    let args = match download_args(&track.url, &output_template.to_string_lossy(), &cookie_args, ctx.format.as_deref()) {
         Ok(args) => args,
         Err(err) => {
             eprintln!(
@@ -1099,6 +1112,10 @@ mod hardening_tests {
 
     const YT: &str = "https://www.youtube.com/watch?v=abc";
     const COOKIES: &str = "chrome";
+
+    fn cookie_args() -> Vec<String> {
+        vec!["--cookies-from-browser".to_string(), COOKIES.to_string()]
+    }
     const TEMPLATE: &str = "out/%(id)s.%(ext)s";
     const SSL_STDERR: &str =
         "ERROR: unable to download: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:1006)";
@@ -1146,7 +1163,7 @@ mod hardening_tests {
 
     #[test]
     fn youtube_args_end_with_separator_and_url_and_trust_the_system_store() {
-        let args = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
+        let args = download_args(YT, TEMPLATE, &cookie_args(), None).unwrap();
         let tail: Vec<&str> = args[args.len() - 3..].iter().map(String::as_str).collect();
         assert_eq!(tail, ["--newline", "--", YT]);
 
@@ -1160,13 +1177,33 @@ mod hardening_tests {
 
     #[test]
     fn non_youtube_urls_never_get_browser_cookies() {
-        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, COOKIES, None).unwrap();
+        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, &cookie_args(), None).unwrap();
         assert!(!args.iter().any(|a| a == "--cookies-from-browser"));
     }
 
     #[test]
+    fn downloads_without_a_session_pass_no_cookie_options() {
+        for url in [YT, "https://artist.bandcamp.com/track/a"] {
+            let args = download_args(url, TEMPLATE, &[], None).unwrap();
+            assert!(
+                !args.iter().any(|a| a.starts_with("--cookies")),
+                "cookie option without a session for {url}: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cookie_file_is_passed_before_the_separator() {
+        let cookies = vec!["--cookies".to_string(), "/data/cookie-copies/1.txt".to_string()];
+        let args = download_args("https://artist.bandcamp.com/track/a", TEMPLATE, &cookies, None).unwrap();
+        let at = args.iter().position(|a| a == "--cookies").unwrap();
+        assert_eq!(args[at + 1], "/data/cookie-copies/1.txt");
+        assert!(at < args.iter().position(|a| a == "--").unwrap());
+    }
+
+    #[test]
     fn download_args_refuses_option_like_urls() {
-        assert!(download_args("--exec=calc", TEMPLATE, COOKIES, None).is_err());
+        assert!(download_args("--exec=calc", TEMPLATE, &cookie_args(), None).is_err());
     }
 
     #[test]
@@ -1230,6 +1267,10 @@ mod format_choice_tests {
     const BANDCAMP: &str = "https://artist.bandcamp.com/track/a";
     const SOUNDCLOUD: &str = "https://soundcloud.com/artist/track";
     const COOKIES: &str = "chrome";
+
+    fn cookie_args() -> Vec<String> {
+        vec!["--cookies-from-browser".to_string(), COOKIES.to_string()]
+    }
     const TEMPLATE: &str = "out/%(id)s.%(ext)s";
 
     /// The value that follows the first `-f`.
@@ -1240,13 +1281,13 @@ mod format_choice_tests {
 
     #[test]
     fn chosen_format_is_tried_first_for_youtube() {
-        let args = download_args(YT, TEMPLATE, COOKIES, Some("140")).unwrap();
+        let args = download_args(YT, TEMPLATE, &cookie_args(), Some("140")).unwrap();
         assert_eq!(selector(&args), "140/251/140/ba/bestaudio/ba*");
     }
 
     #[test]
     fn chosen_format_is_tried_first_for_bandcamp() {
-        let args = download_args(BANDCAMP, TEMPLATE, COOKIES, Some("mp3-320")).unwrap();
+        let args = download_args(BANDCAMP, TEMPLATE, &cookie_args(), Some("mp3-320")).unwrap();
         assert_eq!(
             selector(&args),
             "mp3-320/flac/alac/wav/aiff-lossless/mp3-320/mp3-v0/aac-hi/vorbis/bestaudio/best"
@@ -1255,34 +1296,34 @@ mod format_choice_tests {
 
     #[test]
     fn chosen_format_is_tried_first_for_soundcloud() {
-        let args = download_args(SOUNDCLOUD, TEMPLATE, COOKIES, Some("hls_aac_160k")).unwrap();
+        let args = download_args(SOUNDCLOUD, TEMPLATE, &cookie_args(), Some("hls_aac_160k")).unwrap();
         assert_eq!(selector(&args), "hls_aac_160k/bestaudio[protocol^=http]/bestaudio/best");
     }
 
     #[test]
     fn chosen_format_is_tried_first_for_other_sites() {
-        let args = download_args("https://example.test/a.mp3", TEMPLATE, COOKIES, Some("ab-1")).unwrap();
+        let args = download_args("https://example.test/a.mp3", TEMPLATE, &cookie_args(), Some("ab-1")).unwrap();
         assert_eq!(selector(&args), "ab-1/bestaudio/best");
     }
 
     #[test]
     fn no_format_keeps_the_platform_selector() {
-        let args = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
+        let args = download_args(YT, TEMPLATE, &cookie_args(), None).unwrap();
         assert_eq!(selector(&args), "251/140/ba/bestaudio/ba*");
     }
 
     #[test]
     fn unsafe_format_ids_leave_the_args_unchanged() {
-        let plain = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
+        let plain = download_args(YT, TEMPLATE, &cookie_args(), None).unwrap();
         for bad in ["251/best", "a+b", ""] {
-            let args = download_args(YT, TEMPLATE, COOKIES, Some(bad)).unwrap();
+            let args = download_args(YT, TEMPLATE, &cookie_args(), Some(bad)).unwrap();
             assert_eq!(args, plain, "changed for {bad:?}");
         }
     }
 
     #[test]
     fn format_choice_keeps_the_url_last_after_the_separator() {
-        let args = download_args(YT, TEMPLATE, COOKIES, Some("140")).unwrap();
+        let args = download_args(YT, TEMPLATE, &cookie_args(), Some("140")).unwrap();
         let tail: Vec<&str> = args[args.len() - 3..].iter().map(String::as_str).collect();
         assert_eq!(tail, ["--newline", "--", YT]);
     }
