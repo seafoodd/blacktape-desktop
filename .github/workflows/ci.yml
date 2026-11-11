@@ -71,3 +71,40 @@ jobs:
 
       - name: Cargo Test
         run: cargo test --lib --manifest-path src-tauri/Cargo.toml
+
+  backend-linux:
+    name: Rust Backend on Linux (Check & Test)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Tauri's Linux prerequisites, plus ALSA for audio playback and D-Bus for media controls
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libasound2-dev \
+            libdbus-1-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Cargo Check
+        run: cargo check --all-targets --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo Test
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
