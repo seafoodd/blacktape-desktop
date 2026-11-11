@@ -97,8 +97,11 @@ export const Header = () => {
       </Dropdown.Root>
 
       <SearchBar className={styles.searchBar} />
-      <UpdateButton />
-      <WindowControls />
+      {/* one flex item on the right: with two auto margins the update pill landed in the middle, under the search bar */}
+      <div className={styles.end}>
+        <UpdateButton />
+        <WindowControls />
+      </div>
     </header>
   );
 };
