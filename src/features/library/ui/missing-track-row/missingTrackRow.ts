@@ -51,6 +51,8 @@ export function missingTrackNumber(track: Pick<AlbumTrackInfo, "track_number" | 
 export interface MissingMenuActions {
   toggle: () => void;
   download: () => void;
+  /** Opens the quality menu for the download of the missing songs. */
+  downloadAs?: () => void;
   /** Opens the search for the remote album of a library album that has no source. */
   find?: () => void;
   /** Removes the link of a library album to its remote album. */
@@ -97,9 +99,12 @@ export function missingAlbumMenuItems(
       label: `Download missing (${source.missing})`,
       action: actions.download,
     });
+    if (actions.downloadAs) items.push({ label: "Download missing as…", action: actions.downloadAs });
   }
   // the link can be changed when it is wrong (another platform, another edition)
   if (actions.find || actions.unlink) {
+    // which platform album the songs come from (shown, not clickable)
+    items.push({ label: `Linked to ${candidateMeta({ platform: source.platform, year: null })}`, disabled: true });
     if (actions.find) items.push({ label: "Change linked album...", action: actions.find });
     if (actions.unlink) items.push({ label: "Unlink album", action: actions.unlink });
   }
@@ -172,18 +177,23 @@ export function missingTrackPercent(
 }
 
 /**
- * True when the running download will fetch this track: it lists the track (by title, then by number), or it does
- * not list its tracks yet (the whole album is on its way).
+ * True when the running download will fetch this track: it was started for some tracks and this is one of them (by
+ * page url), or it lists the track (by title, then by number), or it does not list its tracks yet and downloads
+ * the whole album.
  */
 export function missingTrackDownloading(
-  download: Pick<DownloadProgress, "tracks" | "status" | "placement"> | undefined,
-  track: Pick<AlbumTrackInfo, "title" | "track_number" | "index">,
+  download: Pick<DownloadProgress, "tracks" | "status" | "placement" | "trackUrls"> | undefined,
+  track: Pick<AlbumTrackInfo, "title" | "track_number" | "index"> & { url?: string },
 ): boolean {
   if (!download) return false;
   if (download.status !== "downloading" && download.status !== "idle" && download.status !== "processing") {
     return false;
   }
   if (download.placement) return isPlacedTrack(download.placement, track);
+  // a download of some tracks: the other missing songs of the album are not on their way
+  if (download.trackUrls && download.trackUrls.length > 0) {
+    return track.url !== undefined && download.trackUrls.some((url) => sameUrl(url, track.url!));
+  }
   if (download.tracks.length === 0) return true;
   const title = normalizeTitle(track.title);
   const number = track.track_number ?? track.index + 1;

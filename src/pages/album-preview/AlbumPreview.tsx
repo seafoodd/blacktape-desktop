@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { BiArrowBack, BiDownload, BiRightArrowAlt } from "react-icons/bi";
 import { FaCheckCircle } from "react-icons/fa";
+import { MdSettings } from "react-icons/md";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import artistStyles from "@/pages/artist-albums/artist-albums.module.css";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
@@ -10,7 +11,8 @@ import { useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { useTrackStatuses } from "@/shared/hooks/useDownloadStatus.ts";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
-import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { getLibraryAlbum } from "@/shared/lib/libraryIndex.ts";
 import {
   albumAction,
@@ -18,9 +20,11 @@ import {
   albumMetaLine,
   selectableIndexes,
   selectableTracks,
+  selectedUrls,
   trackAsStreamItem,
   trackRefs,
   trackTaskStates,
+  type AlbumPreview as AlbumPreviewData,
   type AlbumTrackInfo,
 } from "@/shared/lib/albumPreview.ts";
 import { albumTrackToRemoteTrack, type RemoteTrack } from "@/shared/lib/remoteTrack.ts";
@@ -168,25 +172,49 @@ const AlbumPreview = () => {
           {status === "ready" && preview && (
             <>
               <div className={styles.toolbar}>
-                <button
-                  type="button"
-                  className={styles.primaryButton}
-                  disabled={selectable.length === 0 || running !== undefined}
-                  onClick={() => {
-                    if (action?.kind === "go-to-album") void goToAlbum();
-                    else if (action?.kind === "download-missing") void downloadUrls(action.urls);
-                    else clearSelectionAfter(download);
-                  }}
-                >
-                  {running ? (
-                    `Downloading ${running.overallPercent}%`
-                  ) : (
-                    <>
-                      {action?.kind === "go-to-album" ? <BiRightArrowAlt size={20} /> : <BiDownload size={18} />}
-                      {action?.label}
-                    </>
+                <div className={styles.primarySplit}>
+                  <button
+                    type="button"
+                    className={styles.primaryButton}
+                    disabled={selectable.length === 0 || running !== undefined}
+                    onClick={() => {
+                      if (action?.kind === "go-to-album") void goToAlbum();
+                      else if (action?.kind === "download-missing") void downloadUrls(action.urls);
+                      else clearSelectionAfter(download);
+                    }}
+                  >
+                    {running ? (
+                      `Downloading ${running.overallPercent}%`
+                    ) : (
+                      <>
+                        {action?.kind === "go-to-album" ? <BiRightArrowAlt size={20} /> : <BiDownload size={18} />}
+                        {action?.label}
+                      </>
+                    )}
+                  </button>
+                  {action && action.kind !== "go-to-album" && !running && (
+                    <button
+                      type="button"
+                      className={`${styles.primaryButton} ${styles.primaryArrow}`}
+                      disabled={selectable.length === 0}
+                      title="Choose the download quality"
+                      aria-label="Choose the download quality"
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        const urls =
+                          action.kind === "download-missing" ? action.urls : selectedUrls(preview, selection.selected);
+                        openQualityMenu(previewDownloadParams(preview, urls), {
+                          start: (format) => {
+                            if (action.kind === "download-missing") void downloadUrls(action.urls, format);
+                            else clearSelectionAfter(() => download(format));
+                          },
+                        });
+                      }}
+                    >
+                      <MdSettings size={16} />
+                    </button>
                   )}
-                </button>
+                </div>
                 {justCompleted && !running && action?.kind !== "go-to-album" && (
                   <span className={styles.done}>
                     <FaCheckCircle size={14} /> Downloaded
@@ -224,6 +252,11 @@ const AlbumPreview = () => {
                       }
                       onPlay={() => playTrack(track)}
                       onDownload={() => void downloadTrack(track)}
+                      onChooseQuality={() =>
+                        openQualityMenu(previewDownloadParams(preview, [track.url], track.title), {
+                          start: (format) => void downloadTrack(track, format),
+                        })
+                      }
                       onContextMenu={(e) =>
                         openMenu(e, albumTrackToRemoteTrack(preview, track), {
                           list: remoteList,
@@ -244,6 +277,19 @@ const AlbumPreview = () => {
     </div>
   );
 };
+
+/** What the quality menu probes and shows for a download of `urls` (all tracks when empty) of the album. */
+function previewDownloadParams(preview: AlbumPreviewData, urls: string[], trackTitle?: string): StartDownloadParams {
+  return {
+    platform: preview.platform,
+    downloadType: ItemType.Album,
+    url: preview.url,
+    artistName: preview.artist,
+    title: trackTitle ?? preview.title,
+    coverUrl: preview.cover_url ?? undefined,
+    trackUrls: urls.length > 0 ? urls : undefined,
+  };
+}
 
 /** Starts the download and clears the selection: the queue shows what is downloading from here on. */
 function clearSelectionAfter(download: () => Promise<void>) {

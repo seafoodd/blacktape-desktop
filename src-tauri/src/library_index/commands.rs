@@ -46,7 +46,7 @@ fn unix_now() -> i64 {
 pub fn track_states(items: &[RemoteRef], index: &LibraryIndex, meta: &[SongMeta]) -> HashMap<String, DownloadState> {
     use crate::library_index::candidates::normalize_text;
     let mut slugs_by_album: HashMap<String, HashSet<String>> = HashMap::new();
-    for (_, album, _, slug) in meta {
+    for (_, album, _, slug, _) in meta {
         slugs_by_album.entry(normalize_text(album)).or_default().insert(slug.clone());
     }
     items
@@ -82,10 +82,11 @@ fn source_status(row: &AlbumSourceRow, fallback: Platform, index: &LibraryIndex)
 /// "owned": url keys are exact, names are not. Pure.
 pub fn scoped_index(base: &LibraryIndex, meta: &[SongMeta], album_artist: &str, album: &str) -> LibraryIndex {
     let same = |a: &str, b: &str| a.trim().to_lowercase() == b.trim().to_lowercase();
-    let own = || meta.iter().filter(|(artist, alb, _, _)| same(artist, album_artist) && same(alb, album));
+    let own = || meta.iter().filter(|(artist, alb, ..)| same(artist, album_artist) && same(alb, album));
     base.clone()
-        .with_slugs(own().map(|(_, _, _, slug)| slug.clone()))
-        .with_titles(own().map(|(artist, _, title, _)| (artist.clone(), title.clone())))
+        .with_slugs(own().map(|(_, _, _, slug, _)| slug.clone()))
+        .with_titles(own().map(|(artist, _, title, ..)| (artist.clone(), title.clone())))
+        .with_numbered_titles(own().filter_map(|(_, _, title, _, number)| number.map(|n| (n, title.clone()))))
 }
 
 /// Status of every requested album url from the stored sources (`sources` is keyed by `album_key`); albums
@@ -150,7 +151,20 @@ pub async fn get_library_album(
     Ok(row.map(|r| LibraryAlbumRef { album_artist: r.album_artist, album: r.album }))
 }
 
-/// Library state of remote ALBUM urls, from `album_sources` (albums the app never downloaded are `none`).
+/// The stored source (of one artist's albums) whose library album has this title once text in brackets,
+/// punctuation and case are ignored: "Syro" finds the library's "Syro" and "Selected Ambient Works Volume II"
+/// finds "Selected Ambient Works Volume II (Expanded Edition)". Pure.
+pub fn source_by_title<'a>(rows: &'a [AlbumSourceRow], title: &str) -> Option<&'a AlbumSourceRow> {
+    use crate::library_index::candidates::normalize_text;
+    let wanted = normalize_text(title);
+    if wanted.is_empty() {
+        return None;
+    }
+    rows.iter().find(|r| normalize_text(&r.album) == wanted)
+}
+
+/// Library state of remote ALBUM urls, from `album_sources` (albums the app never downloaded are `none`). An album
+/// url without a source of its own falls back to the library album of the same artist and title.
 #[command]
 pub async fn get_album_status(
     db: State<'_, tokio::sync::Mutex<Database>>,
@@ -166,6 +180,24 @@ pub async fn get_album_status(
         for key in keys {
             if let Some(row) = guard.get_album_source_by_key(&key).await.map_err(db_error)? {
                 sources.insert(key, row);
+            }
+        }
+        // An album the library got from ANOTHER platform page (the same album on YouTube and Bandcamp): matched by
+        // artist + title, it answers with the status of that library album.
+        let mut by_artist: HashMap<String, Vec<AlbumSourceRow>> = HashMap::new();
+        for item in &items {
+            let Some(key) = normalize_url_key(&item.url) else { continue };
+            let (Some(artist), Some(title)) = (item.artist.as_deref(), item.title.as_deref()) else { continue };
+            if sources.contains_key(&key) {
+                continue;
+            }
+            let artist_key = artist.trim().to_lowercase();
+            if !by_artist.contains_key(&artist_key) {
+                let rows = guard.list_album_sources_for_artist(artist).await.map_err(db_error)?;
+                by_artist.insert(artist_key.clone(), rows);
+            }
+            if let Some(row) = source_by_title(&by_artist[&artist_key], title) {
+                sources.insert(key, row.clone());
             }
         }
         // Without any known album there is nothing to compare, skip the library scan.
@@ -428,14 +460,42 @@ mod tests {
     #[test]
     fn scoped_index_only_knows_the_names_of_its_own_album() {
         let meta: Vec<SongMeta> = vec![
-            ("Artist".into(), "Other Album".into(), "Big Jacket".into(), make_canonical_slug("Artist", "Big Jacket")),
-            ("Artist".into(), "The Album".into(), "Good Sunday".into(), make_canonical_slug("Artist", "Good Sunday")),
+            ("Artist".into(), "Other Album".into(), "Big Jacket".into(), make_canonical_slug("Artist", "Big Jacket"), None),
+            ("Artist".into(), "The Album".into(), "Good Sunday".into(), make_canonical_slug("Artist", "Good Sunday"), None),
         ];
         let index = scoped_index(&LibraryIndex::default(), &meta, "artist", "the album");
         assert!(index.contains_by_meta("Artist", "Good Sunday"));
         assert!(!index.contains_by_meta("Artist", "Big Jacket"));
         assert!(!index.contains_by_fuzzy_title("Artist", "Big Jacket"));
         assert!(index.contains_by_fuzzy_title("Artist", "Good Sunday"));
+    }
+
+    #[test]
+    fn scoped_index_numbered_titles_come_from_its_own_album_only() {
+        let meta: Vec<SongMeta> = vec![
+            ("Artist".into(), "The Album".into(), "Good Sunday".into(), make_canonical_slug("Artist", "Good Sunday"), Some(1)),
+            ("Artist".into(), "Other Album".into(), "Big Jacket".into(), make_canonical_slug("Artist", "Big Jacket"), Some(2)),
+            ("Artist".into(), "Other Album".into(), "Other Song".into(), make_canonical_slug("Artist", "Other Song"), Some(1)),
+        ];
+        let index = scoped_index(&LibraryIndex::default(), &meta, "artist", "the album");
+        assert!(index.contains_numbered(Some(1), "Good Sunday (Remastered)"));
+        assert!(!index.contains_numbered(Some(2), "Big Jacket"), "a song of another album does not count");
+        assert!(!index.contains_numbered(Some(1), "Other Song"), "a same-numbered song of another album does not count");
+    }
+
+    #[test]
+    fn scoped_index_skips_songs_without_a_track_number() {
+        let meta: Vec<SongMeta> = vec![(
+            "Artist".into(),
+            "The Album".into(),
+            "Good Sunday".into(),
+            make_canonical_slug("Artist", "Good Sunday"),
+            None,
+        )];
+        let index = scoped_index(&LibraryIndex::default(), &meta, "Artist", "The Album");
+        assert!(index.numbered.is_empty());
+        assert!(!index.contains_numbered(Some(1), "Good Sunday"));
+        assert!(index.contains_by_meta("Artist", "Good Sunday"), "the song is still known by its name");
     }
 
     fn remote(platform: Platform, url: &str) -> RemoteRef {
@@ -523,7 +583,7 @@ mod tests {
     fn studio_iron_man() -> (LibraryIndex, Vec<SongMeta>) {
         let slug = make_canonical_slug("Black Sabbath", "Iron Man");
         let index = LibraryIndex::default().with_slugs([slug.clone()]);
-        let meta = vec![("Black Sabbath".to_string(), "Paranoid".to_string(), "Iron Man".to_string(), slug)];
+        let meta = vec![("Black Sabbath".to_string(), "Paranoid".to_string(), "Iron Man".to_string(), slug, None)];
         (index, meta)
     }
 
@@ -569,7 +629,7 @@ mod tests {
     fn url_match_is_downloaded_whatever_the_album() {
         let slug = make_canonical_slug("Black Sabbath", "Iron Man");
         let index = LibraryIndex::from_rows(&[song("bandcamp", Some(T1), None)]).with_slugs([slug.clone()]);
-        let meta = vec![("Black Sabbath".to_string(), "Paranoid".to_string(), "Iron Man".to_string(), slug)];
+        let meta = vec![("Black Sabbath".to_string(), "Paranoid".to_string(), "Iron Man".to_string(), slug, None)];
         let mut item = named("Black Sabbath", "Iron Man", Some("Deep Black"));
         item.url = T1.to_string();
         assert_eq!(state_of(&item, &index, &meta), DownloadState::Downloaded);
@@ -847,5 +907,64 @@ mod tests {
         assert_eq!(json["cover_url"], "c");
         assert_eq!(json["tracks"][0]["track_number"], 1);
         assert_eq!(json["tracks"][0]["duration_ms"], 1000);
+    }
+
+    // ---- source_by_title
+
+    #[test]
+    fn source_by_title_exact_title_returns_that_row() {
+        let rows = vec![
+            row(1, "Aphex Twin", "Drukqs", Platform::Bandcamp, &[T1]),
+            row(2, "Aphex Twin", "Syro", Platform::Bandcamp, &[T2]),
+        ];
+        let found = source_by_title(&rows, "Syro").expect("exact title should match");
+        assert_eq!(found.id, 2);
+    }
+
+    #[test]
+    fn source_by_title_ignores_case_and_punctuation() {
+        let rows = vec![row(1, "Aphex Twin", "Syro", Platform::Bandcamp, &[T1])];
+        assert_eq!(source_by_title(&rows, "syro").map(|r| r.id), Some(1));
+        assert_eq!(source_by_title(&rows, "  SYRO! ").map(|r| r.id), Some(1));
+    }
+
+    #[test]
+    fn source_by_title_ignores_bracketed_suffix_in_the_album() {
+        let rows = vec![row(
+            7,
+            "Aphex Twin",
+            "Selected Ambient Works Volume II (Expanded Edition)",
+            Platform::Bandcamp,
+            &[T1],
+        )];
+        let found = source_by_title(&rows, "Selected Ambient Works Volume II");
+        assert_eq!(found.map(|r| r.id), Some(7));
+    }
+
+    #[test]
+    fn source_by_title_different_title_returns_none() {
+        let rows = vec![row(1, "Aphex Twin", "Drukqs", Platform::Bandcamp, &[T1])];
+        assert!(source_by_title(&rows, "Syro").is_none());
+    }
+
+    #[test]
+    fn source_by_title_empty_or_bracket_only_title_returns_none() {
+        // Rows whose album also normalizes to "" would match without the empty-title guard.
+        let rows = vec![
+            row(1, "Aphex Twin", "", Platform::Bandcamp, &[T1]),
+            row(2, "Aphex Twin", "(live)", Platform::Bandcamp, &[T2]),
+        ];
+        assert!(source_by_title(&rows, "").is_none());
+        assert!(source_by_title(&rows, "(live)").is_none());
+    }
+
+    #[test]
+    fn source_by_title_first_matching_row_in_slice_order_wins() {
+        let rows = vec![
+            row(10, "Aphex Twin", "Syro", Platform::Bandcamp, &[T1]),
+            row(11, "Aphex Twin", "Syro (Deluxe)", Platform::Bandcamp, &[T2]),
+            row(12, "Other Artist", "Syro", Platform::Bandcamp, &[T3]),
+        ];
+        assert_eq!(source_by_title(&rows, "Syro").map(|r| r.id), Some(10));
     }
 }

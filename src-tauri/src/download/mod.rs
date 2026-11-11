@@ -4,6 +4,7 @@ pub mod bandcamp;
 pub mod opus_source;
 pub mod orchestrator;
 pub mod post_processor;
+pub mod quality;
 pub mod queue;
 pub mod soundcloud;
 pub mod track;

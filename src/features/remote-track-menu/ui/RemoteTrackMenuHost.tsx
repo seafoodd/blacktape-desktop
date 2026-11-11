@@ -8,6 +8,7 @@ import { ContextMenu } from "@/shared/ui/context-menu";
 import { useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { remoteTrackToStreamItem, type RemoteTrack } from "@/shared/lib/remoteTrack.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {
   buildRemoteTrackMenu,
   remoteTrackDownloadParams,
@@ -25,6 +26,7 @@ const actions: RemoteTrackMenuActions = {
       .startDownload(remoteTrackDownloadParams(track))
       .catch((e) => console.error("Download failed", e));
   },
+  downloadAs: (track) => openQualityMenu(remoteTrackDownloadParams(track)),
   addToQueue: (track) => {
     void useStreamStore.getState().enqueue([remoteTrackToStreamItem(track)]);
   },

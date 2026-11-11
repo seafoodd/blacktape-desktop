@@ -423,3 +423,43 @@ describe("downloadTrack", () => {
     });
   });
 });
+
+describe("download formats", () => {
+  it("download(format) passes the picked format to startDownload", async () => {
+    await openReady();
+    await store().download("251");
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("251");
+  });
+
+  it("download() without a format passes none", async () => {
+    await openReady();
+    await store().download();
+    expect(startDownloadMock.mock.calls[0][0].format).toBeUndefined();
+  });
+
+  it("download(format) keeps the selection of the tracks it downloads", async () => {
+    await openReady();
+    store().selectTrack(0, { ctrl: false, shift: false });
+    store().selectTrack(3, { ctrl: true, shift: false });
+    await store().download("140");
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/0",
+      "https://example.test/track/3",
+    ]);
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("140");
+  });
+
+  it("downloadTrack(track, format) passes the format", async () => {
+    await openReady();
+    await store().downloadTrack(track(3), "mp3-320");
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("mp3-320");
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual(["https://example.test/track/3"]);
+  });
+
+  it("downloadUrls(urls, format) passes the format with the given urls", async () => {
+    await openReady();
+    await store().downloadUrls(["https://example.test/track/1"], "flac");
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("flac");
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual(["https://example.test/track/1"]);
+  });
+});

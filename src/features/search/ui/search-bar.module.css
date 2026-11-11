@@ -299,7 +299,8 @@
     background: none;
     border: none;
     color: var(--color-info);
-    padding: 6px;
+    /* the check ends where the gear of the download buttons of the other rows ends */
+    padding: 6px 5.7px 6px 6px;
     display: flex;
     align-items: center;
     justify-content: center;

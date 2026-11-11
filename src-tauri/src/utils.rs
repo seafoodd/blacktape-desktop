@@ -132,6 +132,12 @@ pub fn make_canonical_slug(artist: &str, entity: &str) -> String {
         .join("-")
 }
 
+/// Whether an MP4 audio stream (.m4a) is lossless (ALAC) rather than AAC. Only lossless codecs report a bit depth;
+/// a bitrate no AAC encoder reaches (500 kbps and more) is the fallback when the depth is missing. Pure.
+pub fn is_lossless_mp4(bit_depth: Option<u8>, bitrate_kbps: u32) -> bool {
+    bit_depth.is_some() || bitrate_kbps >= 500
+}
+
 pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> QualityTier {
     let bitrate = tagged_file.properties().audio_bitrate().unwrap_or(0);
 
@@ -147,6 +153,9 @@ pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> Qu
                 QualityTier::Low
             }
         }
+
+        // ALAC also lives in .m4a: it is lossless, not an AAC bitrate tier
+        "m4a" | "mp4" if is_lossless_mp4(tagged_file.properties().bit_depth(), bitrate) => QualityTier::Lossless,
 
         "m4a" | "aac" | "ogg" => {
             if bitrate >= 192 {
@@ -174,7 +183,7 @@ pub fn determine_quality(ext: &str, tagged_file: &lofty::file::TaggedFile) -> Qu
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{sanitize, sanitize_fs};
+    use crate::utils::{is_lossless_mp4, sanitize, sanitize_fs};
 
     #[test]
     fn test_sanitize_removes_illegal_windows_chars() {
@@ -214,4 +223,32 @@ mod tests {
         assert_eq!(sanitize(""), "");
         assert_eq!(sanitize("NormalSong123"), "NormalSong123");
     }
+
+    #[test]
+    fn is_lossless_mp4_true_for_alac_with_bit_depth() {
+        assert!(is_lossless_mp4(Some(16), 935));
+    }
+
+    #[test]
+    fn is_lossless_mp4_true_for_bit_depth_even_at_zero_bitrate() {
+        assert!(is_lossless_mp4(Some(24), 0));
+    }
+
+    #[test]
+    fn is_lossless_mp4_false_for_aac_bitrates_without_depth() {
+        assert!(!is_lossless_mp4(None, 128));
+        assert!(!is_lossless_mp4(None, 256));
+        assert!(!is_lossless_mp4(None, 320));
+    }
+
+    #[test]
+    fn is_lossless_mp4_true_at_exact_bitrate_threshold() {
+        assert!(is_lossless_mp4(None, 500));
+    }
+
+    #[test]
+    fn is_lossless_mp4_false_just_below_bitrate_threshold() {
+        assert!(!is_lossless_mp4(None, 499));
+    }
 }
+

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { seek } from "@/shared/lib/audio.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
   MdCloudQueue,
@@ -239,23 +241,6 @@ export const PlayerControls = () => {
                 </div>
               </div>
               <div className={styles.songActions}>
-                {streamTrack && (
-                  <button
-                    type="button"
-                    className={styles.songAction}
-                    disabled={downloaded || downloading}
-                    title={downloaded ? "Already in your library" : downloading ? "Downloading…" : "Download this song"}
-                    onClick={() => downloadParams && void useLibraryStore.getState().startDownload(downloadParams)}
-                  >
-                    {downloading ? (
-                      <span className={styles.actionSpinner} role="status" aria-label="Downloading" />
-                    ) : downloaded ? (
-                      <MdCheck />
-                    ) : (
-                      <MdFileDownload />
-                    )}
-                  </button>
-                )}
                 <button
                   type="button"
                   className={styles.songAction}
@@ -273,6 +258,31 @@ export const PlayerControls = () => {
                 >
                   <MdFavoriteBorder />
                 </button>
+                {streamTrack &&
+                  (downloading || downloaded || !downloadParams ? (
+                    <button
+                      type="button"
+                      className={styles.songAction}
+                      disabled
+                      title={downloaded ? "Already in your library" : "Downloading…"}
+                    >
+                      {downloading ? (
+                        <span className={styles.actionSpinner} role="status" aria-label="Downloading" />
+                      ) : (
+                        <MdCheck />
+                      )}
+                    </button>
+                  ) : (
+                    <DownloadSplitButton
+                      size={36}
+                      revealGear
+                      className={styles.downloadSplit}
+                      icon={<MdFileDownload />}
+                      title="Download this song"
+                      onDownload={() => void useLibraryStore.getState().startDownload(downloadParams)}
+                      onChooseQuality={() => openQualityMenu(downloadParams)}
+                    />
+                  ))}
               </div>
             </>
           ) : (

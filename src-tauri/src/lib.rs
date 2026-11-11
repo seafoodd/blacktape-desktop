@@ -559,6 +559,7 @@ async fn download(
     cover_url: Option<String>,
     track_urls: Option<Vec<String>>,
     placement: Option<crate::download::types::TrackPlacement>,
+    format: Option<String>,
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
         let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
@@ -608,6 +609,7 @@ async fn download(
     };
 
     task_registry.register_task(initial_state).await;
+    task_registry.set_format(&id, format).await;
 
     let payload = match download_type {
         DownloadType::Album => match track_urls {
@@ -893,6 +895,8 @@ pub fn run() {
             get_artist_profile,
             // Download
             download,
+            download::quality::get_expected_quality,
+            download::quality::probe_audio_formats,
             cancel_download,
             get_active_downloads,
             // Auth

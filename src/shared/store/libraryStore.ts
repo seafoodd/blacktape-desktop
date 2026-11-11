@@ -54,6 +54,8 @@ export interface StartDownloadParams {
   trackUrls?: string[];
   /** Single track downloads: the library album and song this track stands for (names and number win over the platform's). */
   placement?: TrackPlacement;
+  /** yt-dlp format id picked in the quality menu (the platform's best is the fallback); omitted: the best. */
+  format?: string;
 }
 
 /** Mirrors the Rust `TrackPlacement` (snake_case on the wire). */
@@ -538,6 +540,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const coverUrl = isObject ? paramsOrPlatform.coverUrl : undefined;
     const trackUrls = isObject ? paramsOrPlatform.trackUrls : undefined;
     const placement = isObject ? paramsOrPlatform.placement : undefined;
+    const format = isObject ? paramsOrPlatform.format : undefined;
 
     // A second click while the same songs are still downloading would queue them again.
     if (isRunning(findDownload(get().activeDownloads, { url, trackUrls }))) return;
@@ -590,6 +593,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         coverUrl,
         trackUrls: trackUrls ?? null,
         placement: placement ?? null,
+        format: format ?? null,
       });
     } catch (e) {
       console.error("Download invoke failed:", e);

@@ -128,11 +128,11 @@
     display: flex;
     flex-shrink: 0;
     align-items: center;
-    justify-content: center;
-    width: 24px;
+    justify-content: flex-end;
+    /* as wide as the 30px download button minus its negative right margin (.rowSplit), whatever the row shows,
+       so the durations line up */
+    width: 40.5px;
     margin-left: 4px;
-    /* pull the button closer to the row's right edge (the row has 12px padding) */
-    margin-right: -6px;
 }
 
 .downloadBtn {
@@ -191,4 +191,39 @@
     to {
         transform: rotate(360deg);
     }
+}
+
+/* the row's download button is dim until the row is hovered, like the other row icons */
+.rowSplit {
+    color: rgba(255, 255, 255, 0.4);
+    /* the gear ends where the check of a downloaded row ends: cancel the button's right padding (--split-gear-pad)
+       and half of the 1px margin inside the gear glyph */
+    margin-right: calc(-1 * var(--split-gear-pad) - 0.5px);
+}
+
+.trackRow:hover .rowSplit {
+    color: white;
+}
+
+/* "Download album" + its quality gear: two parts split by a narrow gap, sharp corners where they meet */
+.primarySplit {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 2px;
+
+    & .primaryButton:first-child:not(:only-child) {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+    }
+}
+
+.primarySplit:hover:not(:has(:disabled)) .primaryButton {
+    background-color: var(--color-primaryLight);
+    border-color: var(--color-primaryLight);
+}
+
+.primaryArrow {
+    padding: 0 8px;
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
 }

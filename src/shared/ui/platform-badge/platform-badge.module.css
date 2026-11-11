@@ -1,0 +1,26 @@
+.badge {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: var(--radius-xs);
+}
+
+/* brand tints, kept muted so badges do not steal attention */
+.youtube {
+    background-color: rgba(255, 70, 60, 0.14);
+    color: rgba(255, 120, 110, 0.75);
+}
+
+.bandcamp {
+    background-color: rgba(29, 160, 195, 0.15);
+    color: rgba(90, 190, 215, 0.8);
+}
+
+.soundcloud {
+    background-color: rgba(255, 110, 20, 0.15);
+    color: rgba(255, 150, 80, 0.8);
+}

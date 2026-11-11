@@ -1,0 +1,23 @@
+.badge {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    border-radius: var(--radius-xs);
+    white-space: nowrap;
+}
+
+.low {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.high {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.lossless {
+    background-color: rgba(22, 163, 74, 0.16);
+    color: #7ddc9b;
+}

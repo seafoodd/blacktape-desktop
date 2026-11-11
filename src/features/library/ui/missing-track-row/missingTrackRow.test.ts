@@ -33,6 +33,9 @@ vi.mock("@/shared/store/libraryStore.ts", () => ({
   ItemType: { Track: "Track", Album: "Album", Artist: "Artist" },
   useLibraryStore: { getState: () => ({ startDownload: vi.fn() }), subscribe: vi.fn() },
 }));
+vi.mock("@/shared/store/libraryIndexStore.ts", () => ({
+  useLibraryIndexStore: { getState: () => ({ invalidate: vi.fn() }) },
+}));
 
 const track = (index: number, over: Partial<AlbumTrackInfo> = {}): AlbumTrackInfo => ({
   index,
@@ -501,11 +504,12 @@ describe("missingAlbumMenuItems with find and unlink", () => {
       "",
       "Show missing songs (2)",
       "Download missing (2)",
+      "Linked to Bandcamp",
       "Change linked album...",
       "Unlink album",
     ]);
-    items[3].action?.();
     items[4].action?.();
+    items[5].action?.();
     expect(a.find).toHaveBeenCalledTimes(1);
     expect(a.unlink).toHaveBeenCalledTimes(1);
     expect(a.toggle).not.toHaveBeenCalled();
@@ -516,7 +520,61 @@ describe("missingAlbumMenuItems with find and unlink", () => {
     const labels = missingAlbumMenuItems(source({ missing: 2 }), false, actions()).map((i) => i.label);
     expect(labels).not.toContain("Change linked album...");
     expect(labels).not.toContain("Unlink album");
+    expect(labels).not.toContain("Linked to Bandcamp");
     expect(labels).toEqual(["", "Show missing songs (2)", "Download missing (2)"]);
+  });
+});
+
+describe("missingAlbumMenuItems with downloadAs", () => {
+  it("offers Download missing as… right after Download missing (N), which calls downloadAs only", () => {
+    const a = { ...actions(), downloadAs: vi.fn() };
+    const items = missingAlbumMenuItems(source({ missing: 2 }), false, a);
+    expect(items.map((i) => i.label)).toEqual([
+      "",
+      "Show missing songs (2)",
+      "Download missing (2)",
+      "Download missing as…",
+    ]);
+    items[3].action?.();
+    expect(a.downloadAs).toHaveBeenCalledTimes(1);
+    expect(a.download).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Download missing as… when no song is missing", () => {
+    const a = { ...actions(), downloadAs: vi.fn() };
+    const labels = missingAlbumMenuItems(source({ missing: 0 }), true, a).map((i) => i.label);
+    expect(labels).not.toContain("Download missing as…");
+  });
+
+  it("does not offer Download missing as… without the downloadAs action", () => {
+    const labels = missingAlbumMenuItems(source({ missing: 2 }), false, actions()).map((i) => i.label);
+    expect(labels).not.toContain("Download missing as…");
+  });
+});
+
+describe("missingAlbumMenuItems linked album entry", () => {
+  it("shows the linked platform as a disabled item with no action", () => {
+    const a = { ...actions(), find: vi.fn(), unlink: vi.fn() };
+    const linked = missingAlbumMenuItems(source({ missing: 2 }), false, a).find((i) =>
+      i.label.startsWith("Linked to"),
+    );
+    expect(linked?.label).toBe("Linked to Bandcamp");
+    expect(linked?.disabled).toBe(true);
+    expect(linked?.action).toBeUndefined();
+  });
+
+  it("names the platform of the source", () => {
+    const a = { ...actions(), find: vi.fn() };
+    const labels = missingAlbumMenuItems(source({ platform: "soundcloud", missing: 0 }), false, a).map((i) => i.label);
+    expect(labels).toEqual(["", "Linked to SoundCloud", "Change linked album..."]);
+  });
+
+  it("is shown with find alone, so the link can be changed even when nothing is missing", () => {
+    const a = { ...actions(), find: vi.fn() };
+    const items = missingAlbumMenuItems(source({ missing: 0 }), false, a);
+    expect(items.map((i) => i.label)).toEqual(["", "Linked to Bandcamp", "Change linked album..."]);
+    items[2].action?.();
+    expect(a.find).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -550,6 +608,47 @@ describe("missingTrackDownloading", () => {
 
   it("is false for a track the download does not list", () => {
     expect(missingTrackDownloading(dl("downloading", ["Other"]), { ...track, track_number: 99 })).toBe(false);
+  });
+});
+
+describe("missingTrackDownloading for a download of some tracks (trackUrls)", () => {
+  const kidWar = { title: "Kid War", track_number: 11, index: 10, url: "https://example.test/track/10" };
+  const other = { title: "Other", track_number: 3, index: 2, url: "https://example.test/track/2" };
+  /** A running download of some tracks: `placement` unset, `trackUrls` given. */
+  const urlDownload = (trackUrls: string[], titles: string[] = []) =>
+    ({
+      status: "downloading",
+      placement: undefined,
+      tracks: titles.map((title) => ({ title, trackNumber: 1, percent: 0, status: "downloading" })),
+      trackUrls,
+    }) as never;
+
+  it("is true only for a track whose url is one of trackUrls", () => {
+    const download = urlDownload(["https://example.test/track/10"]);
+    expect(missingTrackDownloading(download, kidWar)).toBe(true);
+    expect(missingTrackDownloading(download, other)).toBe(false);
+  });
+
+  it("matches the url by page key, so a trailing slash, query or www host does not matter", () => {
+    const download = urlDownload(["https://www.example.test/track/10/?x=1"]);
+    expect(missingTrackDownloading(download, kidWar)).toBe(true);
+  });
+
+  it("is false for a track without a url", () => {
+    const download = urlDownload(["https://example.test/track/10"]);
+    expect(missingTrackDownloading(download, { ...kidWar, url: undefined })).toBe(false);
+    expect(missingTrackDownloading(download, { ...kidWar, url: "" })).toBe(false);
+  });
+
+  it("does not match by title or number when trackUrls is given", () => {
+    const download = urlDownload(["https://example.test/track/2"], ["Kid War"]);
+    expect(missingTrackDownloading(download, kidWar)).toBe(false);
+  });
+
+  it("falls back to the old title and number check when trackUrls is empty", () => {
+    const download = urlDownload([], ["kid war"]);
+    expect(missingTrackDownloading(download, { title: "Kid War", track_number: 11, index: 10 })).toBe(true);
+    expect(missingTrackDownloading(download, { title: "Other", track_number: 3, index: 2 })).toBe(false);
   });
 });
 

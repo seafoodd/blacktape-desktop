@@ -50,6 +50,8 @@ pub struct LibraryIndex {
     /// Normalized titles (see `candidates::normalize_text`) of the library songs by normalized album artist,
     /// for the fuzzy title match of songs that have no page url.
     pub titles: HashMap<String, Vec<String>>,
+    /// (track number, normalized title) of the songs of ONE library album (only a `scoped_index` has them).
+    pub numbered: HashSet<(i32, String)>,
 }
 
 /// True when `slugs` has the slug of `artist title`, or of the first artist of a track credited to several
@@ -111,7 +113,7 @@ impl LibraryIndex {
                 }
             }
         }
-        Self { keys, slugs: HashSet::new(), titles: HashMap::new() }
+        Self { keys, ..Self::default() }
     }
 
     /// Adds the track slugs of the library (see `contains_by_meta`).
@@ -130,6 +132,27 @@ impl LibraryIndex {
             }
         }
         self
+    }
+
+    /// Adds the (track number, title) of the songs of one library album (see `contains_numbered`).
+    pub fn with_numbered_titles(mut self, rows: impl IntoIterator<Item = (i32, String)>) -> Self {
+        use crate::library_index::candidates::normalize_text;
+        for (number, title) in rows {
+            let title = normalize_text(&title);
+            if !title.is_empty() {
+                self.numbered.insert((number, title));
+            }
+        }
+        self
+    }
+
+    /// True when the album's song at `track_number` has this title once text in brackets, punctuation and case
+    /// are ignored: the same track from another platform ("Title (2022 Remaster)" for the library's "Title").
+    pub fn contains_numbered(&self, track_number: Option<i32>, title: &str) -> bool {
+        use crate::library_index::candidates::normalize_text;
+        let Some(number) = track_number else { return false };
+        let title = normalize_text(title);
+        !title.is_empty() && self.numbered.contains(&(number, title))
     }
 
     /// True when a song of this artist has (almost) this title: equal once text in brackets, punctuation and case
@@ -312,6 +335,45 @@ mod tests {
         let r: RemoteRef = serde_json::from_str(r#"{"platform":"soundcloud","url":"https://x"}"#).unwrap();
         assert_eq!(r.platform, Platform::Soundcloud);
         assert_eq!(r.url, "https://x");
+    }
+
+    // ---- contains_numbered
+
+    #[test]
+    fn contains_numbered_matches_the_same_number_and_title_without_brackets_or_case() {
+        let index = LibraryIndex::default().with_numbered_titles([(1, "Digeridoo".to_string())]);
+        assert!(index.contains_numbered(Some(1), "Digeridoo"));
+        assert!(index.contains_numbered(Some(1), "Digeridoo (2022 Remaster)"));
+        assert!(index.contains_numbered(Some(1), "DIGERIDOO"));
+    }
+
+    #[test]
+    fn contains_numbered_ignores_brackets_on_the_library_side_too() {
+        let index = LibraryIndex::default()
+            .with_numbered_titles([(6, "Pipe Dream (Live In Cornwall) (Cr7e Version)".to_string())]);
+        assert!(index.contains_numbered(Some(6), "Pipe Dream (Cr7E Version, Live In Cornwall)"));
+    }
+
+    #[test]
+    fn contains_numbered_is_false_for_another_number_or_no_number() {
+        let index = LibraryIndex::default().with_numbered_titles([(6, "Pipe Dream".to_string())]);
+        assert!(!index.contains_numbered(Some(1), "Pipe Dream"));
+        assert!(!index.contains_numbered(None, "Pipe Dream"));
+    }
+
+    #[test]
+    fn contains_numbered_is_false_for_a_different_base_title_or_an_empty_title() {
+        let index = LibraryIndex::default()
+            .with_numbered_titles([(1, "Digeridoo".to_string()), (2, "(Live)".to_string())]);
+        assert!(!index.contains_numbered(Some(1), "Digeridoo Two"));
+        assert!(!index.contains_numbered(Some(1), ""));
+        assert!(!index.contains_numbered(Some(1), "(Remaster)"));
+        assert!(!index.contains_numbered(Some(2), "(Live)"), "a library title without base text is never stored");
+    }
+
+    #[test]
+    fn contains_numbered_is_false_on_the_default_index() {
+        assert!(!LibraryIndex::default().contains_numbered(Some(1), "Digeridoo"));
     }
 
     // ---- edit_similarity

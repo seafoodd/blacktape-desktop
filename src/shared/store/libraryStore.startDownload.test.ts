@@ -86,3 +86,15 @@ describe("startDownload guard", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("startDownload format", () => {
+  it("sends the picked format to the download command", () => {
+    void useLibraryStore.getState().startDownload({ ...albumParams([TRACK_1]), format: "251" });
+    expect(invoke).toHaveBeenCalledWith("download", expect.objectContaining({ format: "251" }));
+  });
+
+  it("sends null when no format is picked", () => {
+    void useLibraryStore.getState().startDownload(albumParams([TRACK_1]));
+    expect(invoke).toHaveBeenCalledWith("download", expect.objectContaining({ format: null }));
+  });
+});
