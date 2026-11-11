@@ -23,17 +23,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows (Current primary target)
           - platform: "windows-latest"
             args: ""
 
-          # Uncomment below when you are ready to produce macOS & Linux builds:
+          # .deb, .rpm and .AppImage; built on the oldest supported Ubuntu so they also run on older distributions
+          - platform: "ubuntu-22.04"
+            args: ""
+
+          # Uncomment below when you are ready to produce macOS builds:
           # - platform: "macos-latest"
           #   args: "--target aarch64-apple-darwin"
           # - platform: "macos-latest"
           #   args: "--target x86_64-apple-darwin"
-          # - platform: "ubuntu-22.04"
-          #   args: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -61,12 +62,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libasound2-dev \
+            libdbus-1-dev \
             patchelf \
-            xdg-utils \
-            libasound2-dev
+            xdg-utils
 
       - name: Install frontend dependencies
         run: npm ci
@@ -93,7 +100,7 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
 
-      # A single exe next to nothing else: unzip anywhere and run, no installer.
+      # A single exe and nothing else: download anywhere and run, no installer.
       - name: Add the portable build
         if: matrix.platform == 'windows-latest'
         shell: pwsh
@@ -101,11 +108,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $version = "${{ steps.tauri.outputs.appVersion }}"
-          $dir = "Blacktape_${version}_x64_portable"
-          New-Item -ItemType Directory $dir | Out-Null
-          Copy-Item src-tauri/target/release/blacktape-desktop.exe "$dir/Blacktape.exe"
-          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
-          gh release upload "v$version" "$dir.zip" --clobber
+          $exe = "Blacktape_${version}_x64_portable.exe"
+          Copy-Item src-tauri/target/release/blacktape-desktop.exe $exe
+          gh release upload "v$version" $exe --clobber
 
   finalize:
     name: Release notes
