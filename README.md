@@ -4,14 +4,20 @@
 
 Most players only play what you already have, and most downloaders don't care about your library. Blacktape does both, so you don't need to manually download and organize your music.
 
+![The library with synced lyrics scrolling on the right](.github/assets/lyrics.png)
+
 ![Searching YouTube for an artist: top songs, discography and tracks, with the ones already in the library marked](.github/assets/search.webp)
 
 <details>
 <summary>More screenshots</summary>
 
-![The library with synced lyrics scrolling on the right](.github/assets/lyrics.png)
-
 ![An album downloading in the background while a track streams](.github/assets/library.png)
+
+![A playlist with several songs selected, lyrics on the right](.github/assets/playlist.png)
+
+![Choosing the download quality before downloading a track](.github/assets/quality.png)
+
+![Settings: theme, font size and background opacity](.github/assets/settings.png)
 
 </details>
 
