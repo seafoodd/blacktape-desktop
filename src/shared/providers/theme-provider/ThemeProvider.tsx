@@ -6,6 +6,15 @@ import {
   useState,
 } from "react";
 import { builtinThemes, ThemePalette } from "./themes";
+import {
+  DEFAULT_BG_BLUR,
+  DEFAULT_BG_OPACITY,
+  hexToRgb,
+  parseBlurSetting,
+  parseUnitSetting,
+  windowBlurEnabled,
+} from "@/shared/providers/theme-provider/appearance.ts";
+import { applyWindowBlur } from "@/shared/providers/theme-provider/windowBlur.ts";
 
 interface ThemeContextValue {
   activeThemeId: string;
@@ -17,6 +26,8 @@ interface ThemeContextValue {
   setFontSize: (size: string) => void;
   bgOpacity: number;
   setBgOpacity: (opacity: number) => void;
+  bgBlur: boolean;
+  setBgBlur: (blur: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -37,8 +48,14 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const [bgOpacity, setBgOpacityState] = useState<number>(() => {
-    const saved = localStorage.getItem("bg_opacity");
-    return saved !== null ? parseFloat(saved) : 0.5;
+    return parseUnitSetting(
+      localStorage.getItem("bg_opacity"),
+      DEFAULT_BG_OPACITY,
+    );
+  });
+
+  const [bgBlur, setBgBlurState] = useState<boolean>(() => {
+    return parseBlurSetting(localStorage.getItem("bg_blur"), DEFAULT_BG_BLUR);
   });
 
   const palette = builtinThemes[activeThemeId] || builtinThemes.defaultDark;
@@ -73,6 +90,12 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     });
   };
 
+  const setBgBlur = (blur: boolean) => {
+    setBgBlurState(blur);
+    localStorage.setItem("bg_blur", String(blur));
+    themeChannel.postMessage({ type: "BG_BLUR_CHANGED", bgBlur: blur });
+  };
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data.type === "THEME_CHANGED") {
@@ -93,6 +116,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       if (event.data.type === "BG_OPACITY_CHANGED") {
         setBgOpacityState(event.data.bgOpacity);
         localStorage.setItem("bg_opacity", String(event.data.bgOpacity));
+      }
+      if (event.data.type === "BG_BLUR_CHANGED") {
+        setBgBlurState(event.data.bgBlur);
+        localStorage.setItem("bg_blur", String(event.data.bgBlur));
       }
     };
 
@@ -119,6 +146,13 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     );
   }, [bgOpacity]);
 
+  useEffect(() => {
+    applyWindowBlur(
+      windowBlurEnabled(bgOpacity, bgBlur),
+      hexToRgb(palette.colors.background),
+    );
+  }, [bgOpacity, bgBlur, palette]);
+
   return (
     <ThemeContext.Provider
       value={{
@@ -131,6 +165,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         setFontSize,
         bgOpacity,
         setBgOpacity,
+        bgBlur,
+        setBgBlur,
       }}
     >
       {children}

@@ -11,7 +11,7 @@
     display: flex;
     align-items: center;
     height: 28px;
-    background-color: var(--color-background);
+    background-color: var(--bg-background);
     transition: background-color 100ms ease;
     color: white;
     font-size: var(--font-md);
@@ -52,7 +52,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--color-surface);
+    background-color: var(--bg-surface);
     max-width: 160px;
     width: 100%;
     margin-inline: auto;

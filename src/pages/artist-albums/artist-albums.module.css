@@ -44,7 +44,7 @@
     object-fit: cover;
     display: block;
     border-radius: var(--radius-sm, 4px);
-    background-color: var(--color-surface); /* placeholder while the image loads */
+    background-color: var(--bg-surface); /* placeholder while the image loads */
 }
 
 .downloadingAlbumBlock {
@@ -217,7 +217,7 @@
     cursor: pointer;
 
     &:nth-child(even) {
-        background-color: var(--color-surface);
+        background-color: var(--bg-surface);
     }
 
     &.playing {

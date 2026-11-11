@@ -1,5 +1,4 @@
 body {
-    background-color: var(--color-background);
     color: var(--color-text);
 
     font-family:
@@ -16,8 +15,9 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
-html, body {
-    background-color: rgb(from var(--color-background) r g b / var(--bg-opacity));
+/* Only the root is tinted: body stays transparent so two translucent layers do not stack. */
+html {
+    background-color: var(--bg-background);
 }
 
 *:focus-visible {
@@ -67,7 +67,7 @@ ul {
 /* Modern Standard (Firefox and Chrome 121+) */
 :root {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-primary) var(--color-surface);
+    scrollbar-color: var(--color-primary) var(--bg-surface);
 }
 
 * {

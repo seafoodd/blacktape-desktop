@@ -47,7 +47,7 @@
     user-select: none;
 
     &:nth-child(even) {
-        background-color: var(--color-surface);
+        background-color: var(--bg-surface);
     }
 
     /* One frame around each run of selected rows: sides on every row, top on the

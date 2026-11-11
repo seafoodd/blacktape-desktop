@@ -18,6 +18,7 @@ mod thumbs;
 pub mod trash;
 pub mod types;
 pub mod utils;
+mod window_effects;
 
 use crate::audio::commands::{
     add_next_to_queue, add_to_queue, fetch_state, get_is_paused, get_position, get_volume,
@@ -839,6 +840,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(generate_handler![
+            // Window blur ("Background Blur" setting)
+            window_effects::set_window_blur,
+            window_effects::window_blur_supported,
             // Streaming
             preview::commands::stream_queue,
             preview::commands::stream_prefetch,

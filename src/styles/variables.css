@@ -11,6 +11,19 @@
     --color-secondary: #004499;
     --color-border: #1F2230;
 
+    /* Window-level fills that follow the "Background Opacity" setting.
+       Modals keep the opaque --color-* values. */
+    --bg-background: rgb(from var(--color-background) r g b / var(--bg-opacity));
+    --bg-surface: rgb(from var(--color-surface) r g b / var(--bg-opacity));
+
+    /* Menus and popovers sit on top of content, so they never go below 85% to keep their text
+       readable. WebView2 does not blur through a see-through page, so --floating-blur only helps
+       when the window is opaque behind the menu. */
+    --floating-opacity: max(var(--bg-opacity), 0.85);
+    --bg-floating: rgb(from var(--color-surface) r g b / var(--floating-opacity));
+    --bg-floating-hover: rgb(from var(--color-background) r g b / var(--floating-opacity));
+    --floating-blur: blur(16px);
+
     /* Spacing */
     --spacing-xs: 4px;
     --spacing-sm: 8px;
