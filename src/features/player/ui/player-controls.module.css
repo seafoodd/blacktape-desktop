@@ -3,7 +3,7 @@
     height: 72px;
     display: flex;
     flex-direction: column;
-    background-color: var(--color-surface);
+    background-color: var(--bg-surface);
     position: relative;
 
     transition: height 50ms linear, padding 50ms linear;
@@ -227,7 +227,7 @@
     width: 80px;
     height: 4px;
     margin-right: 12px;
-    background: var(--color-surface);
+    background: var(--bg-surface);
     border-radius: 2px;
     cursor: pointer;
 

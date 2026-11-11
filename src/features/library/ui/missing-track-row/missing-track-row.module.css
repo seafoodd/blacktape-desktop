@@ -14,7 +14,7 @@
     transition: 100ms ease-out background-color;
 
     &:nth-child(even) {
-        background-color: var(--color-surface);
+        background-color: var(--bg-surface);
     }
 
     /* The song being played: the highlight of a playing library song, a bit more transparent. */

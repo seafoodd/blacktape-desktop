@@ -26,7 +26,7 @@
     text-align: center;
     font-size: var(--font-md);
     padding: 6px;
-    background-color: var(--color-background);
+    background-color: var(--bg-background);
     transition: 100ms background-color linear;
 
     & + & {

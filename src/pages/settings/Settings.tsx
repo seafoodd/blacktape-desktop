@@ -29,6 +29,8 @@ export const Settings = () => {
     setFontSize,
     bgOpacity,
     setBgOpacity,
+    bgBlur,
+    setBgBlur,
   } = useTheme();
   const { fetchTabs } = useLibraryStore();
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
@@ -168,6 +170,28 @@ export const Settings = () => {
                   step="0.05"
                   value={bgOpacity}
                   onChange={(e) => setBgOpacity(parseFloat(e.target.value))}
+                />
+              </div>
+
+              <div className={styles.settingRow}>
+                <label htmlFor="bg-blur-slider">
+                  Background Blur ({Math.round(bgBlur * 100)}%)
+                  {bgOpacity >= 1 && (
+                    <span className={styles.mutedText}>
+                      {" "}
+                      (lower the opacity to see it)
+                    </span>
+                  )}
+                </label>
+                <input
+                  id="bg-blur-slider"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={bgBlur}
+                  disabled={bgOpacity >= 1}
+                  onChange={(e) => setBgBlur(parseFloat(e.target.value))}
                 />
               </div>
             </section>

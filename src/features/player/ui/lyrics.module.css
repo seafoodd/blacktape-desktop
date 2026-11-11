@@ -120,7 +120,7 @@
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background-color: var(--color-surface);
+    background-color: var(--bg-surface);
     color: var(--color-muted);
     font-size: var(--font-sm);
     cursor: pointer;
@@ -133,7 +133,7 @@
 
     &:hover {
         /*color: var(--color-text);*/
-        background-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-surface));
+        background-color: color-mix(in srgb, var(--color-primary) 35%, var(--bg-surface));
     }
 }
 

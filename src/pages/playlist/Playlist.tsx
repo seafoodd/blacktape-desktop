@@ -204,7 +204,7 @@ const Playlist = () => {
       <div
         className={styles.playlistInfoBlock}
         style={{
-          background: `linear-gradient(to bottom, rgba(${dominantColor}, 0.65), var(--color-background))`,
+          background: `linear-gradient(to bottom, rgba(${dominantColor}, 0.65), var(--bg-background))`,
         }}
       >
         <div className={styles.playlistContainer}>
