@@ -30,7 +30,7 @@ use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
 use crate::db::schema::{db_file_path, get_migrations, DB_URL};
-use crate::download::{ytdlp, DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
+use crate::download::{DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
 use crate::lyrics::{fetch_lyrics, fetch_lyrics_from_provider, LyricsSource};
 use crate::playlists::commands::{
     add_songs_to_playlist, create_playlist, delete_playlist, get_all_playlists, get_playlist_by_id,
@@ -724,6 +724,15 @@ async fn get_active_downloads(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must come first: a second start only brings the running window forward. Two instances would both
+        // download and swap yt-dlp, deno and ffmpeg in the same folder.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         // thumb://localhost/<encoded path>?s=<px> -> downscaled cover (see thumbs.rs)
         .register_asynchronous_uri_scheme_protocol("thumb", |ctx, request, responder| {
             let cache_dir = ctx
@@ -788,24 +797,10 @@ pub fn run() {
             app.manage(tokio::sync::Mutex::new(db));
             trash::spawn_auto_clean(app_handle.clone());
 
-            let updater_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = ytdlp::check_and_update(updater_handle).await {
-                    eprintln!("[blacktape Error] yt-dlp lifecycle sync failed: {e}");
-                }
-            });
-            let deno_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::download::deno::check_and_update(deno_handle).await {
-                    eprintln!("[blacktape Error] deno install failed, YouTube needs it: {e}");
-                }
-            });
-            let ffmpeg_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::download::ffmpeg::check_and_update(ffmpeg_handle).await {
-                    eprintln!("[blacktape Error] ffmpeg install failed, converting downloads needs it: {e}");
-                }
-            });
+            // yt-dlp and deno live in the data folder, ffmpeg and ffprobe in its "ffmpeg" folder
+            if let Ok(data) = app.path().app_local_data_dir() {
+                download::tools::start(&app_handle, &[data.clone(), data.join("ffmpeg")]);
+            }
 
             if let Ok(home) = app.path().home_dir() {
                 let temp_dir = home.join("blacktape-lib").join(".temp");
@@ -853,6 +848,9 @@ pub fn run() {
             // Window blur ("Background Blur" setting)
             window_effects::set_window_blur,
             window_effects::window_blur_supported,
+            // yt-dlp, deno and ffmpeg setup (Settings → Downloader)
+            download::tools::get_tools_status,
+            download::tools::check_tools,
             // Streaming
             preview::commands::stream_queue,
             preview::commands::stream_prefetch,

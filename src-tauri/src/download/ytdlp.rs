@@ -1,8 +1,6 @@
 use crate::download::{ProgressEvent, TrackDownload};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -72,39 +70,44 @@ fn installed_marker(tag: &str, asset: &str) -> String {
     format!("{} {asset}", tag.trim())
 }
 
-fn to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Every yt-dlp binary is downloaded from this release folder and nowhere else.
+const DOWNLOAD_PREFIX: &str = "https://github.com/yt-dlp/yt-dlp/releases/download/";
+
+/// When GitHub was last asked for a newer yt-dlp (see `tools::check_due`).
+pub fn stamp_path(app: &AppHandle) -> PathBuf {
+    get_path(app).with_extension("checked")
 }
 
-pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .user_agent("blacktape-desktop")
-        .build()
-        .map_err(|e| e.to_string())?;
+/// Installs yt-dlp, or updates it when a check is due (`force`: now). The new binary is verified against the
+/// release's SHA2-256SUMS and swapped in whole, also while the old one runs.
+pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String> {
+    use crate::download::tools::{self, Source, Tool};
+    let binary_path = get_path(app);
+    let version_file = binary_path.with_extension("version");
+    let stamp = stamp_path(app);
+    let installed = binary_path.is_file();
+    let local_marker = fs::read_to_string(&version_file).unwrap_or_default();
+    let files = [binary_path.clone()];
+    if installed {
+        tools::found(app, Tool::YtDlp, tools::version_of_marker(&local_marker), Source::App, &files);
+        if !force && !tools::check_due(Tool::YtDlp, &stamp) {
+            tools::ready(app, Tool::YtDlp, tools::version_of_marker(&local_marker), Source::App, &files);
+            return Ok(());
+        }
+    }
 
-    let release_url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
-    let response = client
-        .get(release_url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<GithubRelease>()
-        .await
-        .map_err(|e| e.to_string())?;
-
+    let client = tools::http_client()?;
+    let release: GithubRelease =
+        tools::get_json(&client, "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest").await?;
     let target_asset = release_asset(std::env::consts::OS, std::env::consts::ARCH);
     // The marker names the asset too, so a switch to another asset (yt-dlp -> yt-dlp_linux) replaces the binary
     // even when the version did not change.
-    let latest_version = installed_marker(&response.tag_name, target_asset);
-    let binary_path = get_path(&app);
-    let version_file = binary_path.with_extension("version");
-    let local_version = fs::read_to_string(&version_file).unwrap_or_default();
+    let latest = installed_marker(&release.tag_name, target_asset);
 
-    if !binary_path.exists() || local_version.trim() != latest_version {
-        println!("[ytdlp] Upgrading binary to {}...", latest_version);
-
+    if !installed || local_marker.trim() != latest {
+        println!("[ytdlp] Upgrading binary to {latest}...");
         let asset_url = |name: &str| {
-            response
+            release
                 .assets
                 .iter()
                 .find(|a| a.name == name)
@@ -113,76 +116,22 @@ pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
         };
         let binary_url = asset_url(target_asset)?;
         let sums_url = asset_url(CHECKSUMS_ASSET)?;
+        tools::check_url(&sums_url, DOWNLOAD_PREFIX)?;
 
         // The published checksum comes first: no binary is written without one to compare with.
-        let sums = client
-            .get(&sums_url)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| e.to_string())?
-            .text()
-            .await
-            .map_err(|e| e.to_string())?;
+        let sums = tools::get_text(&client, &sums_url).await?;
         let expected = expected_sha256(&sums, target_asset)
             .ok_or_else(|| format!("{CHECKSUMS_ASSET} has no checksum for {target_asset}"))?;
-
-        let mut download_resp = client
-            .get(&binary_url)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| e.to_string())?;
-
-        if let Some(parent) = binary_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-
-        // Downloaded next to the binary and swapped in only once its checksum matches: an interrupted or
-        // tampered download never replaces a working yt-dlp.
-        let partial_path = binary_path.with_extension("download");
-        let written: Result<String, String> = async {
-            let mut file = File::create(&partial_path).map_err(|e| e.to_string())?;
-            let mut hasher = Sha256::new();
-            while let Some(chunk) = download_resp.chunk().await.map_err(|e| e.to_string())? {
-                hasher.update(&chunk);
-                file.write_all(&chunk).map_err(|e| e.to_string())?;
-            }
-            file.sync_all().map_err(|e| e.to_string())?;
-            Ok(to_hex(&hasher.finalize()))
-        }
-        .await;
-        let verified = written.and_then(|actual| {
-            if actual == expected {
-                Ok(())
-            } else {
-                Err(format!("yt-dlp checksum mismatch: expected {expected}, got {actual}"))
-            }
-        });
-        if let Err(e) = verified {
-            let _ = fs::remove_file(&partial_path);
-            return Err(e);
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&partial_path)
-                .map_err(|e| e.to_string())?
-                .permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&partial_path, perms).map_err(|e| e.to_string())?;
-        }
-
-        if let Err(e) = fs::rename(&partial_path, &binary_path) {
-            // e.g. the old yt-dlp is running (Windows locks it): keep it and try again on the next start.
-            let _ = fs::remove_file(&partial_path);
-            return Err(format!("cannot replace yt-dlp: {e}"));
-        }
-
-        fs::write(&version_file, &latest_version).map_err(|e| e.to_string())?;
+        let partial = binary_path.with_extension("download");
+        tools::download(app, Tool::YtDlp, &client, &binary_url, DOWNLOAD_PREFIX, &expected, &partial).await?;
+        tools::swap_in(&partial, &binary_path)?;
+        fs::write(&version_file, &latest).map_err(|e| e.to_string())?;
+        // the waiting preview process still runs the old binary
+        crate::preview::resolve::restart_spare(app.clone());
         println!("[ytdlp] Update complete!");
     }
+    tools::mark_checked(&stamp);
+    tools::ready(app, Tool::YtDlp, tools::version_of_marker(&latest), Source::App, &files);
     Ok(())
 }
 
@@ -194,13 +143,9 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
         args
     );
 
+    use crate::download::tools::{self, Tool};
+    tools::wait_for(&[Tool::YtDlp, Tool::Deno], tools::PREVIEW_WAIT).await?;
     let binary_path = get_path(app);
-    if !binary_path.exists() {
-        return Err(
-            "yt-dlp binary is missing. Wait for update loop to finish or restart app.".to_string(),
-        );
-    }
-    println!("found binary {binary_path:?}");
 
     let process_start = Instant::now();
     let mut cmd = Command::new(binary_path);
@@ -233,6 +178,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
             "[ytdlp::execute ERROR] Subprocess error message: {}",
             err_msg
         );
+        tools::after_failure(app, &err_msg);
         Err(certificate_hint(&err_msg).map_or(err_msg, str::to_string))
     }
 }
@@ -454,11 +400,9 @@ impl DownloadContext {
         session_prefix: &str,
         task_id: &str,
     ) -> Result<Self, String> {
+        use crate::download::tools::{self, Tool};
+        tools::wait_for(&Tool::ALL, tools::SETUP_WAIT).await?;
         let binary_path = get_path(app);
-        if !binary_path.exists() {
-            eprintln!("[yt-dlp ERROR] Binary missing at path: {:?}", binary_path);
-            return Err("yt-dlp binary is missing.".to_string());
-        }
 
         let timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -715,6 +659,7 @@ async fn download_track_internal(
             stderr_str.trim(),
             stdout_str.trim()
         );
+        crate::download::tools::after_failure(&ctx.app, &stderr_str);
         ctx.record_failure(failure_reason(&stderr_str, status.code()));
         return None;
     }
@@ -732,6 +677,7 @@ async fn download_track_internal(
     let found = find_downloaded_file(&ctx.temp_dir, track_num).await;
     if found.is_none() {
         // exit code 0 but no file: yt-dlp usually printed why ("Requested format is not available")
+        crate::download::tools::after_failure(&ctx.app, &stderr_str);
         ctx.record_failure(failure_reason(&stderr_str, status.code()));
     }
     found
@@ -1330,11 +1276,6 @@ mod hardening_tests {
         assert_ne!(installed_marker("2026.10.01", "yt-dlp_linux"), "2026.10.01");
         assert_ne!(installed_marker("2026.10.01", "yt-dlp_linux"), installed_marker("2026.10.01", "yt-dlp"));
         assert_eq!(installed_marker(" 2026.10.01\n", "yt-dlp_linux"), "2026.10.01 yt-dlp_linux");
-    }
-
-    #[test]
-    fn to_hex_is_lowercase_and_zero_padded() {
-        assert_eq!(to_hex(&[0x00, 0x0f, 0xab]), "000fab");
     }
 }
 
