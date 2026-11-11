@@ -1,8 +1,19 @@
-# Blacktape
+# Blacktape Music Player
 
 **Your music library and every music site, in one app.** Search YouTube, Bandcamp and SoundCloud, listen right away, and download the good stuff straight into your library.
 
-Most players only play what you already have, and most downloaders don't care about your library. Blacktape does both, so you don't need a browser tab for every site.
+Most players only play what you already have, and most downloaders don't care about your library. Blacktape does both, so you don't need to manually download and organize your music.
+
+![Searching YouTube for an artist: top songs, discography and tracks, with the ones already in the library marked](.github/assets/search.webp)
+
+<details>
+<summary>More screenshots</summary>
+
+![The library with synced lyrics scrolling on the right](.github/assets/lyrics.png)
+
+![An album downloading in the background while a track streams](.github/assets/library.png)
+
+</details>
 
 ## What it does
 
@@ -18,7 +29,7 @@ Most players only play what you already have, and most downloaders don't care ab
 
 Windows builds are on the [Releases page](https://github.com/seafoodd/blacktape-desktop/releases). Other systems are not built yet, so for now you'd need to run it from source.
 
-The app downloads [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](), which are required for downloading songs.
+The app downloads [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org), which are required for downloading songs.
 
 ## Run from source
 
