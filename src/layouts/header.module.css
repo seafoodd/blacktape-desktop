@@ -20,6 +20,15 @@
 
 
 
+.end {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    margin-left: auto;
+    position: relative;
+    z-index: 1; /* above the centered search bar if the window is narrow */
+}
+
 .searchBar {
     position: absolute;
     inset: 0;
