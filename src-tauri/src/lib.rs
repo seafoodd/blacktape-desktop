@@ -794,6 +794,18 @@ pub fn run() {
                     eprintln!("[blacktape Error] yt-dlp lifecycle sync failed: {e}");
                 }
             });
+            let deno_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::download::deno::check_and_update(deno_handle).await {
+                    eprintln!("[blacktape Error] deno install failed, YouTube needs it: {e}");
+                }
+            });
+            let ffmpeg_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::download::ffmpeg::check_and_update(ffmpeg_handle).await {
+                    eprintln!("[blacktape Error] ffmpeg install failed, converting downloads needs it: {e}");
+                }
+            });
 
             if let Ok(home) = app.path().home_dir() {
                 let temp_dir = home.join("blacktape-lib").join(".temp");

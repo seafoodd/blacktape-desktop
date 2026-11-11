@@ -297,8 +297,6 @@ pub fn youtube_args(clients: &str) -> Vec<String> {
         "--no-warnings",
         "--no-check-formats",
         "--no-update",
-        "--js-runtimes",
-        "deno",
         "--extractor-args",
         &format!("youtube:player-client={clients}"),
         "-f",
@@ -413,6 +411,7 @@ mod spare {
             return None;
         }
         let mut cmd = Command::new(binary);
+        crate::download::ytdlp::prepare_command(&mut cmd, app);
         cmd.args(youtube_args(YOUTUBE_FAST_CLIENTS))
             .args(["-a", "-"])
             .stdin(Stdio::piped())

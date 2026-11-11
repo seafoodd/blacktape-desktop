@@ -44,13 +44,25 @@ impl Drop for CookieCopy {
 /// The header yt-dlp requires on a cookies.txt; WebKitGTK writes the lines without it.
 const NETSCAPE_HEADER: &str = "# Netscape HTTP Cookie File\n";
 
-/// The cookie file's content as yt-dlp reads it: the Netscape header first. Pure.
-fn with_netscape_header(content: &str) -> String {
-    if content.starts_with("# Netscape HTTP Cookie File") || content.starts_with("# HTTP Cookie File") {
-        content.to_string()
-    } else {
-        format!("{NETSCAPE_HEADER}{content}")
+/// The cookie file's content as yt-dlp reads it: the Netscape header first, and each cookie cut to the 7 Netscape
+/// fields. libsoup (WebKitGTK) appends an 8th, SameSite, and yt-dlp skips every line that has it ("invalid length
+/// 8"), so without this it got no cookies at all. Pure.
+fn to_netscape(content: &str) -> String {
+    let mut out = String::with_capacity(content.len() + NETSCAPE_HEADER.len());
+    if !content.starts_with("# Netscape HTTP Cookie File") && !content.starts_with("# HTTP Cookie File") {
+        out.push_str(NETSCAPE_HEADER);
     }
+    for line in content.lines() {
+        let is_cookie = !line.trim().is_empty() && (!line.starts_with('#') || line.starts_with("#HttpOnly_"));
+        if is_cookie {
+            let fields: Vec<&str> = line.split('\t').collect();
+            out.push_str(&fields[..fields.len().min(7)].join("\t"));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 impl CookieSource {
@@ -73,7 +85,7 @@ impl CookieSource {
                     options.mode(0o600);
                 }
                 let guard = CookieCopy(copy_path.to_path_buf());
-                options.open(copy_path)?.write_all(with_netscape_header(&content).as_bytes())?;
+                options.open(copy_path)?.write_all(to_netscape(&content).as_bytes())?;
                 Ok((vec!["--cookies".into(), copy_path.to_string_lossy().into_owned()], Some(guard)))
             }
         }
@@ -157,7 +169,24 @@ mod tests {
     #[test]
     fn a_file_that_already_has_the_header_is_copied_as_is() {
         let headed = format!("{NETSCAPE_HEADER}{LINE}");
-        assert_eq!(with_netscape_header(&headed), headed);
-        assert_eq!(with_netscape_header("# HTTP Cookie File\n"), "# HTTP Cookie File\n");
+        assert_eq!(to_netscape(&headed), headed);
+        assert_eq!(to_netscape("# HTTP Cookie File\n"), "# HTTP Cookie File\n");
+    }
+
+    #[test]
+    fn the_samesite_field_webkitgtk_appends_is_dropped() {
+        let webkit = "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\tLOGIN_INFO\tabc\tLax\n\
+                      .google.com\tTRUE\t/\tFALSE\t1893456000\tSID\txyz\tNone\n";
+        let expected = format!(
+            "{NETSCAPE_HEADER}#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\tLOGIN_INFO\tabc\n\
+             .google.com\tTRUE\t/\tFALSE\t1893456000\tSID\txyz\n"
+        );
+        assert_eq!(to_netscape(webkit), expected);
+    }
+
+    #[test]
+    fn comments_and_blank_lines_are_kept_unchanged() {
+        let content = "# a\tcomment\twith\ttabs\ta\tb\tc\td\te\n\n";
+        assert_eq!(to_netscape(content), format!("{NETSCAPE_HEADER}{content}"));
     }
 }

@@ -53,6 +53,25 @@ fn expected_sha256(sums: &str, asset: &str) -> Option<String> {
     })
 }
 
+/// The yt-dlp release asset for this OS and CPU (`std::env::consts`). On Linux the standalone build, not the plain
+/// `yt-dlp` zipapp: that one runs on the system Python without curl_cffi, so it cannot impersonate a browser and
+/// Bandcamp refuses it ("no impersonate target is available"). Pure.
+fn release_asset(os: &str, arch: &str) -> &'static str {
+    match (os, arch) {
+        ("windows", _) => "yt-dlp.exe",
+        ("macos", _) => "yt-dlp_macos",
+        ("linux", "x86_64") => "yt-dlp_linux",
+        ("linux", "aarch64") => "yt-dlp_linux_aarch64",
+        ("linux", "arm") => "yt-dlp_linux_armv7l",
+        _ => "yt-dlp",
+    }
+}
+
+/// What the `.version` file holds for an installed binary: release tag and asset. Pure.
+fn installed_marker(tag: &str, asset: &str) -> String {
+    format!("{} {asset}", tag.trim())
+}
+
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -73,20 +92,16 @@ pub async fn check_and_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let latest_version = response.tag_name;
+    let target_asset = release_asset(std::env::consts::OS, std::env::consts::ARCH);
+    // The marker names the asset too, so a switch to another asset (yt-dlp -> yt-dlp_linux) replaces the binary
+    // even when the version did not change.
+    let latest_version = installed_marker(&response.tag_name, target_asset);
     let binary_path = get_path(&app);
     let version_file = binary_path.with_extension("version");
     let local_version = fs::read_to_string(&version_file).unwrap_or_default();
 
-    if !binary_path.exists() || local_version.trim() != latest_version.trim() {
+    if !binary_path.exists() || local_version.trim() != latest_version {
         println!("[ytdlp] Upgrading binary to {}...", latest_version);
-
-        #[cfg(target_os = "windows")]
-        let target_asset = "yt-dlp.exe";
-        #[cfg(target_os = "macos")]
-        let target_asset = "yt-dlp_macos";
-        #[cfg(target_os = "linux")]
-        let target_asset = "yt-dlp";
 
         let asset_url = |name: &str| {
             response
@@ -189,6 +204,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
 
     let process_start = Instant::now();
     let mut cmd = Command::new(binary_path);
+    prepare_command(&mut cmd, app);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
@@ -287,6 +303,38 @@ pub fn certificate_hint(stderr: &str) -> Option<&'static str> {
 /// Makes yt-dlp trust the operating system's certificate store instead of its own bundle, so the certificate of an
 /// antivirus or a company proxy the system already trusts is accepted, while certificates are still verified.
 pub const SYSTEM_CERTIFICATES: [&str; 2] = ["--compat-options", "no-certifi"];
+
+/// Where Linux distributions keep the system's CA bundle (the list Go's crypto/x509 searches).
+const LINUX_CA_BUNDLES: [&str; 6] = [
+    "/etc/ssl/certs/ca-certificates.crt",                // Debian, Ubuntu, Arch, Gentoo
+    "/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora, RHEL
+    "/etc/ssl/ca-bundle.pem",                            // openSUSE
+    "/etc/pki/tls/cacert.pem",                           // OpenELEC
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS, RHEL 7
+    "/etc/ssl/cert.pem",                                 // Alpine
+];
+
+/// The CA bundle the standalone Linux yt-dlp should read for `SYSTEM_CERTIFICATES`: its bundled OpenSSL looks in
+/// its own build's folder and finds no certificates there, so every https request fails. `None` when the user set
+/// `SSL_CERT_FILE` themselves or no bundle exists.
+fn linux_ca_bundle(user_set: bool, exists: impl Fn(&Path) -> bool) -> Option<&'static str> {
+    if user_set {
+        return None;
+    }
+    LINUX_CA_BUNDLES.into_iter().find(|bundle| exists(Path::new(bundle)))
+}
+
+/// What every yt-dlp process needs besides its own arguments: the app's JavaScript runtime for YouTube, ffmpeg for
+/// `--extract-audio`, and on Linux the system certificates.
+pub fn prepare_command(cmd: &mut Command, app: &AppHandle) {
+    cmd.args(crate::download::deno::runtime_args(app));
+    cmd.args(crate::download::ffmpeg::location_args(app));
+    if cfg!(target_os = "linux") {
+        if let Some(bundle) = linux_ca_bundle(std::env::var_os("SSL_CERT_FILE").is_some(), Path::is_file) {
+            cmd.env("SSL_CERT_FILE", bundle);
+        }
+    }
+}
 
 /// The url handed to yt-dlp, refused unless it is an http(s) web address: a value starting with `-` would be read
 /// as an option (`--exec` runs a command), and a local path or another scheme has no business there. Pure.
@@ -540,6 +588,7 @@ async fn download_track_internal(
     }
 
     let mut cmd = Command::new(&ctx.binary_path);
+    prepare_command(&mut cmd, &ctx.app);
     cmd.args(&args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -1251,6 +1300,36 @@ mod hardening_tests {
 
         let only_exe = format!("{}  yt-dlp.exe\n", hash('a'));
         assert_eq!(expected_sha256(&only_exe, "yt-dlp_macos"), None);
+    }
+
+    #[test]
+    fn linux_yt_dlp_reads_the_first_system_ca_bundle_that_exists() {
+        let fedora = |p: &Path| p == Path::new("/etc/pki/tls/certs/ca-bundle.crt");
+        assert_eq!(linux_ca_bundle(false, fedora), Some("/etc/pki/tls/certs/ca-bundle.crt"));
+        assert_eq!(linux_ca_bundle(false, |_| true), Some("/etc/ssl/certs/ca-certificates.crt"));
+        assert_eq!(linux_ca_bundle(false, |_| false), None);
+    }
+
+    #[test]
+    fn a_ca_bundle_the_user_set_is_kept() {
+        assert_eq!(linux_ca_bundle(true, |_| true), None);
+    }
+
+    #[test]
+    fn linux_gets_the_standalone_build_that_can_impersonate() {
+        assert_eq!(release_asset("linux", "x86_64"), "yt-dlp_linux");
+        assert_eq!(release_asset("linux", "aarch64"), "yt-dlp_linux_aarch64");
+        assert_eq!(release_asset("linux", "arm"), "yt-dlp_linux_armv7l");
+        assert_eq!(release_asset("windows", "x86_64"), "yt-dlp.exe");
+        assert_eq!(release_asset("macos", "aarch64"), "yt-dlp_macos");
+    }
+
+    #[test]
+    fn a_binary_installed_from_another_asset_is_replaced() {
+        // installs before the asset was recorded wrote only the tag
+        assert_ne!(installed_marker("2026.10.01", "yt-dlp_linux"), "2026.10.01");
+        assert_ne!(installed_marker("2026.10.01", "yt-dlp_linux"), installed_marker("2026.10.01", "yt-dlp"));
+        assert_eq!(installed_marker(" 2026.10.01\n", "yt-dlp_linux"), "2026.10.01 yt-dlp_linux");
     }
 
     #[test]
