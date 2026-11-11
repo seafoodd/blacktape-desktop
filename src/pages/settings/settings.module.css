@@ -116,7 +116,7 @@
     color: var(--color-text);
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    padding: 6px 10px;
+    padding: 6px 28px 6px 10px; /* room for the arrow (globals.css) */
     font-size: var(--font-md);
     outline: none;
     cursor: pointer;
