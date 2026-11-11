@@ -7,7 +7,7 @@ import {
   type DownloadProgress,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
-import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import { flyToLibrary } from "@/shared/lib/ui/flyAnimation.ts";
 import { remoteRefOf, useAlbumStatus, useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { downloadPercent, isDownloadBusy, searchItemDownloadParams } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";

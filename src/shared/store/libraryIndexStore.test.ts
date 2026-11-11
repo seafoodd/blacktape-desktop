@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RemoteRef } from "@/shared/lib/libraryIndex.ts";
+import type { RemoteRef } from "@/shared/lib/library/libraryIndex.ts";
 import type { Platform } from "@/shared/types.ts";
 import {
   answersFor,
@@ -51,8 +51,8 @@ const { getDownloadStatusMock, getAlbumStatusMock, listenMock, libraryFake } = v
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@/shared/lib/libraryIndex.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/shared/lib/libraryIndex.ts")>()),
+vi.mock("@/shared/lib/library/libraryIndex.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/lib/library/libraryIndex.ts")>()),
   getDownloadStatus: getDownloadStatusMock,
   getAlbumStatus: getAlbumStatusMock,
 }));

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
+import { createLatestGuard } from "@/shared/lib/search/searchGuard.ts";
 import {
   getAlbumPreview,
   selectableIndexes,
@@ -7,14 +7,14 @@ import {
   selectedUrls,
   type AlbumPreview,
   type AlbumTrackInfo,
-} from "@/shared/lib/albumPreview.ts";
+} from "@/shared/lib/remote/albumPreview.ts";
 import {
   EMPTY_SELECTION,
   nextSelection,
   selectGroup,
   type ClickModifiers,
   type SelectionState,
-} from "@/shared/lib/selection.ts";
+} from "@/shared/lib/ui/selection.ts";
 import { ItemType, useLibraryStore, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
 
 export type AlbumPreviewStatus = "idle" | "loading" | "ready" | "error";

@@ -3,8 +3,8 @@
  * host (`RemoteTrackMenuHost`) supplies the actions, so this file has no side effects and is tested directly.
  */
 import type { MenuItemOption } from "@/shared/ui/context-menu/ContextMenu.tsx";
-import { platformLabel } from "@/shared/lib/platforms.ts";
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import { platformLabel } from "@/shared/lib/remote/platforms.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 import { ItemType, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
 import type { RemoteTrackMenuOptions } from "./remoteTrackMenuStore.ts";
 

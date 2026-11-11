@@ -32,11 +32,11 @@ import {
   type FullSearchPage,
   type SearchCursor,
   type SearchKind,
-} from "@/shared/lib/searchFull.ts";
+} from "@/shared/lib/search/searchFull.ts";
 import {
   createLatestGuard,
   type LatestGuard,
-} from "@/shared/lib/searchGuard.ts";
+} from "@/shared/lib/search/searchGuard.ts";
 import type { Platform } from "@/shared/types.ts";
 import { useStreamStore } from "@/features/preview/model/streamStore.ts";
 import {

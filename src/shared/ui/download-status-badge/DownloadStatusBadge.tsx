@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { FaCheck, FaCheckCircle } from "react-icons/fa";
-import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
+import type { DownloadState } from "@/shared/lib/library/libraryIndex.ts";
 import { downloadStatusLabel } from "./downloadStatusLabel.ts";
 import styles from "./download-status-badge.module.css";
 

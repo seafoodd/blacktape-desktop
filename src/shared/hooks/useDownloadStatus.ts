@@ -4,7 +4,7 @@ import {
   type DownloadState,
   type RemoteRef,
   refKey,
-} from "@/shared/lib/libraryIndex.ts";
+} from "@/shared/lib/library/libraryIndex.ts";
 import type { Platform } from "@/shared/types.ts";
 import { useLibraryIndexStore } from "@/shared/store/libraryIndexStore.ts";
 

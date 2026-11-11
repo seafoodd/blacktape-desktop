@@ -7,8 +7,8 @@ import {
   albumStateFromTracks,
   type DownloadState,
   type RemoteRef,
-} from "@/shared/lib/libraryIndex.ts";
-import { formatTotalDuration } from "@/shared/lib/trackDuration.ts";
+} from "@/shared/lib/library/libraryIndex.ts";
+import { formatTotalDuration } from "@/shared/lib/library/trackDuration.ts";
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import type { Platform } from "@/shared/types.ts";
 

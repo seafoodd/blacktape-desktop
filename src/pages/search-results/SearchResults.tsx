@@ -5,7 +5,7 @@ import {
   useLibraryStore,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
-import type { SearchKind } from "@/shared/lib/searchFull.ts";
+import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import { useSearchPageStore } from "@/features/search/model/searchPageStore.ts";
 import { SearchFilterBar, type FilterTab } from "./SearchFilterBar.tsx";
 import { ArtistProfileCard } from "./ArtistProfileCard.tsx";

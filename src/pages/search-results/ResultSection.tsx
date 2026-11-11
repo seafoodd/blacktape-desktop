@@ -3,7 +3,7 @@ import {
   ItemType,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
-import type { SearchKind } from "@/shared/lib/searchFull.ts";
+import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import { StreamActionRow } from "@/features/preview/ui/StreamActionRow.tsx";
 import type { SectionState } from "@/features/search/model/searchPageStore.ts";
 import styles from "./search-results.module.css";

@@ -3,7 +3,7 @@ import { usePlaylistStore } from "@/shared/store/playlistStore";
 import styles from "./playlist.module.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { findPlayingRow } from "@/shared/lib/playingRow.ts";
+import { findPlayingRow } from "@/shared/lib/ui/playingRow.ts";
 import { useDominantColor } from "@/shared/hooks/useDominantColor.tsx";
 import { FaCirclePause, FaCirclePlay, FaShuffle } from "react-icons/fa6";
 import { BsThreeDots } from "react-icons/bs";

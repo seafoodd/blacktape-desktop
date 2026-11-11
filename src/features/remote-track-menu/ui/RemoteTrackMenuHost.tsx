@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { ContextMenu } from "@/shared/ui/context-menu";
 import { useStreamStore } from "@/features/preview/model/streamStore.ts";
-import { remoteTrackToStreamItem, type RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import { remoteTrackToStreamItem, type RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {

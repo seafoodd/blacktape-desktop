@@ -1,10 +1,10 @@
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
 import { BiFilterAlt, BiInfoCircle } from "react-icons/bi";
 import clsx from "clsx";
-import { formatCompactNumber } from "@/shared/lib/number.ts";
+import { formatCompactNumber } from "@/shared/lib/search/number.ts";
 import {
   ItemType,
   PlatformFilter,
@@ -13,11 +13,11 @@ import {
 } from "@/shared/store/libraryStore.ts";
 import { FaCheckCircle } from "react-icons/fa";
 import type { ReactNode } from "react";
-import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import { flyToLibrary } from "@/shared/lib/ui/flyAnimation.ts";
 import {
   matchesPlatformFilter,
   PLATFORM_FILTERS,
-} from "@/shared/lib/platforms.ts";
+} from "@/shared/lib/remote/platforms.ts";
 import {
   remoteRefOf,
   useAlbumStatus,

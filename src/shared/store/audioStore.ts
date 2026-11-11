@@ -1,4 +1,4 @@
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import { create } from "zustand";
 import {
   getPosition,

@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { MdCheck, MdHelpOutline } from "react-icons/md";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
-import { platformLabel } from "@/shared/lib/platforms.ts";
+import { platformLabel } from "@/shared/lib/remote/platforms.ts";
 import {
   BANDCAMP_QUALITY_HINT,
   PROBE_WAIT_TEXT,

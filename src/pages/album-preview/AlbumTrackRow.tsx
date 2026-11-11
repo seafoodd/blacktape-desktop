@@ -5,15 +5,15 @@ import { MdPause, MdPlayArrow } from "react-icons/md";
 import rowStyles from "@/features/library/ui/song-list-item/song-list-item.module.css";
 import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
-import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
+import { flyToLibrary } from "@/shared/lib/ui/flyAnimation.ts";
 import {
   trackRowStatus,
   type AlbumTrackInfo,
   type TrackTaskState,
-} from "@/shared/lib/albumPreview.ts";
-import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
-import { formatTrackDuration } from "@/shared/lib/trackDuration.ts";
-import { decodeHtmlEntities } from "@/shared/lib/html.ts";
+} from "@/shared/lib/remote/albumPreview.ts";
+import type { DownloadState } from "@/shared/lib/library/libraryIndex.ts";
+import { formatTrackDuration } from "@/shared/lib/library/trackDuration.ts";
+import { decodeHtmlEntities } from "@/shared/lib/ui/html.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./album-preview.module.css";
 

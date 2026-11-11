@@ -3,7 +3,7 @@ import { UpdateButton } from "@/features/updater";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
-import { pickFolder } from "@/shared/lib/dialog.ts";
+import { pickFolder } from "@/shared/lib/ui/dialog.ts";
 import { scanMusic } from "@/shared/lib/audio.ts";
 import { WindowControls } from "@/layouts/WindowControls.tsx";
 import { Dropdown } from "@/shared/ui/dropdown";

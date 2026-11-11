@@ -8,7 +8,7 @@ import type {
   ArtistProfile,
   FullSearchPage,
   SearchKind,
-} from "@/shared/lib/searchFull.ts";
+} from "@/shared/lib/search/searchFull.ts";
 import { useSearchPageStore } from "./searchPageStore.ts";
 import { DEFAULT_FILTERS, DEFAULT_SORT } from "./searchPageFilters.ts";
 
@@ -17,7 +17,7 @@ const { searchFullMock, getArtistProfileMock } = vi.hoisted(() => ({
   getArtistProfileMock: vi.fn(),
 }));
 
-vi.mock("@/shared/lib/searchFull.ts", () => ({
+vi.mock("@/shared/lib/search/searchFull.ts", () => ({
   searchFull: searchFullMock,
   getArtistProfile: getArtistProfileMock,
 }));
@@ -27,7 +27,7 @@ vi.mock("@/shared/lib/audio.ts", () => ({
   getArtistAlbums: vi.fn(),
   getArtists: vi.fn(),
 }));
-vi.mock("@/shared/lib/search.ts", () => ({ searchPlatforms: vi.fn() }));
+vi.mock("@/shared/lib/search/search.ts", () => ({ searchPlatforms: vi.fn() }));
 
 const initialState = useSearchPageStore.getState();
 

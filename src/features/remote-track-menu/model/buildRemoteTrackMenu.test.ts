@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RemoteTrack } from "@/shared/lib/remoteTrack.ts";
+import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 import { ItemType } from "@/shared/store/libraryStore.ts";
 import {
   buildRemoteTrackMenu,

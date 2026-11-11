@@ -1,12 +1,12 @@
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { ItemType, type SearchSuggestion, type TrackPlacement } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { ExpectedQualityBadge } from "@/features/download-quality/ui/ExpectedQualityBadge.tsx";
-import { searchFull } from "@/shared/lib/searchFull.ts";
-import { platformLabel } from "@/shared/lib/platforms.ts";
-import { formatTrackDuration } from "@/shared/lib/trackDuration.ts";
+import { searchFull } from "@/shared/lib/search/searchFull.ts";
+import { platformLabel } from "@/shared/lib/remote/platforms.ts";
+import { formatTrackDuration } from "@/shared/lib/library/trackDuration.ts";
 import styles from "./find-missing-modal.module.css";
 
 interface FindAlternativeModalProps {

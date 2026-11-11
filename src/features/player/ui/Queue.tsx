@@ -1,5 +1,5 @@
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import styles from "./queue.module.css";
 import placeholderSongImage from "@/assets/react.svg";
 import clsx from "clsx";
@@ -11,14 +11,14 @@ import {
   playSongInQueue,
   removeFromQueue,
 } from "@/shared/lib/audio.ts";
-import { findPlayingRow } from "@/shared/lib/playingRow.ts";
+import { findPlayingRow } from "@/shared/lib/ui/playingRow.ts";
 import {
   EMPTY_SELECTION,
   nextSelection,
   pruneSelection,
   selectionForContextMenu,
   type SelectionState,
-} from "@/shared/lib/selection.ts";
+} from "@/shared/lib/ui/selection.ts";
 import {
   ContextMenu,
   ContextMenuPosition,

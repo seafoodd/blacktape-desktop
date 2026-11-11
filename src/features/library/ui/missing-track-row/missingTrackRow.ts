@@ -1,14 +1,14 @@
-import type { AlbumTrackInfo, AlbumPreview } from "@/shared/lib/albumPreview.ts";
-import type { LibraryAlbumSource, MissingTracks } from "@/shared/lib/libraryIndex.ts";
+import type { AlbumTrackInfo, AlbumPreview } from "@/shared/lib/remote/albumPreview.ts";
+import type { LibraryAlbumSource, MissingTracks } from "@/shared/lib/library/libraryIndex.ts";
 import {
   albumTrackToRemoteTrack,
   remoteTrackToStreamItem,
   type RemoteTrack,
-} from "@/shared/lib/remoteTrack.ts";
+} from "@/shared/lib/remote/remoteTrack.ts";
 import type { DownloadProgress, SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import type { Song } from "@/shared/types.ts";
-import { decodeHtmlEntities } from "@/shared/lib/html.ts";
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { decodeHtmlEntities } from "@/shared/lib/ui/html.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import type { MenuItemOption } from "@/shared/ui/context-menu";
 import { playableMissingTracks } from "@/features/library/model/missingTracksStore.ts";
 

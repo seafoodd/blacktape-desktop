@@ -3,7 +3,7 @@ import styles from "./artist-albums.module.css";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
 import clsx from "clsx";
 import { Album, Song } from "@/shared/types.ts";
@@ -18,26 +18,26 @@ import {
   selectGroup,
   selectionForContextMenu,
   type SelectionState,
-} from "@/shared/lib/selection.ts";
+} from "@/shared/lib/ui/selection.ts";
 import { useSongContextMenu } from "@/shared/hooks/useSongContextMenu.tsx";
 import { albumMetaLine } from "@/pages/artist-albums/albumMeta.ts";
-import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
+import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/ui/dragSongs.ts";
 import { setDragGhost } from "@/pages/artist-albums/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { MdWarningAmber } from "react-icons/md";
-import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/trash.ts";
+import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/library/trash.ts";
 import { listen } from "@tauri-apps/api/event";
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
 import FindMissingModal from "@/features/library/ui/FindMissingModal.tsx";
 import EditAlbumModal from "@/features/library/ui/EditAlbumModal.tsx";
-import { decodeHtmlEntities } from "@/shared/lib/html.ts";
-import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
-import type { MissingTracks } from "@/shared/lib/libraryIndex.ts";
-import { remoteTrackToStreamItem } from "@/shared/lib/remoteTrack.ts";
+import { decodeHtmlEntities } from "@/shared/lib/ui/html.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
+import type { MissingTracks } from "@/shared/lib/library/libraryIndex.ts";
+import { remoteTrackToStreamItem } from "@/shared/lib/remote/remoteTrack.ts";
 import { toStreamRequest, useStreamStore } from "@/features/preview/model/streamStore.ts";
-import { startMixedPlayback, type MixedEntry } from "@/shared/lib/stream.ts";
+import { startMixedPlayback, type MixedEntry } from "@/shared/lib/remote/stream.ts";
 import SongListItem from "@/features/library/ui/song-list-item/SongListItem.tsx";
 import {
   playableMissingTracks,

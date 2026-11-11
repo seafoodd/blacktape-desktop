@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { getArtistAlbums, getArtists } from "@/shared/lib/audio.ts";
-import { searchPlatforms } from "@/shared/lib/search.ts";
-import { type PlatformFilter, SEARCH_PLATFORMS } from "@/shared/lib/platforms.ts";
-import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
+import { searchPlatforms } from "@/shared/lib/search/search.ts";
+import { type PlatformFilter, SEARCH_PLATFORMS } from "@/shared/lib/remote/platforms.ts";
+import { createLatestGuard } from "@/shared/lib/search/searchGuard.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
-import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
+import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
 
 export type DownloadStatus =
   | "idle"

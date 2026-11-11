@@ -1,12 +1,12 @@
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import {
   findAlbumCandidates,
   type AlbumCandidate,
-} from "@/shared/lib/libraryIndex.ts";
+} from "@/shared/lib/library/libraryIndex.ts";
 import { explainFailure } from "@/features/library/model/downloadFailure.ts";
-import { sameUrl } from "@/shared/lib/urlKey.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import FindAlternativeModal from "@/features/library/ui/FindAlternativeModal.tsx";
 import { useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
 import { ExpectedQualityBadge } from "@/features/download-quality/ui/ExpectedQualityBadge.tsx";

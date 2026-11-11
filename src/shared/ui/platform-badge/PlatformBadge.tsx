@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { platformLabel } from "@/shared/lib/platforms.ts";
+import { platformLabel } from "@/shared/lib/remote/platforms.ts";
 import styles from "./platform-badge.module.css";
 
 /** Small muted badge tinted with the platform's brand colour ("YOUTUBE", "BANDCAMP", "LOCAL"). */

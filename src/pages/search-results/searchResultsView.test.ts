@@ -11,7 +11,7 @@ import { ItemType } from "@/shared/store/libraryStore.ts";
 import type { SearchPageFilters } from "@/features/search/model/searchPageFilters.ts";
 
 // The view module imports the ItemType enum from the library store, which pulls in the Tauri and audio layers.
-vi.mock("@/shared/lib/search.ts", () => ({ searchPlatforms: vi.fn() }));
+vi.mock("@/shared/lib/search/search.ts", () => ({ searchPlatforms: vi.fn() }));
 vi.mock("@/shared/lib/audio.ts", () => ({
   getArtistAlbums: vi.fn(),
   getArtists: vi.fn(),

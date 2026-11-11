@@ -3,7 +3,7 @@
  * Pure: the only runtime import is the `ItemType` enum.
  */
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import type { SearchKind } from "@/shared/lib/searchFull.ts";
+import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import {
   applyFilters,
   itemsForPlatform,

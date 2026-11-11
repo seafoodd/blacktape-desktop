@@ -1,4 +1,4 @@
-import { coverSrc } from "@/shared/lib/cover";
+import { coverSrc } from "@/shared/lib/remote/cover";
 import { useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { BiArrowBack, BiDownload, BiRightArrowAlt } from "react-icons/bi";
@@ -14,7 +14,7 @@ import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
-import { getLibraryAlbum } from "@/shared/lib/libraryIndex.ts";
+import { getLibraryAlbum } from "@/shared/lib/library/libraryIndex.ts";
 import {
   albumAction,
   albumLibraryState,
@@ -27,10 +27,10 @@ import {
   trackTaskStates,
   type AlbumPreview as AlbumPreviewData,
   type AlbumTrackInfo,
-} from "@/shared/lib/albumPreview.ts";
-import { albumTrackToRemoteTrack, type RemoteTrack } from "@/shared/lib/remoteTrack.ts";
-import { EMPTY_SELECTION } from "@/shared/lib/selection.ts";
-import { decodeHtmlEntities } from "@/shared/lib/html.ts";
+} from "@/shared/lib/remote/albumPreview.ts";
+import { albumTrackToRemoteTrack, type RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
+import { EMPTY_SELECTION } from "@/shared/lib/ui/selection.ts";
+import { decodeHtmlEntities } from "@/shared/lib/ui/html.ts";
 import { isDownloadBusy } from "@/pages/search-results/searchResultsFormat.ts";
 import { AlbumTrackRow } from "./AlbumTrackRow.tsx";
 import styles from "./album-preview.module.css";

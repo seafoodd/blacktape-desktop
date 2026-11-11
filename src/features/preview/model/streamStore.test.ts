@@ -20,7 +20,7 @@ const { streamQueueMock, streamAddToQueueMock, streamPrefetchMock, audioState } 
   },
 }));
 
-vi.mock("@/shared/lib/stream.ts", () => ({
+vi.mock("@/shared/lib/remote/stream.ts", () => ({
   streamQueue: streamQueueMock,
   streamAddToQueue: streamAddToQueueMock,
   streamPrefetch: streamPrefetchMock,
@@ -36,7 +36,7 @@ vi.mock("@/shared/lib/audio.ts", () => ({
   getArtistAlbums: vi.fn(),
   getArtists: vi.fn(),
 }));
-vi.mock("@/shared/lib/search.ts", () => ({ searchPlatforms: vi.fn() }));
+vi.mock("@/shared/lib/search/search.ts", () => ({ searchPlatforms: vi.fn() }));
 
 let counter = 0;
 const fixture = (over: Partial<SearchSuggestion> = {}): SearchSuggestion => {

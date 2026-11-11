@@ -1,4 +1,4 @@
-import type { DownloadState } from "@/shared/lib/libraryIndex.ts";
+import type { DownloadState } from "@/shared/lib/library/libraryIndex.ts";
 
 /** Tooltip and aria label of a library state; null when nothing is shown (`none`). Pure. */
 export function downloadStatusLabel(state: DownloadState): string | null {
