@@ -6,8 +6,10 @@ import styles from "./updater.module.css";
 
 /** Delay before the startup check, so it does not compete with loading the library. */
 const STARTUP_CHECK_DELAY_MS = 5000;
+/** The app can stay open for days: look again every few hours. */
+export const PERIODIC_CHECK_MS = 6 * 60 * 60 * 1000;
 
-/** Header pill that appears only when a newer version is out. Also runs the silent startup check. */
+/** Header pill that appears only when a newer version is out. Also runs the silent startup and periodic checks. */
 export const UpdateButton = () => {
   const { status, version, downloaded, total, checkForUpdate } = useUpdateStore();
   const openModal = useModalStore((s) => s.openModal);
@@ -18,7 +20,11 @@ export const UpdateButton = () => {
       () => checkForUpdate({ silent: true }),
       STARTUP_CHECK_DELAY_MS,
     );
-    return () => clearTimeout(timer);
+    const interval = setInterval(() => checkForUpdate({ silent: true }), PERIODIC_CHECK_MS);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [checkForUpdate]);
 
   if (status !== "available" && status !== "downloading" && status !== "installing") {

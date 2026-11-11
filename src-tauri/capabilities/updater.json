@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "updater",
-  "description": "Checking for, installing and restarting into app updates (app windows only, not the login window)",
+  "description": "Checking for, installing and restarting into app updates; flashing the taskbar when one is found (app windows only, not the login window)",
   "windows": ["main", "settings"],
   "platforms": ["windows", "macOS", "linux"],
   "permissions": [
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "core:window:allow-request-user-attention"
   ]
 }
