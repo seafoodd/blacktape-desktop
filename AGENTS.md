@@ -6,6 +6,27 @@
 Run `npm run build`, `npm test`, `cargo check --all-targets` and `cargo test` (in `src-tauri`) and make sure they pass.
 Never report work as finished without running them; say which ones you did not run.
 
+Report the result of each command (passed / failed / not run) instead of saying "should work".
+(Optional helper if the superpowers plugin is installed: `superpowers:verification-before-completion`.)
+
+## Review before merging
+
+Before opening or merging a PR, review your own diff as if someone else wrote it: read `git diff master...HEAD`
+(or run `/code-review`), look for bugs, missing tests, leftover debug code and unhandled errors, and fix what you find.
+For larger changes, have a separate reviewer (a subagent or `superpowers:requesting-code-review`, if installed) do it.
+
+## Bugs
+
+Every bug that is fixed gets a test that fails without the fix. If the bug came from a missing rule, add the rule here.
+
+## Security
+
+Take extra care, and review twice, in code that handles auth tokens, downloads, the updater, file paths and URLs:
+- never log or commit tokens, keys or secrets;
+- treat file names, paths and URLs from the network or from tags as untrusted (no path traversal, check the host);
+- no `unwrap()`/`expect()` on data that comes from outside the process;
+- keep Tauri capabilities (`src-tauri/capabilities/`) to the minimum the code needs.
+
 ## Tauri bridge
 
 `#[tauri::command]` functions and `invoke("name")` calls are linked only by a string, so no compiler checks them.
