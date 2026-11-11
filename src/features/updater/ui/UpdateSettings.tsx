@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { installLabel, useUpdateStore, type UpdateStatus } from "../model/updateStore";
+import { CHECK_INTERVAL_OPTIONS, readCheckInterval, writeCheckInterval } from "../model/checkInterval";
 
 interface Props {
   rowClassName: string;
   buttonClassName: string;
   mutedClassName: string;
+  selectClassName: string;
 }
 
 function statusText(status: UpdateStatus, version: string | null, error: string | null): string {
@@ -25,11 +27,12 @@ function statusText(status: UpdateStatus, version: string | null, error: string 
   }
 }
 
-/** Rows for the settings window: current version, manual check, install. */
-export const UpdateSettings = ({ rowClassName, buttonClassName, mutedClassName }: Props) => {
+/** Rows for the settings window: current version, manual check, install, how often to check. */
+export const UpdateSettings = ({ rowClassName, buttonClassName, mutedClassName, selectClassName }: Props) => {
   const { status, version, downloaded, total, error, checkForUpdate, installUpdate } =
     useUpdateStore();
   const [current, setCurrent] = useState<string>("");
+  const [intervalHours, setIntervalHours] = useState(readCheckInterval);
 
   useEffect(() => {
     getVersion().then(setCurrent).catch(() => setCurrent("unknown"));
@@ -61,6 +64,25 @@ export const UpdateSettings = ({ rowClassName, buttonClassName, mutedClassName }
             Check for updates
           </button>
         )}
+      </div>
+      <div className={rowClassName}>
+        <label htmlFor="update-interval-select">Check automatically</label>
+        <select
+          id="update-interval-select"
+          className={selectClassName}
+          value={intervalHours}
+          onChange={(e) => {
+            const hours = Number(e.target.value);
+            setIntervalHours(hours);
+            writeCheckInterval(hours);
+          }}
+        >
+          {CHECK_INTERVAL_OPTIONS.map((o) => (
+            <option key={o.hours} value={o.hours}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </div>
     </>
   );
