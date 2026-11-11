@@ -1,7 +1,9 @@
 import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { ItemType, useLibraryStore, type SearchSuggestion, type TrackPlacement } from "@/shared/store/libraryStore.ts";
+import { ItemType, type SearchSuggestion, type TrackPlacement } from "@/shared/store/libraryStore.ts";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
+import { ExpectedQualityBadge } from "@/features/download-quality/ui/ExpectedQualityBadge.tsx";
 import { searchFull } from "@/shared/lib/searchFull.ts";
 import { platformLabel } from "@/shared/lib/platforms.ts";
 import { formatTrackDuration } from "@/shared/lib/trackDuration.ts";
@@ -43,7 +45,6 @@ export const alternativeQuery = (artist: string, title: string): string => `${ar
  */
 const FindAlternativeModal = ({ artist, title, excludePlatform, placement }: FindAlternativeModalProps) => {
   const closeModal = useModalStore((s) => s.closeModal);
-  const startDownload = useLibraryStore((s) => s.startDownload);
   const [results, setResults] = useState<SearchSuggestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,10 +65,8 @@ const FindAlternativeModal = ({ artist, title, excludePlatform, placement }: Fin
     };
   }, [artist, title, excludePlatform]);
 
-  const pick = (item: SearchSuggestion) => {
-    void startDownload(alternativeDownloadParams(item, artist, title, placement));
-    closeModal();
-  };
+  // the quality menu opens on top of this list ("Back" returns here) and starts the download
+  const pick = (item: SearchSuggestion) => openQualityMenu(alternativeDownloadParams(item, artist, title, placement));
 
   return (
     <div className={styles.container}>
@@ -87,9 +86,12 @@ const FindAlternativeModal = ({ artist, title, excludePlatform, placement }: Fin
               <div className={styles.info}>
                 <span className={styles.name}>{item.name}</span>
                 <span className={styles.meta}>{item.band_name}</span>
-                <span className={styles.meta}>
-                  {platformLabel(item.platform)}
-                  {item.duration ? ` · ${formatTrackDuration(item.duration * 1000)}` : ""}
+                <span className={styles.metaRow}>
+                  <span className={styles.meta}>
+                    {platformLabel(item.platform)}
+                    {item.duration ? ` · ${formatTrackDuration(item.duration * 1000)}` : ""}
+                  </span>
+                  <ExpectedQualityBadge platform={item.platform} url={item.item_url_path} />
                 </span>
               </div>
             </button>

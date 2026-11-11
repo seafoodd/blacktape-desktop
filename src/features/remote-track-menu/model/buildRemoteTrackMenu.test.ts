@@ -21,6 +21,7 @@ const track = (over: Partial<RemoteTrack> = {}): RemoteTrack => ({
 
 const makeActions = (): RemoteTrackMenuActions => ({
   download: vi.fn(),
+  downloadAs: vi.fn(),
   addToQueue: vi.fn(),
   playNext: vi.fn(),
   copyLink: vi.fn(),
@@ -64,24 +65,25 @@ describe("remoteTrackDownloadParams", () => {
 });
 
 describe("buildRemoteTrackMenu", () => {
-  it("lists Download, Add to queue, Play next, a separator, Copy link and Open on the platform, in order", () => {
+  it("lists Download, Download as…, Add to queue, Play next, a separator, Copy link and Open on the platform, in order", () => {
     const items = buildRemoteTrackMenu(track(), {}, makeActions());
     expect(items.map((i) => i.label)).toEqual([
       "Download",
+      "Download as…",
       "Add to queue",
       "Play next",
       "",
       "Copy link",
       "Open on Bandcamp",
     ]);
-    expect(items[3].separator).toBe(true);
+    expect(items[4].separator).toBe(true);
   });
 
   it("names the platform in the open item", () => {
-    expect(buildRemoteTrackMenu(track({ platform: "soundcloud" }), {}, makeActions())[5].label).toBe(
+    expect(buildRemoteTrackMenu(track({ platform: "soundcloud" }), {}, makeActions())[6].label).toBe(
       "Open on SoundCloud",
     );
-    expect(buildRemoteTrackMenu(track({ platform: "youtube" }), {}, makeActions())[5].label).toBe(
+    expect(buildRemoteTrackMenu(track({ platform: "youtube" }), {}, makeActions())[6].label).toBe(
       "Open on YouTube",
     );
   });
@@ -115,7 +117,7 @@ describe("buildRemoteTrackMenu", () => {
   it("Add to queue calls only addToQueue", () => {
     const actions = makeActions();
     const t = track();
-    buildRemoteTrackMenu(t, {}, actions)[1].action?.();
+    buildRemoteTrackMenu(t, {}, actions)[2].action?.();
     expect(actions.addToQueue).toHaveBeenCalledWith(t);
     expect(actions.playNext).not.toHaveBeenCalled();
   });
@@ -123,20 +125,20 @@ describe("buildRemoteTrackMenu", () => {
   it("Play next calls only playNext", () => {
     const actions = makeActions();
     const t = track();
-    buildRemoteTrackMenu(t, {}, actions)[2].action?.();
+    buildRemoteTrackMenu(t, {}, actions)[3].action?.();
     expect(actions.playNext).toHaveBeenCalledWith(t);
     expect(actions.addToQueue).not.toHaveBeenCalled();
   });
 
   it("Copy link passes the track url", () => {
     const actions = makeActions();
-    buildRemoteTrackMenu(track(), {}, actions)[4].action?.();
+    buildRemoteTrackMenu(track(), {}, actions)[5].action?.();
     expect(actions.copyLink).toHaveBeenCalledWith("https://band.bandcamp.com/track/song");
   });
 
   it("Open on the platform passes the track url", () => {
     const actions = makeActions();
-    buildRemoteTrackMenu(track(), {}, actions)[5].action?.();
+    buildRemoteTrackMenu(track(), {}, actions)[6].action?.();
     expect(actions.openOnPlatform).toHaveBeenCalledWith("https://band.bandcamp.com/track/song");
   });
 
@@ -144,6 +146,32 @@ describe("buildRemoteTrackMenu", () => {
     const labels = buildRemoteTrackMenu(track({ album_url: "https://a.test/album/x" }), {}, makeActions()).map(
       (i) => i.label,
     );
+    expect(labels).toHaveLength(7);
+  });
+
+  it("Download as… calls only downloadAs with the track, so the quality menu opens instead of a download", () => {
+    const actions = makeActions();
+    const t = track();
+    const downloadAs = buildRemoteTrackMenu(t, {}, actions)[1];
+    expect(downloadAs.disabled).toBeFalsy();
+    downloadAs.action?.();
+    expect(actions.downloadAs).toHaveBeenCalledWith(t);
+    expect(actions.download).not.toHaveBeenCalled();
+  });
+
+  it("Download as… is left out of a downloaded track, which has only the disabled Downloaded item", () => {
+    const labels = buildRemoteTrackMenu(track(), { downloadState: "downloaded" }, makeActions()).map((i) => i.label);
+    expect(labels).not.toContain("Download as…");
+    expect(labels).toContain("Downloaded");
     expect(labels).toHaveLength(6);
+  });
+
+  it("puts the extra items first and keeps Download as… right after Download", () => {
+    const items = buildRemoteTrackMenu(
+      track(),
+      { extraItems: [{ label: "Extra", action: () => {} }] },
+      makeActions(),
+    );
+    expect(items.map((i) => i.label).slice(0, 4)).toEqual(["Extra", "", "Download", "Download as…"]);
   });
 });

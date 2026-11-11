@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import clsx from "clsx";
-import { BiDownload } from "react-icons/bi";
 import { HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { MdErrorOutline, MdPause, MdPlayArrow } from "react-icons/md";
@@ -17,7 +16,9 @@ import { decodeHtmlEntities } from "@/shared/lib/html.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
-import { useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
+import { missingDownloadParams, useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {
   missingRemoteTrack,
   missingRemoteTracks,
@@ -194,18 +195,20 @@ const MissingTrackRow = ({
             {percent}%
           </span>
         ) : (
-          <button
-            type="button"
-            className={styles.downloadButton}
-            title="Download"
-            aria-label="Download song"
-            onClick={(e) => {
-              e.stopPropagation();
-              void downloadOne(album, track);
-            }}
-          >
-            <BiDownload size={18} />
-          </button>
+          <span className={styles.downloadButton} onDoubleClick={(e) => e.stopPropagation()}>
+            <DownloadSplitButton
+              size={30}
+              className={styles.downloadSplit}
+              title={`Download ${title}`}
+              onDownload={() => void downloadOne(album, track)}
+              onChooseQuality={() =>
+                openQualityMenu(
+                  { ...missingDownloadParams(missing, [track.url]), title },
+                  { start: (format) => void downloadOne(album, track, format) },
+                )
+              }
+            />
+          </span>
         )}
       </div>
     </li>

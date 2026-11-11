@@ -5,7 +5,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 3px 12px;
-    height: 32px;
+    height: 36px;
     transition: 100ms ease-out background-color;
     cursor: default;
     user-select: none;
@@ -146,21 +146,40 @@
     justify-content: flex-end;
 }
 
+.qualityBadge {
+    margin-left: 8px;
+}
+
+/* duration at rest, the "..." button on hover, stacked in one cell so nothing beside them moves */
+.endSlot {
+    display: grid;
+    align-items: center;
+    justify-items: end;
+    /* "10:23" fits: the badges stay one column in every row */
+    min-width: 30px;
+    /* the badge-to-duration gap equals the track number-to-title gap (18px) for "m:ss" durations */
+    margin-left: 11.85px;
+
+    & > * {
+        grid-area: 1 / 1;
+    }
+}
+
 .songDuration {
     display: block;
-    margin-left: 40px;
 }
 
 .song:hover .songDuration {
-    display: none;
+    visibility: hidden;
 }
 
 .song:hover .threeDotButton {
-    display: flex;
+    visibility: visible;
 }
 
 .threeDotButton {
-    display: none;
+    display: flex;
+    visibility: hidden;
     background: transparent;
     border: none;
     cursor: pointer;

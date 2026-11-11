@@ -3,12 +3,15 @@ import { isNoStreamFailure } from "./downloadFailure.ts";
 import {
   getArtistAlbumSources,
   getMissingTracks,
+  linkAlbumSource,
   unlinkAlbumSource,
   type LibraryAlbumSource,
   type MissingTracks,
 } from "@/shared/lib/libraryIndex.ts";
 import type { AlbumTrackInfo } from "@/shared/lib/albumPreview.ts";
 import { createLatestGuard, type LatestGuard } from "@/shared/lib/searchGuard.ts";
+import type { Platform } from "@/shared/types.ts";
+import { useLibraryIndexStore } from "@/shared/store/libraryIndexStore.ts";
 import {
   ItemType,
   useLibraryStore,
@@ -213,12 +216,18 @@ export interface MissingTracksState {
   toggle: (album: string) => void;
   /** Shows the missing songs of `album` (loads them). */
   show: (album: string) => void;
+  /**
+   * Links `album` to the remote album at `url`, then shows its missing songs. Rejects (with the backend message)
+   * when the link fails.
+   */
+  link: (artist: string, album: string, platform: Platform, url: string) => Promise<void>;
   /** Removes the link of `album` to its remote album and forgets its missing songs. */
   unlink: (artist: string, album: string) => Promise<void>;
   /** Starts one album download of the missing songs of `album` that are not already downloading. */
-  downloadMissing: (album: string) => Promise<void>;
+  /** `format`: the yt-dlp format picked in the quality menu (the best when omitted). */
+  downloadMissing: (album: string, format?: string) => Promise<void>;
   /** Starts the album download of one missing song of `album`. Ignored when it is no longer missing or is downloading. */
-  downloadOne: (album: string, track: AlbumTrackInfo) => Promise<void>;
+  downloadOne: (album: string, track: AlbumTrackInfo, format?: string) => Promise<void>;
   /** Starts one album download of the given missing songs of `album` (those no longer missing or pending are skipped). */
   downloadMany: (album: string, tracks: readonly AlbumTrackInfo[]) => Promise<void>;
 }
@@ -279,7 +288,7 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
    * Marks the songs as downloading before the download starts (startDownload registers the task synchronously, so
    * the subscription below sees it as busy), then starts it. Callers filter out songs already pending.
    */
-  const startTracked = async (missing: MissingTracks, trackUrls: string[]) => {
+  const startTracked = async (missing: MissingTracks, trackUrls: string[], format?: string) => {
     set((state) => {
       const pendingUrls = new Map(state.pendingUrls);
       for (const url of trackUrls) pendingUrls.set(url, missing.source_url);
@@ -287,7 +296,7 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       for (const url of trackUrls) delete failures[url];
       return { pendingUrls, failures };
     });
-    await useLibraryStore.getState().startDownload(missingDownloadParams(missing, trackUrls));
+    await useLibraryStore.getState().startDownload({ ...missingDownloadParams(missing, trackUrls), format });
   };
 
   return {
@@ -334,6 +343,14 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       if (shown.has(album)) void reloadMissing(album);
     },
 
+    link: async (artist, album, platform, url) => {
+      await linkAlbumSource(artist, album, platform, url);
+      // the remote album is now this library album: the cached "not downloaded" of its url is stale
+      useLibraryIndexStore.getState().invalidate();
+      await get().loadSources(artist);
+      get().show(album);
+    },
+
     unlink: async (artist, album) => {
       try {
         await unlinkAlbumSource(artist, album);
@@ -341,6 +358,8 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
         console.error("Failed to unlink the album:", e);
         return;
       }
+      // the remote album is no longer this library album: its cached status is stale
+      useLibraryIndexStore.getState().invalidate();
       set({
         shown: new Set([...get().shown].filter((a) => a !== album)),
         tracks: { ...get().tracks, [album]: null },
@@ -353,7 +372,7 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       void reloadMissing(album);
     },
 
-    downloadMissing: async (album) => {
+    downloadMissing: async (album, format) => {
       const missing = await reloadMissing(album);
       if (!missing) return;
       const pending = get().pendingUrls;
@@ -362,15 +381,15 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       if (urls.length === 0) return;
       // Show the songs in the album: they get their download percents there.
       set({ shown: new Set(get().shown).add(album) });
-      await startTracked(missing, urls);
+      await startTracked(missing, urls, format);
     },
 
-    downloadOne: async (album, track) => {
+    downloadOne: async (album, track, format) => {
       const missing = await reloadMissing(album);
       if (!missing || !missingTrackUrls(missing).includes(track.url) || get().unavailable.has(track.url)) return;
       // Checked after the await: a second click during the read sees the first one's pending entry.
       if (get().pendingUrls.has(track.url)) return;
-      await startTracked(missing, [track.url]);
+      await startTracked(missing, [track.url], format);
     },
 
     retry: async (album, track) => {

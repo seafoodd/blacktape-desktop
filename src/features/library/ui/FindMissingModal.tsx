@@ -3,13 +3,13 @@ import { useEffect, useState } from "react";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import {
   findAlbumCandidates,
-  linkAlbumSource,
   type AlbumCandidate,
 } from "@/shared/lib/libraryIndex.ts";
 import { explainFailure } from "@/features/library/model/downloadFailure.ts";
 import { sameUrl } from "@/shared/lib/urlKey.ts";
 import FindAlternativeModal from "@/features/library/ui/FindAlternativeModal.tsx";
 import { useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
+import { ExpectedQualityBadge } from "@/features/download-quality/ui/ExpectedQualityBadge.tsx";
 import { candidateMeta } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 import styles from "./find-missing-modal.module.css";
 
@@ -38,6 +38,8 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
   const [candidates, setCandidates] = useState<AlbumCandidate[] | null>(null);
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // the platform album the library album is linked to now (Change linked album)
+  const linked = useMissingTracksStore((s) => s.sources[album]);
 
   const explained = failedSong
     ? explainFailure(failedSong.message ?? "no output file", failedSong.platform)
@@ -63,9 +65,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
     setLinking(true);
     setError(null);
     try {
-      await linkAlbumSource(albumArtist, album, candidate.platform, candidate.url);
-      await useMissingTracksStore.getState().loadSources(albumArtist);
-      useMissingTracksStore.getState().show(album);
+      await useMissingTracksStore.getState().link(albumArtist, album, candidate.platform, candidate.url);
       closeModal();
     } catch (e) {
       setError(String(e));
@@ -85,6 +85,12 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
             : `Which one is "${album}"?`
             : "No matching album was found."}
       </span>
+      {linked && (
+        <span className={styles.linked}>
+          <span className={styles.linkedLabel}>Linked now:</span> {candidateMeta({ platform: linked.platform, year: null })}
+          <ExpectedQualityBadge platform={linked.platform} url={linked.source_url} />
+        </span>
+      )}
       {failedSong && (
         <span className={styles.problem}>
           <strong>"{failedSong.title}" could not be downloaded.</strong> {explained?.reason} {explained?.hint}
@@ -107,7 +113,10 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
               <div className={styles.info}>
                 <span className={styles.name}>{candidate.title}</span>
                 <span className={styles.meta}>{candidate.artist}</span>
-                <span className={styles.meta}>{candidateMeta(candidate)}</span>
+                <span className={styles.metaRow}>
+                  <span className={styles.meta}>{candidateMeta(candidate)}</span>
+                  <ExpectedQualityBadge platform={candidate.platform} url={candidate.url} />
+                </span>
               </div>
             </button>
           ))}

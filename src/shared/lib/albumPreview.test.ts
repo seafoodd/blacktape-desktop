@@ -253,6 +253,11 @@ describe("trackRefs", () => {
     const p = preview([track(0, { title: "Song", artists: ["Band"] })]);
     expect(trackRefs(p)[0]).toMatchObject({ title: "Song", artist: "Band" });
   });
+
+  it("gives each ref the album title of the preview as its album", () => {
+    const p = preview([track(0), track(1, { url: "https://example.test/track/1" })], { title: "Deep Black" });
+    expect(trackRefs(p).map((r) => r.album)).toEqual(["Deep Black", "Deep Black"]);
+  });
 });
 
 describe("albumLibraryState", () => {

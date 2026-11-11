@@ -2,7 +2,7 @@ import { coverSrc } from "@/shared/lib/cover";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./search-bar.module.css";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
-import { BiDownload, BiFilterAlt, BiInfoCircle } from "react-icons/bi";
+import { BiFilterAlt, BiInfoCircle } from "react-icons/bi";
 import clsx from "clsx";
 import { formatCompactNumber } from "@/shared/lib/number.ts";
 import {
@@ -27,6 +27,8 @@ import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadS
 import { useSearchPageStore } from "../model/searchPageStore.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
 import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -362,20 +364,26 @@ export const SearchBar = ({ className }: SearchBarProps) => {
                                 <>
                           {!activeDownload ||
                           activeDownload.status === "failed" ? (
-                            <button
-                              className={styles.downloadButton}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => {
-                                const rect =
-                                  e.currentTarget.getBoundingClientRect();
-                                flyToLibrary(rect, suggestion.img);
-                                startDownload(searchItemDownloadParams(suggestion)).catch((err) => {
-                                  console.log("Download error: ", err);
-                                });
-                              }}
-                            >
-                              <BiDownload size={20} />
-                            </button>
+                            <span onMouseDown={(e) => e.preventDefault()}>
+                              <DownloadSplitButton
+                                size={38}
+                                title={`Download ${suggestion.name}`}
+                                onDownload={(e) => {
+                                  const rect =
+                                    e.currentTarget.getBoundingClientRect();
+                                  flyToLibrary(rect, suggestion.img);
+                                  startDownload(searchItemDownloadParams(suggestion)).catch((err) => {
+                                    console.log("Download error: ", err);
+                                  });
+                                }}
+                                onChooseQuality={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  openQualityMenu(searchItemDownloadParams(suggestion), {
+                                    onStarted: () => flyToLibrary(rect, suggestion.img),
+                                  });
+                                }}
+                              />
+                            </span>
                           ) : (
                             <div className={styles.downloadStatus}>
                               {activeDownload.status === "completed" && (

@@ -6,6 +6,7 @@ import { createLatestGuard } from "@/shared/lib/searchGuard.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
+import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
 
 export type DownloadStatus =
   | "idle"
@@ -38,6 +39,8 @@ export interface DownloadProgress {
   tracks: TrackDownloadProgress[];
   /** A single track filed into a library song: its progress belongs to that song, whatever title the platform gave it. */
   placement?: TrackPlacement;
+  /** Album downloads of some tracks: their page urls (absent for a whole album and for recovered downloads). */
+  trackUrls?: string[];
 }
 
 export interface StartDownloadParams {
@@ -51,6 +54,8 @@ export interface StartDownloadParams {
   trackUrls?: string[];
   /** Single track downloads: the library album and song this track stands for (names and number win over the platform's). */
   placement?: TrackPlacement;
+  /** yt-dlp format id picked in the quality menu (the platform's best is the fallback); omitted: the best. */
+  format?: string;
 }
 
 /** Mirrors the Rust `TrackPlacement` (snake_case on the wire). */
@@ -535,6 +540,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const coverUrl = isObject ? paramsOrPlatform.coverUrl : undefined;
     const trackUrls = isObject ? paramsOrPlatform.trackUrls : undefined;
     const placement = isObject ? paramsOrPlatform.placement : undefined;
+    const format = isObject ? paramsOrPlatform.format : undefined;
+
+    // A second click while the same songs are still downloading would queue them again.
+    if (isRunning(findDownload(get().activeDownloads, { url, trackUrls }))) return;
 
     const taskId = crypto.randomUUID();
     const isSingleTrack =
@@ -558,6 +567,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           platform: platform as Platform,
           overallPercent: 0,
           placement,
+          trackUrls,
           tracks: isSingleTrack
             ? [
                 {
@@ -583,6 +593,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         coverUrl,
         trackUrls: trackUrls ?? null,
         placement: placement ?? null,
+        format: format ?? null,
       });
     } catch (e) {
       console.error("Download invoke failed:", e);

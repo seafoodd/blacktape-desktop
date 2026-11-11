@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { seek } from "@/shared/lib/audio.ts";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { formatDuration } from "@/shared/lib/time.ts";
 import {
   MdCloudQueue,
@@ -28,6 +30,7 @@ import { remoteTrackDownloadParams } from "@/features/remote-track-menu/model/bu
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
+import { findDownload, isRunning } from "@/shared/lib/downloadMatch.ts";
 import { streamAlbumUrl } from "@/shared/lib/stream.ts";
 import { albumTarget, remoteTrackRef, streamSongToRemoteTrack } from "../lib/currentSong.ts";
 import { RepeatMode } from "@/shared/types.ts";
@@ -88,6 +91,11 @@ export const PlayerControls = () => {
     [currentSong, isStreaming, albumUrl],
   );
   const downloadState = useTrackStatus(streamTrack ? remoteTrackRef(streamTrack) : null);
+  const downloadParams = useMemo(() => (streamTrack ? remoteTrackDownloadParams(streamTrack) : null), [streamTrack]);
+  // The download of this song started from anywhere (here, a menu, the album page), if any.
+  const download = useLibraryStore((s) => (downloadParams ? findDownload(s.activeDownloads, downloadParams) : undefined));
+  const downloading = isRunning(download);
+  const downloaded = downloadState === "downloaded" || download?.status === "completed";
 
   const openAlbum = () => {
     if (!currentSong || !target) return;
@@ -233,17 +241,6 @@ export const PlayerControls = () => {
                 </div>
               </div>
               <div className={styles.songActions}>
-                {streamTrack && (
-                  <button
-                    type="button"
-                    className={styles.songAction}
-                    disabled={downloadState === "downloaded"}
-                    title={downloadState === "downloaded" ? "Already in your library" : "Download this song"}
-                    onClick={() => void useLibraryStore.getState().startDownload(remoteTrackDownloadParams(streamTrack))}
-                  >
-                    {downloadState === "downloaded" ? <MdCheck /> : <MdFileDownload />}
-                  </button>
-                )}
                 <button
                   type="button"
                   className={styles.songAction}
@@ -261,6 +258,31 @@ export const PlayerControls = () => {
                 >
                   <MdFavoriteBorder />
                 </button>
+                {streamTrack &&
+                  (downloading || downloaded || !downloadParams ? (
+                    <button
+                      type="button"
+                      className={styles.songAction}
+                      disabled
+                      title={downloaded ? "Already in your library" : "Downloading…"}
+                    >
+                      {downloading ? (
+                        <span className={styles.actionSpinner} role="status" aria-label="Downloading" />
+                      ) : (
+                        <MdCheck />
+                      )}
+                    </button>
+                  ) : (
+                    <DownloadSplitButton
+                      size={36}
+                      revealGear
+                      className={styles.downloadSplit}
+                      icon={<MdFileDownload />}
+                      title="Download this song"
+                      onDownload={() => void useLibraryStore.getState().startDownload(downloadParams)}
+                      onChooseQuality={() => openQualityMenu(downloadParams)}
+                    />
+                  ))}
               </div>
             </>
           ) : (

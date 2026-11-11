@@ -251,6 +251,8 @@ struct DownloadContext {
     task_id: String,
     binary_path: PathBuf,
     cookie_arg: String,
+    /// Format the user picked for this download (see `quality::prefer_format`).
+    format: Option<String>,
     temp_dir: PathBuf,
     session_id: String,
     /// Why each failed track failed (shown to the user when nothing could be downloaded).
@@ -322,7 +324,12 @@ fn download_site(url: &str) -> DownloadSite {
 }
 
 /// yt-dlp's arguments to download one track: the url is checked and always comes last, after `--`. Pure.
-fn download_args(url: &str, output_template: &str, cookie_arg: &str) -> Result<Vec<String>, String> {
+fn download_args(
+    url: &str,
+    output_template: &str,
+    cookie_arg: &str,
+    format: Option<&str>,
+) -> Result<Vec<String>, String> {
     let url = checked_url(url)?;
     let mut args: Vec<String> = [
         "--ignore-errors",
@@ -376,6 +383,7 @@ fn download_args(url: &str, output_template: &str, cookie_arg: &str) -> Result<V
         DownloadSite::Other => args.extend(["-f", "bestaudio/best"].map(String::from)),
     }
 
+    let mut args = crate::download::quality::prefer_format(args, format);
     args.push("--newline".to_string());
     args.push("--".to_string());
     args.push(url.to_string());
@@ -436,12 +444,17 @@ impl DownloadContext {
             .join("EBWebView")
             .join("Default");
         let cookie_arg = format!("edge:{}", edge_profile_path.to_string_lossy());
+        let format = match app.try_state::<crate::download::TaskRegistry>() {
+            Some(registry) => registry.format(task_id).await,
+            None => None,
+        };
 
         Ok(Self {
             app: app.clone(),
             task_id: task_id.to_string(),
             binary_path,
             cookie_arg,
+            format,
             temp_dir,
             session_id,
             failures: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -486,7 +499,7 @@ async fn download_track_internal(
     total_tracks: usize,
 ) -> Option<PathBuf> {
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
-    let args = match download_args(&track.url, &output_template.to_string_lossy(), &ctx.cookie_arg) {
+    let args = match download_args(&track.url, &output_template.to_string_lossy(), &ctx.cookie_arg, ctx.format.as_deref()) {
         Ok(args) => args,
         Err(err) => {
             eprintln!(
@@ -1133,7 +1146,7 @@ mod hardening_tests {
 
     #[test]
     fn youtube_args_end_with_separator_and_url_and_trust_the_system_store() {
-        let args = download_args(YT, TEMPLATE, COOKIES).unwrap();
+        let args = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
         let tail: Vec<&str> = args[args.len() - 3..].iter().map(String::as_str).collect();
         assert_eq!(tail, ["--newline", "--", YT]);
 
@@ -1147,13 +1160,13 @@ mod hardening_tests {
 
     #[test]
     fn non_youtube_urls_never_get_browser_cookies() {
-        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, COOKIES).unwrap();
+        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, COOKIES, None).unwrap();
         assert!(!args.iter().any(|a| a == "--cookies-from-browser"));
     }
 
     #[test]
     fn download_args_refuses_option_like_urls() {
-        assert!(download_args("--exec=calc", TEMPLATE, COOKIES).is_err());
+        assert!(download_args("--exec=calc", TEMPLATE, COOKIES, None).is_err());
     }
 
     #[test]
@@ -1206,5 +1219,71 @@ mod hardening_tests {
     #[test]
     fn to_hex_is_lowercase_and_zero_padded() {
         assert_eq!(to_hex(&[0x00, 0x0f, 0xab]), "000fab");
+    }
+}
+
+#[cfg(test)]
+mod format_choice_tests {
+    use super::*;
+
+    const YT: &str = "https://www.youtube.com/watch?v=abc";
+    const BANDCAMP: &str = "https://artist.bandcamp.com/track/a";
+    const SOUNDCLOUD: &str = "https://soundcloud.com/artist/track";
+    const COOKIES: &str = "chrome";
+    const TEMPLATE: &str = "out/%(id)s.%(ext)s";
+
+    /// The value that follows the first `-f`.
+    fn selector(args: &[String]) -> &str {
+        let i = args.iter().position(|a| a == "-f").expect("no -f");
+        &args[i + 1]
+    }
+
+    #[test]
+    fn chosen_format_is_tried_first_for_youtube() {
+        let args = download_args(YT, TEMPLATE, COOKIES, Some("140")).unwrap();
+        assert_eq!(selector(&args), "140/251/140/ba/bestaudio/ba*");
+    }
+
+    #[test]
+    fn chosen_format_is_tried_first_for_bandcamp() {
+        let args = download_args(BANDCAMP, TEMPLATE, COOKIES, Some("mp3-320")).unwrap();
+        assert_eq!(
+            selector(&args),
+            "mp3-320/flac/alac/wav/aiff-lossless/mp3-320/mp3-v0/aac-hi/vorbis/bestaudio/best"
+        );
+    }
+
+    #[test]
+    fn chosen_format_is_tried_first_for_soundcloud() {
+        let args = download_args(SOUNDCLOUD, TEMPLATE, COOKIES, Some("hls_aac_160k")).unwrap();
+        assert_eq!(selector(&args), "hls_aac_160k/bestaudio[protocol^=http]/bestaudio/best");
+    }
+
+    #[test]
+    fn chosen_format_is_tried_first_for_other_sites() {
+        let args = download_args("https://example.test/a.mp3", TEMPLATE, COOKIES, Some("ab-1")).unwrap();
+        assert_eq!(selector(&args), "ab-1/bestaudio/best");
+    }
+
+    #[test]
+    fn no_format_keeps_the_platform_selector() {
+        let args = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
+        assert_eq!(selector(&args), "251/140/ba/bestaudio/ba*");
+    }
+
+    #[test]
+    fn unsafe_format_ids_leave_the_args_unchanged() {
+        let plain = download_args(YT, TEMPLATE, COOKIES, None).unwrap();
+        for bad in ["251/best", "a+b", ""] {
+            let args = download_args(YT, TEMPLATE, COOKIES, Some(bad)).unwrap();
+            assert_eq!(args, plain, "changed for {bad:?}");
+        }
+    }
+
+    #[test]
+    fn format_choice_keeps_the_url_last_after_the_separator() {
+        let args = download_args(YT, TEMPLATE, COOKIES, Some("140")).unwrap();
+        let tail: Vec<&str> = args[args.len() - 3..].iter().map(String::as_str).collect();
+        assert_eq!(tail, ["--newline", "--", YT]);
     }
 }

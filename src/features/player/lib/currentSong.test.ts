@@ -128,6 +128,35 @@ describe("remoteTrackRef", () => {
       url: "https://yt.test/watch?v=1",
       artist: "Band",
       title: "Song",
+      album: "LP",
     });
+  });
+
+  it("gives the album as undefined when the track has a null album", () => {
+    const track: RemoteTrack = {
+      platform: "bandcamp",
+      url: "https://b.test/track/1",
+      title: "Song",
+      artist: "Band",
+      album: null,
+      album_url: null,
+      cover: undefined,
+      duration_ms: null,
+    };
+    expect(remoteTrackRef(track).album).toBeUndefined();
+  });
+
+  it("gives the album as undefined when the track has an empty album", () => {
+    const track: RemoteTrack = {
+      platform: "bandcamp",
+      url: "https://b.test/track/1",
+      title: "Song",
+      artist: "Band",
+      album: "",
+      album_url: null,
+      cover: undefined,
+      duration_ms: null,
+    };
+    expect(remoteTrackRef(track).album).toBeUndefined();
   });
 });

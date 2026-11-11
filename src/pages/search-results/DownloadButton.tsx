@@ -1,6 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
 import clsx from "clsx";
-import { BiDownload } from "react-icons/bi";
 import { FaCheckCircle } from "react-icons/fa";
 import {
   ItemType,
@@ -12,6 +11,9 @@ import { flyToLibrary } from "@/shared/lib/flyAnimation.ts";
 import { remoteRefOf, useAlbumStatus, useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { downloadPercent, isDownloadBusy, searchItemDownloadParams } from "./searchResultsFormat.ts";
 import styles from "./search-results.module.css";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
+import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 
 interface DownloadButtonProps {
   item: SearchSuggestion;
@@ -35,6 +37,8 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
   const trackState = useTrackStatus(isAlbum ? null : ref);
   const albumState = useAlbumStatus(isAlbum ? ref : null).state;
   const inLibrary = (isAlbum ? albumState : trackState) === "downloaded";
+  // a partly downloaded album: the dashed check at rest, the download button (for the rest) on hover
+  const partial = overlay && isAlbum && albumState === "partial" && !busy;
 
   const onDownload = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -47,22 +51,17 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
   if (busy && progress) {
     control =
       progress.status === "completed" ? (
+        // a row shows the same check as a song already in the library, in the same place
         <span
-          className={clsx(
-            styles.progressText,
-            overlay && styles.progressBadge,
-          )}
+          className={clsx(overlay ? [styles.progressText, styles.progressBadge] : styles.libraryMark)}
           title="Downloaded"
           aria-label="Downloaded"
         >
-          <FaCheckCircle size={overlay ? 18 : 16} />
+          <FaCheckCircle size={18} />
         </span>
       ) : (
         <span
-          className={clsx(
-            styles.progressText,
-            overlay && styles.progressBadge,
-          )}
+          className={clsx(styles.progressText, overlay ? styles.progressBadge : styles.progressRow)}
           aria-live="polite"
         >
           {downloadPercent(progress)}%
@@ -80,21 +79,36 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
     );
   } else {
     control = (
-      <button
-        type="button"
-        className={overlay ? styles.downloadBtn : styles.rowDownloadBtn}
-        onClick={onDownload}
+      <DownloadSplitButton
+        size={overlay ? 34 : 32}
+        tone={overlay ? "solid" : "plain"}
+        className={overlay ? undefined : styles.rowSplit}
         title={`Download ${item.name}`}
-        aria-label={`Download ${item.name}`}
-      >
-        <BiDownload size={20} />
-      </button>
+        onDownload={onDownload}
+        onChooseQuality={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          openQualityMenu(searchItemDownloadParams(item), { onStarted: () => flyToLibrary(rect, item.img) });
+        }}
+      />
     );
   }
 
-  if (!overlay) return control;
+  // a fixed-width cell: the columns before it line up whether a row shows the button, a check or a percent
+  if (!overlay) return <span className={styles.rowDownloadCell}>{control}</span>;
   return (
-    <div className={clsx(styles.coverOverlay, busy && styles.coverOverlayPinned)}>
+    // the check of an album in the library stays visible; the download button shows on hover
+    <div
+      className={clsx(
+        styles.coverOverlay,
+        (busy || inLibrary || partial) && styles.coverOverlayPinned,
+        partial && styles.coverOverlayPartial,
+      )}
+    >
+      {partial && (
+        <span className={clsx(styles.progressText, styles.progressBadge, styles.partialMark)}>
+          <DownloadStatusBadge state="partial" size={18} className={styles.partialBadge} />
+        </span>
+      )}
       {control}
     </div>
   );

@@ -87,7 +87,8 @@ pub async fn write_album_source(
 ) -> Result<bool, sqlx::Error> {
     match build_album_source(platform, url, album, skipped, now) {
         Some(source) => {
-            db.upsert_album_source(&source).await?;
+            // the album was just downloaded from this platform album: an older link to another one goes
+            db.replace_album_source(&source).await?;
             Ok(true)
         }
         None => Ok(false),
@@ -359,6 +360,53 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn downloading_the_album_from_another_platform_replaces_the_old_link() {
+        let db = db_with_schema().await;
+        let soundcloud = "https://soundcloud.com/artist/sets/the-album";
+        write_album_source(&db, Platform::Bandcamp, "https://a.bandcamp.com/album/the-album", &album_of(&["https://a.bandcamp.com/track/1"]), &[], 1)
+            .await
+            .unwrap();
+        write_album_source(&db, Platform::Soundcloud, soundcloud, &album_of(&["https://sc/1"]), &[], 2).await.unwrap();
+
+        let rows = db.list_album_sources_for_artist("Artist").await.unwrap();
+        assert_eq!(rows.len(), 1, "the old platform link is replaced");
+        assert_eq!(rows[0].platform, "soundcloud");
+        assert_eq!(rows[0].album_url, soundcloud);
+        assert_eq!(rows[0].track_urls, r#"["https://sc/1"]"#);
+        assert_eq!(rows[0].fetched_at, 2);
+    }
+
+    #[tokio::test]
+    async fn downloading_a_different_album_of_the_same_artist_keeps_the_first_row() {
+        let db = db_with_schema().await;
+        write_album_source(&db, Platform::Bandcamp, "https://a.bandcamp.com/album/the-album", &album_of(&["https://u/1"]), &[], 1)
+            .await
+            .unwrap();
+        let mut other = album_of(&["https://u/2"]);
+        other.title = "Another Album".to_string();
+        write_album_source(&db, Platform::Soundcloud, "https://soundcloud.com/artist/sets/another", &other, &[], 2)
+            .await
+            .unwrap();
+
+        let rows = db.list_album_sources_for_artist("Artist").await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|r| r.album == "The Album" && r.platform == "bandcamp"));
+        assert!(rows.iter().any(|r| r.album == "Another Album" && r.platform == "soundcloud"));
+    }
+
+    #[tokio::test]
+    async fn redownloading_the_same_url_leaves_one_row() {
+        let db = db_with_schema().await;
+        let url = "https://a.bandcamp.com/album/the-album";
+        write_album_source(&db, Platform::Bandcamp, url, &album_of(&["https://u/1"]), &[], 1).await.unwrap();
+        write_album_source(&db, Platform::Bandcamp, url, &album_of(&["https://u/1"]), &[], 2).await.unwrap();
+
+        let rows = db.list_album_sources_for_artist("Artist").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].fetched_at, 2);
     }
 
     fn track(url: &str, number: i32) -> TrackDownload {

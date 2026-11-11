@@ -40,6 +40,8 @@ pub struct ActiveTaskInfo {
     pub root_dir: Option<PathBuf>,
     pub child_pids: Vec<u32>,
     pub is_cancelled: bool,
+    /// yt-dlp format id the user picked in the quality menu (tried first; the platform's chain is the fallback).
+    pub format: Option<String>,
     pub state: ActiveDownloadState,
 }
 
@@ -129,6 +131,7 @@ impl TaskRegistry {
                 root_dir: None,
                 child_pids: Vec::new(),
                 is_cancelled: false,
+                format: None,
                 state,
             },
         );
@@ -188,6 +191,16 @@ impl TaskRegistry {
                 info.abort_handle = Some(handle);
             }
         }
+    }
+
+    pub async fn set_format(&self, task_id: &str, format: Option<String>) {
+        if let Some(info) = self.tasks.lock().await.get_mut(task_id) {
+            info.format = format;
+        }
+    }
+
+    pub async fn format(&self, task_id: &str) -> Option<String> {
+        self.tasks.lock().await.get(task_id).and_then(|t| t.format.clone())
     }
 
     pub async fn set_temp_dir(&self, task_id: &str, temp_dir: PathBuf) {
@@ -431,5 +444,46 @@ mod tests {
 
         let tasks = registry.tasks.lock().await;
         assert!(tasks.get("task-4").unwrap().child_pids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn format_is_none_until_one_is_set() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-5")).await;
+        assert_eq!(registry.format("task-5").await, None);
+    }
+
+    #[tokio::test]
+    async fn set_format_is_kept_per_task() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-6")).await;
+        registry.register_task(make_state("task-7")).await;
+
+        registry.set_format("task-6", Some("251".to_string())).await;
+
+        assert_eq!(registry.format("task-6").await.as_deref(), Some("251"));
+        assert_eq!(registry.format("task-7").await, None);
+    }
+
+    #[tokio::test]
+    async fn set_format_replaces_and_clears_the_choice() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("task-8")).await;
+
+        registry.set_format("task-8", Some("251".to_string())).await;
+        registry.set_format("task-8", Some("mp3-320".to_string())).await;
+        assert_eq!(registry.format("task-8").await.as_deref(), Some("mp3-320"));
+
+        registry.set_format("task-8", None).await;
+        assert_eq!(registry.format("task-8").await, None);
+    }
+
+    #[tokio::test]
+    async fn unknown_task_has_no_format_and_setting_one_is_a_no_op() {
+        let registry = TaskRegistry::default();
+        registry.set_format("missing", Some("251".to_string())).await;
+
+        assert_eq!(registry.format("missing").await, None);
+        assert!(registry.tasks.lock().await.is_empty());
     }
 }

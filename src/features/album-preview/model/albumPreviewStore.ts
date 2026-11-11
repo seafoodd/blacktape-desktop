@@ -44,11 +44,11 @@ export interface AlbumPreviewStore {
   selectAll: () => void;
   clearSelection: () => void;
   /** Downloads the selected tracks, or the whole album when nothing (or everything) is selected. */
-  download: () => Promise<void>;
+  download: (format?: string) => Promise<void>;
   /** Downloads just these tracks (page urls) into the album folder, e.g. the ones the library lacks. */
-  downloadUrls: (urls: string[]) => Promise<void>;
+  downloadUrls: (urls: string[], format?: string) => Promise<void>;
   /** Downloads one track into the album folder (album pipeline, so the album keeps its source row). */
-  downloadTrack: (track: AlbumTrackInfo) => Promise<void>;
+  downloadTrack: (track: AlbumTrackInfo, format?: string) => Promise<void>;
 }
 
 const guard = createLatestGuard();
@@ -67,7 +67,7 @@ function pruneTasks(
  */
 async function startAlbumDownload(
   preview: AlbumPreview,
-  request: { trackUrls?: string[]; rows: string[] },
+  request: { trackUrls?: string[]; rows: string[]; format?: string },
 ): Promise<void> {
   const library = useLibraryStore.getState();
   const before = new Set(Object.keys(library.activeDownloads));
@@ -79,6 +79,7 @@ async function startAlbumDownload(
     title: preview.title,
     coverUrl: preview.cover_url ?? undefined,
     trackUrls: request.trackUrls,
+    format: request.format,
   });
   const active = useLibraryStore.getState().activeDownloads;
   const taskId = Object.keys(active).find((id) => !before.has(id));
@@ -138,7 +139,7 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
 
   clearSelection: () => set({ selection: EMPTY_SELECTION }),
 
-  download: async () => {
+  download: async (format) => {
     const { preview, selection } = get();
     if (!preview) return;
     const available = selectableIndexes(preview);
@@ -146,18 +147,18 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
     // Nothing selected, or everything: the plain album download (same folder and metadata).
     const wholeAlbum = urls.length === 0 || urls.length >= available.length;
     const rows = wholeAlbum ? selectableTracks(preview).map((t) => t.url) : urls;
-    await startAlbumDownload(preview, { trackUrls: wholeAlbum ? undefined : urls, rows });
+    await startAlbumDownload(preview, { trackUrls: wholeAlbum ? undefined : urls, rows, format });
   },
 
-  downloadUrls: async (urls) => {
+  downloadUrls: async (urls, format) => {
     const { preview } = get();
     if (!preview || urls.length === 0) return;
-    await startAlbumDownload(preview, { trackUrls: urls, rows: urls });
+    await startAlbumDownload(preview, { trackUrls: urls, rows: urls, format });
   },
 
-  downloadTrack: async (track) => {
+  downloadTrack: async (track, format) => {
     const { preview } = get();
     if (!preview || !track.available || track.url === "") return;
-    await startAlbumDownload(preview, { trackUrls: [track.url], rows: [track.url] });
+    await startAlbumDownload(preview, { trackUrls: [track.url], rows: [track.url], format });
   },
 }));

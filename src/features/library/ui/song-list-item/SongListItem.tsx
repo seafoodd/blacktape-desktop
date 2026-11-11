@@ -10,6 +10,7 @@ import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { Song } from "@/shared/types.ts";
 import { ContextMenuPosition } from "@/shared/ui/context-menu";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/dragSongs.ts";
+import { QualityBadge } from "@/shared/ui/quality-badge/QualityBadge.tsx";
 
 interface SongListItemProps {
   song: Song;
@@ -199,16 +200,20 @@ const SongListItem = ({
         <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
       </div>
       <div className={styles.songRight}>
-        <div className={styles.songDuration}>
-          {formatDuration(song.duration_ms)}
+        <QualityBadge song={song} className={styles.qualityBadge} />
+        {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}
+        <div className={styles.endSlot}>
+          <div className={styles.songDuration}>
+            {formatDuration(song.duration_ms)}
+          </div>
+          <button
+            className={styles.threeDotButton}
+            onClick={(e) => handleOpenContextMenu(e, true)}
+            aria-label="Song options"
+          >
+            <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
+          </button>
         </div>
-        <button
-          className={styles.threeDotButton}
-          onClick={(e) => handleOpenContextMenu(e, true)}
-          aria-label="Song options"
-        >
-          <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
-        </button>
       </div>
     </div>
   );

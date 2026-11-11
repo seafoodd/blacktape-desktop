@@ -18,19 +18,34 @@ import {
 } from "./missingTracksStore.ts";
 import { isNoStreamFailure } from "./downloadFailure.ts";
 
-const { getArtistAlbumSourcesMock, getMissingTracksMock, startDownloadMock, subscribeMock } =
-  vi.hoisted(() => ({
-    getArtistAlbumSourcesMock: vi.fn(),
-    getMissingTracksMock: vi.fn(),
-    startDownloadMock: vi.fn(),
-    subscribeMock: vi.fn(),
-  }));
+const {
+  getArtistAlbumSourcesMock,
+  getMissingTracksMock,
+  linkAlbumSourceMock,
+  unlinkAlbumSourceMock,
+  startDownloadMock,
+  subscribeMock,
+  invalidateMock,
+} = vi.hoisted(() => ({
+  getArtistAlbumSourcesMock: vi.fn(),
+  getMissingTracksMock: vi.fn(),
+  linkAlbumSourceMock: vi.fn(),
+  unlinkAlbumSourceMock: vi.fn(),
+  startDownloadMock: vi.fn(),
+  subscribeMock: vi.fn(),
+  invalidateMock: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@/shared/lib/libraryIndex.ts", () => ({
   getArtistAlbumSources: getArtistAlbumSourcesMock,
   getMissingTracks: getMissingTracksMock,
+  linkAlbumSource: linkAlbumSourceMock,
+  unlinkAlbumSource: unlinkAlbumSourceMock,
+}));
+vi.mock("@/shared/store/libraryIndexStore.ts", () => ({
+  useLibraryIndexStore: { getState: () => ({ invalidate: invalidateMock }) },
 }));
 vi.mock("@/shared/store/libraryStore.ts", () => ({
   ItemType: { Track: "Track", Album: "Album", Artist: "Artist" },
@@ -94,6 +109,7 @@ async function flush() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidateMock.mockReset();
   useMissingTracksStore.setState({
     artist: null,
     sources: {},
@@ -313,6 +329,27 @@ describe("toggle", () => {
   });
 });
 
+describe("downloadMissing format", () => {
+  it("passes the picked format to startDownload", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMissing("A", "251");
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("251");
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/1",
+      "https://example.test/track/2",
+    ]);
+  });
+
+  it("passes no format when none is picked", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMissing("A");
+    expect(startDownloadMock.mock.calls[0][0].format).toBeUndefined();
+  });
+});
+
 describe("downloadMissing", () => {
   it("starts one album download with the urls of all missing songs", async () => {
     getMissingTracksMock.mockResolvedValue(missing());
@@ -402,6 +439,26 @@ describe("downloadOne", () => {
     expect(useMissingTracksStore.getState().pendingUrls.get("https://example.test/track/2")).toBe(
       "https://example.test/album/A",
     );
+  });
+});
+
+describe("downloadOne format", () => {
+  it("passes the picked format to startDownload", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadOne("A", track(2), "251");
+    expect(startDownloadMock).toHaveBeenCalledTimes(1);
+    expect(startDownloadMock.mock.calls[0][0].format).toBe("251");
+    expect(startDownloadMock.mock.calls[0][0].trackUrls).toEqual([
+      "https://example.test/track/2",
+    ]);
+  });
+
+  it("passes no format when none is picked", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadOne("A", track(2));
+    expect(startDownloadMock.mock.calls[0][0].format).toBeUndefined();
   });
 });
 
@@ -581,5 +638,61 @@ describe("recoveredSongs", () => {
   });
   it("keeps everything while the song is still missing", () => {
     expect(recoveredSongs({ t1: "album" }, "album", new Set(["t1"]))).toEqual([]);
+  });
+});
+
+describe("link / unlink", () => {
+  const albumUrl = "https://example.test/album/A";
+
+  it("link calls linkAlbumSource, invalidates once, reloads the artist sources and shows the album", async () => {
+    linkAlbumSourceMock.mockResolvedValue(undefined);
+    getArtistAlbumSourcesMock.mockResolvedValue([source("A")]);
+    getMissingTracksMock.mockResolvedValue(missing());
+    await useMissingTracksStore.getState().link("Artist", "A", "bandcamp", albumUrl);
+
+    expect(linkAlbumSourceMock).toHaveBeenCalledWith("Artist", "A", "bandcamp", albumUrl);
+    expect(invalidateMock).toHaveBeenCalledTimes(1);
+    expect(getArtistAlbumSourcesMock).toHaveBeenCalledWith("Artist");
+    expect(linkAlbumSourceMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateMock.mock.invocationCallOrder[0],
+    );
+    expect(invalidateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      getArtistAlbumSourcesMock.mock.invocationCallOrder[0],
+    );
+    expect(useMissingTracksStore.getState().shown.has("A")).toBe(true);
+  });
+
+  it("link rejects when linkAlbumSource rejects and does not invalidate", async () => {
+    linkAlbumSourceMock.mockRejectedValue("link failed");
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await expect(
+      useMissingTracksStore.getState().link("Artist", "A", "bandcamp", albumUrl),
+    ).rejects.toBe("link failed");
+    expect(invalidateMock).not.toHaveBeenCalled();
+    expect(getArtistAlbumSourcesMock).not.toHaveBeenCalled();
+    expect(useMissingTracksStore.getState().shown.has("A")).toBe(false);
+  });
+
+  it("unlink success invalidates once and removes the album from shown", async () => {
+    unlinkAlbumSourceMock.mockResolvedValue(undefined);
+    getArtistAlbumSourcesMock.mockResolvedValue([]);
+    useMissingTracksStore.setState({ artist: "Artist", shown: new Set(["A"]) });
+    await useMissingTracksStore.getState().unlink("Artist", "A");
+
+    expect(unlinkAlbumSourceMock).toHaveBeenCalledWith("Artist", "A");
+    expect(invalidateMock).toHaveBeenCalledTimes(1);
+    expect(useMissingTracksStore.getState().shown.has("A")).toBe(false);
+    expect(getArtistAlbumSourcesMock).toHaveBeenCalledWith("Artist");
+  });
+
+  it("unlink failure does not invalidate and keeps the album shown", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    unlinkAlbumSourceMock.mockRejectedValue("unlink failed");
+    useMissingTracksStore.setState({ artist: "Artist", shown: new Set(["A"]) });
+    await useMissingTracksStore.getState().unlink("Artist", "A");
+
+    expect(error).toHaveBeenCalled();
+    expect(invalidateMock).not.toHaveBeenCalled();
+    expect(useMissingTracksStore.getState().shown.has("A")).toBe(true);
   });
 });

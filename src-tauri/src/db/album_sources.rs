@@ -38,8 +38,9 @@ pub struct NewAlbumSource {
     pub fetched_at: i64,
 }
 
-/// Name data of one library song (see `Database::list_song_meta`).
-pub type SongMeta = (String, String, String, String);
+/// Name data of one library song (see `Database::list_song_meta`): album artist, album, title, canonical slug,
+/// track number.
+pub type SongMeta = (String, String, String, String, Option<i32>);
 
 /// The three columns of a library song that identify it on a platform.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
@@ -101,6 +102,21 @@ impl Database {
         Ok(())
     }
 
+    /// Makes `src` the only source of its library album (`album_artist`, `album`): rows of the same album from
+    /// another platform album (an earlier download or link) are removed, then `src` is upserted.
+    pub async fn replace_album_source(&self, src: &NewAlbumSource) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "DELETE FROM album_sources
+             WHERE album_artist = ? COLLATE NOCASE AND album = ? COLLATE NOCASE AND album_key <> ?",
+        )
+        .bind(src.album_artist.trim())
+        .bind(src.album.trim())
+        .bind(&src.album_key)
+        .execute(&self.pool)
+        .await?;
+        self.upsert_album_source(src).await
+    }
+
     pub async fn get_album_source_by_key(
         &self,
         album_key: &str,
@@ -133,9 +149,9 @@ impl Database {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
-    /// (album artist, album, title, canonical slug) of every library song: what a library album owns by name.
+    /// (album artist, album, title, canonical slug, track number) of every library song: what a library album owns by name.
     pub async fn list_song_meta(&self) -> Result<Vec<SongMeta>, sqlx::Error> {
-        sqlx::query_as("SELECT album_artist, album, title, canonical_track_slug FROM songs")
+        sqlx::query_as("SELECT album_artist, album, title, canonical_track_slug, track_number FROM songs")
             .fetch_all(&self.pool)
             .await
     }
@@ -379,6 +395,53 @@ mod tests {
         assert_eq!(local.album, "Local Album");
         assert_eq!(local.source_url, None);
         assert_eq!(local.source_item_id, None);
+    }
+
+    #[tokio::test]
+    async fn replace_album_source_removes_other_rows_of_the_same_album_case_insensitively() {
+        let db = db().await;
+        db.upsert_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        db.upsert_album_source(&source("k2", "artist", "ALBUM")).await.unwrap();
+        db.upsert_album_source(&source("k3", "Artist", "Other")).await.unwrap();
+        db.upsert_album_source(&source("k4", "Other Artist", "Album")).await.unwrap();
+
+        db.replace_album_source(&source("k5", "Artist", "Album")).await.unwrap();
+
+        assert!(db.get_album_source_by_key("k1").await.unwrap().is_none());
+        assert!(db.get_album_source_by_key("k2").await.unwrap().is_none());
+        assert!(db.get_album_source_by_key("k3").await.unwrap().is_some(), "another album of the artist is kept");
+        assert!(db.get_album_source_by_key("k4").await.unwrap().is_some(), "another artist is kept");
+        assert_eq!(db.get_album_source_by_key("k5").await.unwrap().expect("new row").album, "Album");
+        assert_eq!(db.list_album_sources_for_artist("Artist").await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn replace_album_source_trims_the_album_of_the_new_source() {
+        let db = db().await;
+        db.upsert_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        db.replace_album_source(&source("k2", "  Artist ", " album ")).await.unwrap();
+        assert!(db.get_album_source_by_key("k1").await.unwrap().is_none());
+        assert!(db.get_album_source_by_key("k2").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn replace_album_source_updates_the_row_of_the_same_key_in_place() {
+        let db = db().await;
+        db.upsert_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        let mut newer = source("k1", "Artist", "Album");
+        newer.album_url = "https://new/url".to_string();
+        db.replace_album_source(&newer).await.unwrap();
+
+        let rows = db.list_album_sources_for_artist("Artist").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].album_url, "https://new/url");
+    }
+
+    #[tokio::test]
+    async fn replace_album_source_inserts_when_nothing_is_stored() {
+        let db = db().await;
+        db.replace_album_source(&source("k1", "Artist", "Album")).await.unwrap();
+        assert!(db.get_album_source_by_key("k1").await.unwrap().is_some());
     }
 
     #[tokio::test]

@@ -166,6 +166,9 @@ fn owns_track(
         return true;
     }
     let title = decode_html_entities(&track.title);
+    if index.contains_numbered(track.track_number, &title) {
+        return true;
+    }
     let artist = track.artists.first().map_or(album_artist, String::as_str);
     index.contains_by_meta(artist, &title)
         || index.contains_by_meta(album_artist, &title)
@@ -557,6 +560,87 @@ mod tests {
         let index = index_of(&[song("youtube", Some("https://example.com/other"), Some("aaa"))]);
         let missing = compute_missing(Platform::Youtube, "A", &tracks, &index);
         assert_eq!(missing.iter().map(|t| t.index).collect::<Vec<_>>(), vec![1]);
+    }
+
+    fn numbered_track(number: i32, title: &str, url: &str) -> AlbumTrackInfo {
+        AlbumTrackInfo {
+            index: (number - 1) as usize,
+            title: title.to_string(),
+            artists: vec![],
+            track_number: Some(number),
+            url: url.to_string(),
+            available: true,
+            note: None,
+            duration_ms: None,
+        }
+    }
+
+    /// Titles of the library album, as stored: the song at position i+1 has this (track number, title).
+    const LIBRARY_TITLES: [&str; 10] = [
+        "Digeridoo",
+        "Bonfire",
+        "Fell Down",
+        "Hall of Mirrors",
+        "Sea Mist",
+        "Pipe Dream (Live In Cornwall) (Cr7e Version)",
+        "Old Stone",
+        "Crossing",
+        "Blue Hour",
+        "Last Light",
+    ];
+
+    /// Titles of the same album on the platform: remaster / version suffixes in brackets, or a case change.
+    const PLATFORM_TITLES: [&str; 10] = [
+        "Digeridoo (2022 Remaster)",
+        "Bonfire (Live)",
+        "Fell Down [Remastered]",
+        "Hall of Mirrors (Mono)",
+        "Sea Mist (2022 Remaster)",
+        "Pipe Dream (Cr7E Version, Live In Cornwall)",
+        "Old Stone (Demo)",
+        "Crossing (Remix)",
+        "Blue Hour (Radio Edit)",
+        "LAST LIGHT (2022 Remaster)",
+    ];
+
+    fn digeridoo_index() -> LibraryIndex {
+        LibraryIndex::default().with_numbered_titles(
+            LIBRARY_TITLES.iter().enumerate().map(|(i, t)| (i as i32 + 1, t.to_string())),
+        )
+    }
+
+    fn digeridoo_tracks() -> Vec<AlbumTrackInfo> {
+        PLATFORM_TITLES
+            .iter()
+            .enumerate()
+            .map(|(i, t)| numbered_track(i as i32 + 1, t, &format!("https://yt.test/watch?v=vid{}", i + 1)))
+            .collect()
+    }
+
+    #[test]
+    fn remastered_and_versioned_tracks_are_owned_by_track_number_and_title() {
+        let tracks = digeridoo_tracks();
+        let index = digeridoo_index();
+        assert_eq!(count_owned(Platform::Youtube, "Artist", &tracks, &index), (10, 10));
+        assert!(compute_missing(Platform::Youtube, "Artist", &tracks, &index).is_empty());
+    }
+
+    #[test]
+    fn a_track_whose_number_matches_but_whose_title_differs_stays_missing() {
+        let tracks = vec![numbered_track(1, "Another Song (2022 Remaster)", "https://yt.test/watch?v=x")];
+        let index = LibraryIndex::default().with_numbered_titles([(1, "Digeridoo".to_string())]);
+        assert_eq!(compute_missing(Platform::Youtube, "Artist", &tracks, &index).len(), 1);
+        assert_eq!(count_owned(Platform::Youtube, "Artist", &tracks, &index), (0, 1));
+    }
+
+    #[test]
+    fn a_track_without_a_track_number_is_not_matched_by_title_alone() {
+        let mut track = numbered_track(1, "Digeridoo (2022 Remaster)", "https://yt.test/watch?v=x");
+        track.track_number = None;
+        let tracks = vec![track];
+        let index = LibraryIndex::default().with_numbered_titles([(1, "Digeridoo".to_string())]);
+        assert_eq!(compute_missing(Platform::Youtube, "Artist", &tracks, &index).len(), 1);
+        assert_eq!(count_owned(Platform::Youtube, "Artist", &tracks, &index), (0, 1));
     }
 
     fn titled(title: &str, url: &str, artists: &[&str]) -> AlbumTrackInfo {

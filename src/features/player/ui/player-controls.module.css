@@ -275,8 +275,27 @@
     animation: playerSpin 700ms linear infinite;
 }
 
+/* shown in place of the download icon while the current stream song downloads */
+.actionSpinner {
+    display: block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: playerSpin 700ms linear infinite;
+}
+
 @keyframes playerSpin {
     to {
         transform: rotate(360deg);
     }
+}
+
+/* the player's download button keeps roomier paddings than the rows (36px button) */
+.downloadSplit {
+    --split-pad-icon-left: 7.9px;
+    --split-pad-icon-right: 5px;
+    --split-pad-gear-left: 3.6px;
+    --split-pad-gear-right: 6.5px;
 }

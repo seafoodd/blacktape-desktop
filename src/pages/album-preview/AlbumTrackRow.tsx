@@ -1,6 +1,6 @@
 import type { MouseEvent } from "react";
 import clsx from "clsx";
-import { BiDownload } from "react-icons/bi";
+import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
 import { MdPause, MdPlayArrow } from "react-icons/md";
 import rowStyles from "@/features/library/ui/song-list-item/song-list-item.module.css";
 import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
@@ -31,6 +31,8 @@ export interface AlbumTrackRowProps {
   onSelect: (e: MouseEvent) => void;
   onPlay: () => void;
   onDownload: () => void;
+  /** Opens the quality menu for this track. */
+  onChooseQuality: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }
 
@@ -47,6 +49,7 @@ export const AlbumTrackRow = ({
   onSelect,
   onPlay,
   onDownload,
+  onChooseQuality,
   onContextMenu,
 }: AlbumTrackRowProps) => {
   const currentSong = useAudioStore((s) => s.currentSong);
@@ -128,20 +131,18 @@ export const AlbumTrackRow = ({
               <span className={styles.spinner} role="status" aria-label="Downloading" />
             ))}
           {status.kind === "download" && (
-            <button
-              type="button"
-              className={styles.downloadBtn}
-              title={`Download ${track.title}`}
-              aria-label={`Download ${track.title}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                flyToLibrary(e.currentTarget.getBoundingClientRect(), cover ?? undefined);
-                onDownload();
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              <BiDownload size={18} />
-            </button>
+            <span onDoubleClick={(e) => e.stopPropagation()}>
+              <DownloadSplitButton
+                size={30}
+                className={styles.rowSplit}
+                title={`Download ${track.title}`}
+                onDownload={(e) => {
+                  flyToLibrary(e.currentTarget.getBoundingClientRect(), cover ?? undefined);
+                  onDownload();
+                }}
+                onChooseQuality={onChooseQuality}
+              />
+            </span>
           )}
         </div>
       </div>

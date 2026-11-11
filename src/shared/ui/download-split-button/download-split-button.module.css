@@ -1,0 +1,113 @@
+.split {
+    --split-size: 32px;
+    /* the gear's right padding; rows that line the gear up with a column cancel it with a negative margin.
+       A parent class may set --split-pad-* to change the paddings (the player keeps roomier ones) */
+    --split-gear-pad: var(--split-pad-gear-right, calc(var(--split-size) * 0.12));
+    display: inline-flex;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: var(--split-size);
+    /* on hover each half gets its own background; the gap between them is where the two shapes split */
+    gap: 2px;
+    color: var(--color-muted);
+    transition: color 50ms linear;
+
+    &:hover:not(.disabled) {
+        color: var(--color-text);
+    }
+}
+
+.main,
+.arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition:
+        opacity 50ms linear,
+        background-color 100ms linear;
+
+    &:disabled {
+        cursor: default;
+    }
+}
+
+/* rounded on the outer side, sharp corners where the two halves meet */
+.main {
+    border-radius: var(--radius-full, 999px) 0 0 var(--radius-full, 999px);
+    padding-left: var(--split-pad-icon-left, calc(var(--split-size) * 0.14));
+    padding-right: var(--split-pad-icon-right, calc(var(--split-size) * 0.06));
+
+    & svg {
+        width: calc(var(--split-size) * 0.62);
+        height: calc(var(--split-size) * 0.62);
+    }
+}
+
+.arrow {
+    border-radius: 0 var(--radius-full, 999px) var(--radius-full, 999px) 0;
+    padding-left: var(--split-pad-gear-left, calc(var(--split-size) * 0.06));
+    padding-right: var(--split-gear-pad);
+
+    & svg {
+        width: calc(var(--split-size) * 0.42);
+        height: calc(var(--split-size) * 0.42);
+    }
+}
+
+.split:hover:not(.disabled) .main,
+.split:hover:not(.disabled) .arrow,
+.split:has(:focus-visible) .main,
+.split:has(:focus-visible) .arrow {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* the half under the pointer stays bright, the other one dims a little */
+.split:hover:not(.disabled) .main:not(:hover),
+.split:hover:not(.disabled) .arrow:not(:hover) {
+    opacity: 0.7;
+}
+
+.solid {
+    color: #fff;
+
+    &:hover:not(.disabled) {
+        color: #fff;
+    }
+
+    & .main,
+    & .arrow {
+        background-color: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+    }
+
+    &:hover:not(.disabled) .main,
+    &:hover:not(.disabled) .arrow {
+        background-color: rgba(0, 0, 0, 0.8);
+    }
+}
+
+/* revealGear: only the download icon at rest; on hover the gear slides out of it to the right (its place is kept,
+   so nothing around the button moves) */
+.reveal .arrow {
+    opacity: 0;
+    transform: translateX(-40%);
+    transition:
+        opacity 160ms ease-out,
+        transform 160ms ease-out,
+        background-color 100ms linear;
+}
+
+.reveal:hover:not(.disabled) .arrow,
+.reveal:has(:focus-visible) .arrow {
+    opacity: 1;
+    transform: none;
+}
+
+.disabled {
+    opacity: 0.4;
+}

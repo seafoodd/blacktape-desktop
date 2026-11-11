@@ -546,33 +546,6 @@
     text-align: center;
 }
 
-.badge {
-    flex-shrink: 0;
-    padding: 1px 6px;
-    background-color: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.5);
-    font-size: var(--font-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    border-radius: var(--radius-xs);
-}
-
-/* brand tints, kept muted so badges do not steal attention */
-.badgeYoutube {
-    background-color: rgba(255, 70, 60, 0.14);
-    color: rgba(255, 120, 110, 0.75);
-}
-
-.badgeBandcamp {
-    background-color: rgba(29, 160, 195, 0.15);
-    color: rgba(90, 190, 215, 0.8);
-}
-
-.badgeSoundcloud {
-    background-color: rgba(255, 110, 20, 0.15);
-    color: rgba(255, 150, 80, 0.8);
-}
-
 .filtersToggle {
     position: relative;
     display: inline-flex;
@@ -746,12 +719,27 @@
     background-color: rgba(255, 255, 255, 0.1);
 }
 
-.libraryMark {
-    /* same box as .rowDownloadBtn (20px icon + 6px padding) so the check lines up with the download buttons */
+/* the download column of a track row: as wide as the download button with its gear, content on the right, so
+   the check of a song in the library ends where the gear ends */
+.rowDownloadCell {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
+    width: 56px;
+}
+
+/* the gear of a row ends where the check of a song in the library ends (see .rowDownloadCell): cancel the
+   button's right padding (--split-gear-pad) and half of the 1px margin inside the gear glyph */
+.rowSplit {
+    margin-right: calc(-1 * var(--split-gear-pad) - 0.5px);
+}
+
+.libraryMark {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
     width: 32px;
     height: 32px;
     box-sizing: border-box;
@@ -768,6 +756,11 @@
     font-size: var(--font-sm);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+/* the percent of a row ends where the check and the gear of the other rows end */
+.progressRow {
+    justify-content: flex-end;
 }
 
 .progressBadge {
@@ -924,13 +917,34 @@
     cursor: pointer;
 }
 
-/* library badge of an album cover: top-left, on a dark disc so it reads over any artwork */
-.coverBadge {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    background-color: rgba(0, 0, 0, 0.6);
-    border-radius: 50%;
+/* a partly downloaded album: the dashed check sits where the download button shows on hover */
+.coverOverlayPartial {
+    display: grid;
+    justify-items: end;
+
+    & > * {
+        grid-area: 1 / 1;
+    }
+
+    & > :not(.partialMark) {
+        visibility: hidden;
+    }
+}
+
+.card:hover .coverOverlayPartial,
+.card:focus-within .coverOverlayPartial {
+    & > .partialMark {
+        visibility: hidden;
+    }
+
+    & > :not(.partialMark) {
+        visibility: visible;
+    }
+}
+
+/* the same colour as the check of a downloaded album */
+.partialBadge {
+    color: inherit;
 }
 
 /* album name inside the subline of a track: a link that opens the album */

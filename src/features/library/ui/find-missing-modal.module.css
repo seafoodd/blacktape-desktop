@@ -84,6 +84,26 @@
     white-space: nowrap;
 }
 
+.linked {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-md);
+    color: var(--color-text);
+}
+
+.linkedLabel {
+    color: var(--color-muted);
+}
+
+.metaRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
 .error {
     margin-top: 12px;
     font-size: var(--font-md);

@@ -6,7 +6,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 3px 12px;
-    height: 32px;
+    height: 36px;
     list-style: none;
     font-size: var(--font-md);
     cursor: default;
@@ -164,26 +164,17 @@
 .downloadButton {
     display: none;
     align-items: center;
-    justify-content: center;
-    /* the box of the three-dots icon of a song row: 24px with 3px around the 18px glyph */
-    width: 24px;
-    height: 24px;
-    padding: 3px;
-    box-sizing: border-box;
-    border: none;
-    border-radius: 100%;
-    background: transparent;
     color: inherit;
-    cursor: pointer;
-
-    &:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        color: white;
-    }
 }
 
 .row:hover .downloadButton {
     display: flex;
+}
+
+/* the gear ends where the durations of the other rows end: cancel the button's right padding (--split-gear-pad)
+   and half of the 1px margin inside the gear glyph (lines up best by eye) */
+.downloadSplit {
+    margin-right: calc(-1 * var(--split-gear-pad) - 0.5px);
 }
 
 /* Queued or downloading: the percent takes the place of the duration and the button; same look as the

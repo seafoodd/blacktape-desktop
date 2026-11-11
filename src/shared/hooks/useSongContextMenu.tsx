@@ -5,7 +5,8 @@ import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylis
 import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { refreshLibrary } from "@/shared/lib/libraryRefresh.ts";
 import { canRedownload as canRedownloadSong } from "@/shared/lib/platforms.ts";
 import { EditLyricsModal } from "@/features/player/ui/EditLyricsModal.tsx";
@@ -118,6 +119,13 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
         .writeText(text)
         .catch((e) => console.error("clipboard error: ", e));
     const canRedownload = canRedownloadSong(song.source, song.source_url);
+    const redownloadParams = (): StartDownloadParams => ({
+      platform: song.source,
+      downloadType: ItemType.Track,
+      url: song.source_url!,
+      artistName: song.album_artist || artistText,
+      title: song.title,
+    });
 
     items.push(
       { separator: true, label: "" },
@@ -176,15 +184,13 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
               action: () => {
                 useLibraryStore
                   .getState()
-                  .startDownload({
-                    platform: song.source,
-                    downloadType: ItemType.Track,
-                    url: song.source_url!,
-                    artistName: song.album_artist || artistText,
-                    title: song.title,
-                  })
+                  .startDownload(redownloadParams())
                   .catch((e) => console.error("re-download error: ", e));
               },
+            },
+            {
+              label: "Re-download as…",
+              action: () => openQualityMenu(redownloadParams()),
             },
           ]
         : []),

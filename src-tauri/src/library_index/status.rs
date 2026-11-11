@@ -20,6 +20,10 @@ pub struct RemoteRef {
     pub artist: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+    /// Album of a TRACK, when the UI knows it. The artist + title match then only counts songs of that album: a
+    /// live or compilation version of a song the library has from another album is not "downloaded".
+    #[serde(default)]
+    pub album: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -46,6 +50,21 @@ pub struct LibraryIndex {
     /// Normalized titles (see `candidates::normalize_text`) of the library songs by normalized album artist,
     /// for the fuzzy title match of songs that have no page url.
     pub titles: HashMap<String, Vec<String>>,
+    /// (track number, normalized title) of the songs of ONE library album (only a `scoped_index` has them).
+    pub numbered: HashSet<(i32, String)>,
+}
+
+/// True when `slugs` has the slug of `artist title`, or of the first artist of a track credited to several
+/// artists ("A, B"), which is how the library files it. Pure.
+pub fn slugs_contain(slugs: &HashSet<String>, artist: &str, title: &str) -> bool {
+    if slugs.is_empty() || title.trim().is_empty() {
+        return false;
+    }
+    let first = artist.split(',').next().unwrap_or(artist);
+    [artist, first]
+        .iter()
+        .filter(|a| !a.trim().is_empty())
+        .any(|a| slugs.contains(&make_canonical_slug(a, title)))
 }
 
 /// 0..=1 similarity of two strings by edit distance (1 = equal).
@@ -94,7 +113,7 @@ impl LibraryIndex {
                 }
             }
         }
-        Self { keys, slugs: HashSet::new(), titles: HashMap::new() }
+        Self { keys, ..Self::default() }
     }
 
     /// Adds the track slugs of the library (see `contains_by_meta`).
@@ -113,6 +132,27 @@ impl LibraryIndex {
             }
         }
         self
+    }
+
+    /// Adds the (track number, title) of the songs of one library album (see `contains_numbered`).
+    pub fn with_numbered_titles(mut self, rows: impl IntoIterator<Item = (i32, String)>) -> Self {
+        use crate::library_index::candidates::normalize_text;
+        for (number, title) in rows {
+            let title = normalize_text(&title);
+            if !title.is_empty() {
+                self.numbered.insert((number, title));
+            }
+        }
+        self
+    }
+
+    /// True when the album's song at `track_number` has this title once text in brackets, punctuation and case
+    /// are ignored: the same track from another platform ("Title (2022 Remaster)" for the library's "Title").
+    pub fn contains_numbered(&self, track_number: Option<i32>, title: &str) -> bool {
+        use crate::library_index::candidates::normalize_text;
+        let Some(number) = track_number else { return false };
+        let title = normalize_text(title);
+        !title.is_empty() && self.numbered.contains(&(number, title))
     }
 
     /// True when a song of this artist has (almost) this title: equal once text in brackets, punctuation and case
@@ -134,14 +174,7 @@ impl LibraryIndex {
     /// True when the library has a song with this artist and title (slug of `artist title`). A track credited to
     /// several artists ("A, B") is also tried with its first artist, which is how the library files it.
     pub fn contains_by_meta(&self, artist: &str, title: &str) -> bool {
-        if self.slugs.is_empty() || title.trim().is_empty() {
-            return false;
-        }
-        let first = artist.split(',').next().unwrap_or(artist);
-        [artist, first]
-            .iter()
-            .filter(|a| !a.trim().is_empty())
-            .any(|a| self.slugs.contains(&make_canonical_slug(a, title)))
+        slugs_contain(&self.slugs, artist, title)
     }
 
     /// True when the remote track is in the library (by url key, else by youtube item id).
@@ -304,6 +337,45 @@ mod tests {
         assert_eq!(r.url, "https://x");
     }
 
+    // ---- contains_numbered
+
+    #[test]
+    fn contains_numbered_matches_the_same_number_and_title_without_brackets_or_case() {
+        let index = LibraryIndex::default().with_numbered_titles([(1, "Digeridoo".to_string())]);
+        assert!(index.contains_numbered(Some(1), "Digeridoo"));
+        assert!(index.contains_numbered(Some(1), "Digeridoo (2022 Remaster)"));
+        assert!(index.contains_numbered(Some(1), "DIGERIDOO"));
+    }
+
+    #[test]
+    fn contains_numbered_ignores_brackets_on_the_library_side_too() {
+        let index = LibraryIndex::default()
+            .with_numbered_titles([(6, "Pipe Dream (Live In Cornwall) (Cr7e Version)".to_string())]);
+        assert!(index.contains_numbered(Some(6), "Pipe Dream (Cr7E Version, Live In Cornwall)"));
+    }
+
+    #[test]
+    fn contains_numbered_is_false_for_another_number_or_no_number() {
+        let index = LibraryIndex::default().with_numbered_titles([(6, "Pipe Dream".to_string())]);
+        assert!(!index.contains_numbered(Some(1), "Pipe Dream"));
+        assert!(!index.contains_numbered(None, "Pipe Dream"));
+    }
+
+    #[test]
+    fn contains_numbered_is_false_for_a_different_base_title_or_an_empty_title() {
+        let index = LibraryIndex::default()
+            .with_numbered_titles([(1, "Digeridoo".to_string()), (2, "(Live)".to_string())]);
+        assert!(!index.contains_numbered(Some(1), "Digeridoo Two"));
+        assert!(!index.contains_numbered(Some(1), ""));
+        assert!(!index.contains_numbered(Some(1), "(Remaster)"));
+        assert!(!index.contains_numbered(Some(2), "(Live)"), "a library title without base text is never stored");
+    }
+
+    #[test]
+    fn contains_numbered_is_false_on_the_default_index() {
+        assert!(!LibraryIndex::default().contains_numbered(Some(1), "Digeridoo"));
+    }
+
     // ---- edit_similarity
 
     #[test]
@@ -381,5 +453,37 @@ mod tests {
             .with_titles([("A".to_string(), "Song Title".to_string())]);
         assert!(index.contains_by_fuzzy_title("A, B", "Song Title"));
         assert!(!index.contains_by_fuzzy_title("B, C", "Song Title"));
+    }
+
+    // ---- slugs_contain
+
+    fn slugs_of(artist: &str, title: &str) -> HashSet<String> {
+        HashSet::from([make_canonical_slug(artist, title)])
+    }
+
+    #[test]
+    fn slugs_contain_finds_the_exact_artist_and_title() {
+        assert!(slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_finds_the_first_of_several_artists() {
+        assert!(slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath, Ozzy Osbourne", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_an_empty_set() {
+        assert!(!slugs_contain(&HashSet::new(), "Black Sabbath", "Iron Man"));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_an_empty_title() {
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Black Sabbath", "   "));
+    }
+
+    #[test]
+    fn slugs_contain_is_false_for_another_artist() {
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Other Artist", "Iron Man"));
+        assert!(!slugs_contain(&slugs_of("Black Sabbath", "Iron Man"), "Other Artist, Someone", "Iron Man"));
     }
 }

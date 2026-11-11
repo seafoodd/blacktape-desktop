@@ -10,8 +10,6 @@ import { StreamButton } from "@/features/preview/ui/StreamButton.tsx";
 import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { searchItemToRemoteTrack } from "@/shared/lib/remoteTrack.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
-import { remoteRefOf, useAlbumStatus } from "@/shared/hooks/useDownloadStatus.ts";
-import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { PlatformBadge } from "./PlatformBadge.tsx";
 import {
   formatDurationCell,
@@ -120,7 +118,6 @@ interface AlbumCardProps {
 }
 
 export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) => {
-  const albumState = useAlbumStatus(remoteRefOf(item)).state;
   return (
     <article
       className={clsx(styles.card, styles.cardClickable)}
@@ -136,12 +133,7 @@ export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) =
     >
       <div className={styles.coverWrap}>
         <Cover src={item.img} alt={item.name} className={styles.cover} size={240} />
-        {/* Fully downloaded albums show the check in place of the download button. */}
-        <DownloadStatusBadge
-          state={albumState === "partial" ? "partial" : "none"}
-          size={20}
-          className={styles.coverBadge}
-        />
+        {/* the library state (check / dashed check) sits in place of the download button */}
         <DownloadButton item={item} progress={progress} variant="overlay" />
       </div>
       <div className={styles.cardText}>

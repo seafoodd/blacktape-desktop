@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
-import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { coverSrc } from "@/shared/lib/cover";
 import placeholderAlbumImage from "@/assets/images/album_cover_placeholder_dark.jpg";
@@ -498,6 +499,20 @@ const ArtistAlbums = () => {
       ...missingAlbumMenuItems(sourceOf(album.title), isMissingShown(album.title), {
         toggle: () => toggleMissing(album.title),
         download: () => void downloadMissing(album.title),
+        downloadAs: () => {
+          const source = sourceOf(album.title);
+          if (!source) return;
+          openQualityMenu(
+            {
+              platform: source.platform,
+              downloadType: ItemType.Album,
+              url: source.source_url,
+              artistName: selectedTab,
+              title: album.title,
+            },
+            { start: (format) => void downloadMissing(album.title, format) },
+          );
+        },
         find: () =>
           openModal(<FindMissingModal albumArtist={selectedTab} album={album.title} />),
         unlink: () => void unlinkMissing(selectedTab, album.title),

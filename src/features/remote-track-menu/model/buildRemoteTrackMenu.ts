@@ -11,6 +11,8 @@ import type { RemoteTrackMenuOptions } from "./remoteTrackMenuStore.ts";
 export interface RemoteTrackMenuActions {
   /** Starts the download of the track; the host passes `remoteTrackDownloadParams(track)` to `startDownload`. */
   download: (track: RemoteTrack) => void;
+  /** Opens the quality menu for the same download. */
+  downloadAs: (track: RemoteTrack) => void;
   addToQueue: (track: RemoteTrack) => void;
   playNext: (track: RemoteTrack) => void;
   copyLink: (url: string) => void;
@@ -46,7 +48,7 @@ export function remoteTrackDownloadParams(track: RemoteTrack): StartDownloadPara
 }
 
 /**
- * Items of the context menu of a remote track: Download (or "Downloaded", which has no action), Add to queue,
+ * Items of the context menu of a remote track: Download and Download as… (or "Downloaded", which has no action), Add to queue,
  * Play next, a separator, Copy link, Open on <platform>. `options.list` is not needed for these items.
  */
 export function buildRemoteTrackMenu(
@@ -58,9 +60,12 @@ export function buildRemoteTrackMenu(
   const extra = options.extraItems?.length ? [...options.extraItems, { label: "", separator: true }] : [];
   return [
     ...extra,
-    downloaded
-      ? { label: "Downloaded", disabled: true }
-      : { label: "Download", action: () => actions.download(track) },
+    ...(downloaded
+      ? [{ label: "Downloaded", disabled: true }]
+      : [
+          { label: "Download", action: () => actions.download(track) },
+          { label: "Download as…", action: () => actions.downloadAs(track) },
+        ]),
     { label: "Add to queue", action: () => actions.addToQueue(track) },
     { label: "Play next", action: () => actions.playNext(track) },
     { label: "", separator: true },
