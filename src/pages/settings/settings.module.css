@@ -17,8 +17,10 @@
     border-bottom: 1px solid var(--color-border);
     background-color: var(--bg-surface);
     flex-shrink: 0;
+    user-select: none;
 }
 
+/* Has its own drag region: Tauri drags only from the element that carries the attribute. */
 .title {
     font-size: var(--font-md);
     font-weight: 600;

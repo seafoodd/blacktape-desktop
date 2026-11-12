@@ -134,7 +134,7 @@ incremental = true   # Cache unchanged crates between bench runs
 panic = "abort"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader", "Win32_UI_Controls"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 winapi = { version = "0.3.9", features = ["fileapi", "winnt"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

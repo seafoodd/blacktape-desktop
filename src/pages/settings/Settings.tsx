@@ -94,7 +94,9 @@ export const Settings = () => {
   return (
     <div data-tauri-drag-region className={styles.container}>
       <header data-tauri-drag-region className={styles.header}>
-        <h1 className={styles.title}>Settings</h1>
+        <h1 data-tauri-drag-region className={styles.title}>
+          Settings
+        </h1>
         <WindowControls />
       </header>
 
