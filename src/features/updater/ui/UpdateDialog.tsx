@@ -1,4 +1,5 @@
 import { installLabel, useUpdateStore } from "../model/updateStore";
+import { parseReleaseNotes } from "@/features/updater/model/releaseNotes.ts";
 import { useModalStore } from "@/shared/store/modalStore";
 import styles from "./updater.module.css";
 
@@ -14,7 +15,15 @@ export const UpdateDialog = () => {
       <p className={styles.muted}>
         The app restarts to finish the update. Playback stops.
       </p>
-      {notes && <div className={styles.notes}>{notes}</div>}
+      {notes && (
+        <div className={styles.notes}>
+          {parseReleaseNotes(notes).map((line, i) => (
+            <p key={i} className={styles[line.kind]}>
+              {line.text}
+            </p>
+          ))}
+        </div>
+      )}
       {status === "error" && error && <p className={styles.error}>{error}</p>}
       <div className={styles.actions}>
         <button className={styles.secondary} onClick={closeModal} disabled={busy}>
