@@ -36,30 +36,60 @@ select option {
     color: var(--color-text);
 }
 
-/* Linux gives a window without decorations no frame, rounded corners or shadow, so the settings window and the
-   main window run into each other. The app draws a rounded edge itself (see windowFrame.ts); the window is
-   transparent, so the tint moves from <html>, whose background always fills the whole window, to <body>. */
-:root[data-platform="linux"] {
-    --window-radius: 10px;
-    background-color: transparent;
+/* WebKitGTK (Linux) draws native sliders and checkboxes in the system's accent colour (orange on Linux Mint) and
+   ignores accent-color, so the app draws them itself. :where() keeps these at zero specificity: a class that styles
+   its own control (the player's bars, the trash list) still wins. A slider's filled part comes from --fill. */
+:where(input[type="range"]) {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right, var(--color-primary) var(--fill, 0%), rgba(255, 255, 255, 0.15) 0);
+    cursor: pointer;
 }
 
-:root[data-platform="linux"][data-maximized] {
-    --window-radius: 0px;
+:where(input[type="range"])::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background-color: var(--color-text);
+    border: none;
 }
 
-:root[data-platform="linux"] body {
-    background-color: var(--bg-background);
-    border-radius: var(--window-radius);
-    clip-path: inset(0 round var(--window-radius));
+:where(input[type="checkbox"]) {
+    -webkit-appearance: none;
+    appearance: none;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    background: transparent center / 10px 8px no-repeat;
+    cursor: pointer;
 }
 
+:where(input[type="checkbox"]:checked) {
+    border-color: var(--color-primary);
+    background-color: var(--color-primary);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='8' viewBox='0 0 10 8'%3E%3Cpath d='M1 4l3 3 5-6' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+:where(input[type="range"], input[type="checkbox"]):disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Linux gives a window without decorations no frame or shadow, so the settings window and the main window run into
+   each other: the app draws a thin edge (see windowFrame.ts). Corners stay square: rounding needs a transparent
+   window, and many Linux desktops paint its transparent corners black. */
 :root[data-platform="linux"]:not([data-maximized]) body::after {
     content: "";
     position: fixed;
     inset: 0;
     border: 1px solid var(--color-border);
-    border-radius: var(--window-radius);
     pointer-events: none;
     z-index: 2147483647;
 }

@@ -6,7 +6,7 @@ export function isLinuxDesktop(userAgent: string): boolean {
 }
 
 /**
- * On Linux, marks the page so globals.css draws the window's rounded edge, and drops the edge while the window is
+ * On Linux, marks the page so globals.css draws the window's edge, and drops the edge while the window is
  * maximized. Windows and macOS draw their own frame around a window without decorations.
  */
 export async function setupWindowFrame(

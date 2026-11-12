@@ -122,6 +122,10 @@
     cursor: pointer;
 }
 
+.slider {
+    width: 120px;
+}
+
 .actionButton {
     background-color: var(--bg-background);
     color: var(--color-text);
