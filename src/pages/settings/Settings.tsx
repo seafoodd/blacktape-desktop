@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { WindowControls } from "@/layouts/WindowControls";
 import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
@@ -183,6 +183,8 @@ export const Settings = () => {
                   max="1"
                   step="0.05"
                   value={bgOpacity}
+                  className={styles.slider}
+                  style={{ "--fill": `${bgOpacity * 100}%` } as CSSProperties}
                   onChange={(e) => setBgOpacity(parseFloat(e.target.value))}
                 />
               </div>
