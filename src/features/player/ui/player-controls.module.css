@@ -16,13 +16,22 @@
     }
 }
 
+/* Three columns: the song stays centred while there is room and shrinks (its text ends in "…")
+   instead of sliding under the controls when the window is narrow. */
 .innerBlock {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+    column-gap: 16px;
     height: 100%;
     width: 100%;
     align-items: center;
     padding-inline: 12px;
     overflow: hidden;
+}
+
+.leftBlock {
+    display: flex;
+    align-items: center;
 }
 
 .progressBar {
@@ -65,9 +74,7 @@
     white-space: nowrap;
     margin-left: 20px;
     font-size: var(--font-lg);
-    /*width: 10px;*/
-    width: 100%;
-    max-width: 120px;
+    font-variant-numeric: tabular-nums;
 }
 
 .leftControls {
@@ -92,18 +99,16 @@
 }
 
 .currentSongBlock {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-
     display: flex;
+    align-items: center;
+    min-width: 0;
     gap: 12px;
     max-width: 40vw;
     overflow: hidden;
 }
 
 .currentSongCover {
+    flex-shrink: 0;
     width: 48px;
     height: 48px;
 }
@@ -139,9 +144,6 @@
 }
 
 .albumLink {
-    color: inherit;
-    font: inherit;
-    padding: 0;
     cursor: pointer;
 
     &:hover {
@@ -186,7 +188,7 @@
 .rightControls {
     display: flex;
     align-items: center;
-    margin-left: auto;
+    justify-self: end;
     gap: 16px;
 }
 

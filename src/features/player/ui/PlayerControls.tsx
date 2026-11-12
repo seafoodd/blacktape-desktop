@@ -148,42 +148,44 @@ export const PlayerControls = () => {
         }}
       />
       <div className={styles.innerBlock}>
-        <div className={styles.leftControls}>
-          <button
-            onClick={() => previous()}
-            className={styles.leftControl}
-            disabled={!currentSong}
-          >
-            <MdSkipPrevious />
-          </button>
-          <button
-            className={styles.leftControl}
-            onClick={togglePlay}
-            disabled={!currentSong}
-          >
-            {streamLoading ? (
-              <span
-                className={styles.loadingSpinner}
-                role="status"
-                aria-label="Loading stream"
-              />
-            ) : isPlaying ? (
-              <MdPause />
-            ) : (
-              <MdPlayArrow />
-            )}
-          </button>
-          <button
-            onClick={() => next()}
-            className={styles.leftControl}
-            disabled={!currentSong}
-          >
-            <MdSkipNext />
-          </button>
-        </div>
-        <div className={styles.progress}>
-          {formatDuration(currentTime)} /{" "}
-          {currentSong ? formatDuration(currentSong.duration_ms) : "0:00"}
+        <div className={styles.leftBlock}>
+          <div className={styles.leftControls}>
+            <button
+              onClick={() => previous()}
+              className={styles.leftControl}
+              disabled={!currentSong}
+            >
+              <MdSkipPrevious />
+            </button>
+            <button
+              className={styles.leftControl}
+              onClick={togglePlay}
+              disabled={!currentSong}
+            >
+              {streamLoading ? (
+                <span
+                  className={styles.loadingSpinner}
+                  role="status"
+                  aria-label="Loading stream"
+                />
+              ) : isPlaying ? (
+                <MdPause />
+              ) : (
+                <MdPlayArrow />
+              )}
+            </button>
+            <button
+              onClick={() => next()}
+              className={styles.leftControl}
+              disabled={!currentSong}
+            >
+              <MdSkipNext />
+            </button>
+          </div>
+          <div className={styles.progress}>
+            {formatDuration(currentTime)} /{" "}
+            {currentSong ? formatDuration(currentSong.duration_ms) : "0:00"}
+          </div>
         </div>
 
         <div className={styles.currentSongBlock}>
@@ -226,14 +228,22 @@ export const PlayerControls = () => {
                   {currentSong.album_artist}
                   {currentSong.album && " • "}
                   {target ? (
-                    <button
-                      type="button"
+                    // A span, not a button: a button is one unbreakable box, so a long album name
+                    // was cut away whole and left an empty gap instead of ending in "…".
+                    <span
+                      role="button"
+                      tabIndex={0}
                       className={styles.albumLink}
                       onClick={openAlbum}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        openAlbum();
+                      }}
                       title="Open the album"
                     >
                       {currentSong.album}
-                    </button>
+                    </span>
                   ) : (
                     currentSong.album
                   )}
