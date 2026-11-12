@@ -2,7 +2,9 @@
 //!
 //! Windows: acrylic through the window accent API, which keeps the blur while the window is not
 //! focused. A window without decorations shows it as flat black unless the DWM frame is extended
-//! over the whole client area, so that is done together with the effect.
+//! over the whole client area, so that is done together with the effect. Windows draws the
+//! native caption buttons into that extended frame; they show through the app's own header while
+//! the window is maximized, so the caption style is dropped while it is maximized and blurred.
 //! macOS: vibrancy (needs `macOSPrivateApi`, which the transparent window needs anyway).
 //! Other platforms have no window effects in Tauri; the setting is hidden there.
 
@@ -28,11 +30,21 @@ pub fn set_window_blur<R: Runtime>(
 #[cfg(target_os = "windows")]
 mod platform {
     use std::ffi::c_void;
-    use tauri::{Runtime, WebviewWindow};
+    use std::sync::{Mutex, PoisonError};
+    use tauri::{Runtime, WebviewWindow, WindowEvent};
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
     use windows_sys::Win32::UI::Controls::MARGINS;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+    };
+
+    /// Labels of the windows that are blurred now.
+    static BLURRED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    /// Labels of the windows that already re-check their caption on every resize.
+    static WATCHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     const ACCENT_DISABLED: u32 = 0;
     const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
@@ -70,7 +82,80 @@ mod platform {
         // The legacy accent API, not the Windows 11 system backdrop (`Effect::Acrylic`): the
         // backdrop turns into a flat grey fill whenever the window loses focus, the accent stays.
         set_accent(hwnd, accent_policy(enabled, tint))?;
-        extend_frame(hwnd, frame_margin(enabled))
+        extend_frame(hwnd, frame_margin(enabled))?;
+
+        let label = window.label().to_string();
+        {
+            let mut blurred = BLURRED.lock().unwrap_or_else(PoisonError::into_inner);
+            blurred.retain(|l| *l != label);
+            if enabled {
+                blurred.push(label.clone());
+            }
+        }
+        let first_time = {
+            let mut watched = WATCHED.lock().unwrap_or_else(PoisonError::into_inner);
+            let new = !watched.contains(&label);
+            if new {
+                watched.push(label);
+            }
+            new
+        };
+        if first_time {
+            // Maximizing or restoring rebuilds the window style, so it is checked after each one.
+            let watched = window.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Resized(_)) {
+                    sync_caption(&watched);
+                }
+            });
+        }
+        sync_caption(window);
+        Ok(())
+    }
+
+    /// Whether the window is blurred and maximized: then it must have no caption, or Windows
+    /// draws its caption buttons into the blurred frame behind the app's header.
+    pub(super) fn hide_caption(blurred: bool, maximized: bool) -> bool {
+        blurred && maximized
+    }
+
+    /// The window style with the caption removed or put back.
+    pub(super) fn caption_style(style: u32, hide: bool) -> u32 {
+        if hide {
+            style & !WS_CAPTION
+        } else {
+            style | WS_CAPTION
+        }
+    }
+
+    fn sync_caption<R: Runtime>(window: &WebviewWindow<R>) {
+        let Ok(handle) = window.hwnd() else { return };
+        let hwnd = handle.0 as HWND;
+        let blurred = BLURRED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|l| l == window.label());
+        let maximized = window.is_maximized().unwrap_or(false);
+        // SAFETY: `hwnd` is the live handle of this process's window.
+        let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
+        let wanted = caption_style(style, hide_caption(blurred, maximized));
+        if wanted == style {
+            return;
+        }
+        // SAFETY: as above; SWP_FRAMECHANGED makes Windows apply the new style, nothing moves.
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, wanted as isize);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
     }
 
     /// (state, flags, ABGR tint) for the window accent.
@@ -215,6 +300,25 @@ mod tests {
         assert_eq!(state, 4);
         assert_eq!(tint, 0x0115_100F);
         assert_ne!(tint >> 24, 0, "acrylic ignores a fully transparent tint");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn caption_is_hidden_only_while_blurred_and_maximized() {
+        assert!(platform::hide_caption(true, true));
+        assert!(!platform::hide_caption(true, false));
+        assert!(!platform::hide_caption(false, true));
+        assert!(!platform::hide_caption(false, false));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn caption_style_removes_and_restores_only_the_caption_bits() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{WS_CAPTION, WS_SYSMENU, WS_THICKFRAME};
+        let style = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
+        let hidden = platform::caption_style(style, true);
+        assert_eq!(hidden, WS_SYSMENU | WS_THICKFRAME);
+        assert_eq!(platform::caption_style(hidden, false), style);
     }
 
     #[cfg(target_os = "windows")]
