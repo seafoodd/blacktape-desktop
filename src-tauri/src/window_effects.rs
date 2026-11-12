@@ -32,14 +32,18 @@ mod platform {
     use std::ffi::c_void;
     use std::sync::{Mutex, PoisonError};
     use tauri::{Runtime, WebviewWindow, WindowEvent};
-    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
     use windows_sys::Win32::UI::Controls::MARGINS;
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCACTIVATE, WS_CAPTION,
     };
+
+    /// Id of the subclass below; any value unique to this module.
+    const SUBCLASS_ID: usize = 0x0B1A_C47E;
 
     /// Labels of the windows that are blurred now.
     static BLURRED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -101,6 +105,14 @@ mod platform {
             new
         };
         if first_time {
+            let raw = hwnd as isize;
+            // A subclass must be installed from the window's own thread.
+            window
+                .run_on_main_thread(move || {
+                    // SAFETY: `raw` is this process's live window; the procedure is a plain function.
+                    unsafe { SetWindowSubclass(raw as HWND, Some(subclass_proc), SUBCLASS_ID, 0) };
+                })
+                .map_err(|e| format!("window subclass: {e}"))?;
             // Maximizing or restoring rebuilds the window style, so it is checked after each one.
             let watched = window.clone();
             window.on_window_event(move |event| {
@@ -125,6 +137,28 @@ mod platform {
             style & !WS_CAPTION
         } else {
             style | WS_CAPTION
+        }
+    }
+
+    /// Without a caption Windows paints an old-style title bar over the app's header when the
+    /// window gains or loses focus. lParam -1 on WM_NCACTIVATE tells it not to repaint that area.
+    pub(super) fn skip_frame_repaint(msg: u32, style: u32) -> bool {
+        msg == WM_NCACTIVATE && style & WS_CAPTION == 0
+    }
+
+    unsafe extern "system" fn subclass_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        // SAFETY: Windows calls this with the live handle of the subclassed window.
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+            let lparam = if skip_frame_repaint(msg, style) { -1 } else { lparam };
+            DefSubclassProc(hwnd, msg, wparam, lparam)
         }
     }
 
@@ -319,6 +353,15 @@ mod tests {
         let hidden = platform::caption_style(style, true);
         assert_eq!(hidden, WS_SYSMENU | WS_THICKFRAME);
         assert_eq!(platform::caption_style(hidden, false), style);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn frame_repaint_is_skipped_only_on_activation_without_a_caption() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCPAINT, WS_CAPTION, WS_SYSMENU};
+        assert!(platform::skip_frame_repaint(WM_NCACTIVATE, WS_SYSMENU));
+        assert!(!platform::skip_frame_repaint(WM_NCACTIVATE, WS_CAPTION | WS_SYSMENU));
+        assert!(!platform::skip_frame_repaint(WM_NCPAINT, WS_SYSMENU));
     }
 
     #[cfg(target_os = "windows")]

@@ -721,6 +721,11 @@ async fn get_active_downloads(
     Ok(task_registry.get_all_states().await)
 }
 
+/// Closing the main window quits the app, so the Settings window does not stay open on its own.
+fn quits_app(label: &str, event: &tauri::WindowEvent) -> bool {
+    label == "main" && matches!(event, tauri::WindowEvent::Destroyed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -764,6 +769,11 @@ pub fn run() {
                 .build(),
         )
         .manage(Mutex::new(None::<discord_presence::DiscordRpcClient>))
+        .on_window_event(|window, event| {
+            if quits_app(window.label(), event) {
+                window.app_handle().exit(0);
+            }
+        })
         .setup(|app| {
             let window: WebviewWindow = app
                 .get_webview_window("main")
@@ -939,4 +949,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quits_app;
+    use tauri::WindowEvent;
+
+    #[test]
+    fn closing_the_main_window_quits_the_app() {
+        assert!(quits_app("main", &WindowEvent::Destroyed));
+    }
+
+    #[test]
+    fn closing_settings_or_other_events_do_not_quit() {
+        assert!(!quits_app("settings", &WindowEvent::Destroyed));
+        assert!(!quits_app("main", &WindowEvent::Focused(false)));
+    }
 }
