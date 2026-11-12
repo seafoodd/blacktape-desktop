@@ -125,8 +125,13 @@ jobs:
         uses: actions/checkout@v4
 
       # "What's Changed" and "Full Changelog" (compare with the previous release), as GitHub generates them.
+      # The in-app update dialog reads its notes from latest.json, not from the release page, so they go there too.
+      # The updater signatures cover the installers only, so changing latest.json does not break them.
       - name: Write the release notes
         run: |
           tag="v$(jq -r .version package.json)"
           gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name="$tag" --jq .body > notes.md
           gh release edit "$tag" --notes-file notes.md
+          gh release download "$tag" --pattern latest.json --dir updater
+          jq --rawfile notes notes.md '.notes = $notes' updater/latest.json > latest.json
+          gh release upload "$tag" latest.json --clobber

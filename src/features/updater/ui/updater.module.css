@@ -42,6 +42,22 @@
     border-radius: 4px;
     font-size: var(--font-sm, 12px);
     scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.heading {
+    font-weight: 600;
+}
+
+.item {
+    padding-left: 12px;
+    text-indent: -12px;
+
+    &::before {
+        content: "• ";
+    }
 }
 
 .error {
