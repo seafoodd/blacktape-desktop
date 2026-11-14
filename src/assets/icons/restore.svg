@@ -1,4 +1,1 @@
-<svg width="12" height="12" viewBox="0 0 12 12">
-    <rect x="1.5" y="3.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2" />
-    <path d="M3.5 3.5 V1.5 H10.5 V8.5 H8.5" fill="none" stroke="currentColor" stroke-width="1.2" />
-</svg>
+<svg width="12" height="12" viewBox="0 0 12 12"><rect width="7" height="7" x="1.5" y="3.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path fill="none" stroke="currentColor" stroke-width="1.2" d="M3.5 3.5 V1.5 H10.5 V8.5 H8.5"/></svg>
