@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use sentry::{protocol::Event, Breadcrumb, ClientInitGuard, ClientOptions, Level};
 
 pub const TELEMETRY_SETTING_KEY: &str = "telemetry_enabled";
+pub const ONBOARDING_COMPLETED_KEY: &str = "onboarding_completed";
 
 static TELEMETRY_ENABLED: AtomicBool = AtomicBool::new(true);
 static INSTALL_ID: OnceLock<String> = OnceLock::new();
@@ -380,6 +381,14 @@ mod tests {
         assert!(sanitized.exception.values[0].value.as_ref().unwrap().contains("<HOME>"));
         assert!(!sanitized.breadcrumbs.values[0].message.as_ref().unwrap().contains(&home));
         assert!(sanitized.breadcrumbs.values[0].message.as_ref().unwrap().contains("<HOME>"));
+    }
+
+    #[test]
+    fn test_telemetry_enabled_atomic_toggle() {
+        set_enabled(false);
+        assert!(!is_enabled());
+        set_enabled(true);
+        assert!(is_enabled());
     }
 
     #[test]
