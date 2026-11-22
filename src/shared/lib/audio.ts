@@ -112,3 +112,15 @@ export const getToolsStatus = (): Promise<ToolsStatus> =>
 
 /** Looks for newer yt-dlp, deno and ffmpeg releases now and retries setups that failed. */
 export const checkTools = (): Promise<void> => invoke("check_tools");
+
+export const getTelemetryEnabled = (): Promise<boolean> =>
+  invoke<boolean>("get_telemetry_enabled");
+
+export const setTelemetryEnabled = (enabled: boolean): Promise<void> =>
+  invoke("set_telemetry_enabled", { enabled });
+
+export const getOnboardingCompleted = (): Promise<boolean> =>
+  invoke<boolean>("get_onboarding_completed");
+
+export const setOnboardingCompleted = (completed: boolean): Promise<void> =>
+  invoke("set_onboarding_completed", { completed });
