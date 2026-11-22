@@ -1,6 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { PlayerControls } from "@/features/player";
-import { fetchState } from "./shared/lib/audio";
+import { fetchState, getOnboardingCompleted } from "./shared/lib/audio";
 import { useEffect } from "react";
 import { Header, LeftSidebar, MainLayout, RightSidebar } from "@/layouts";
 import ArtistAlbums from "@/pages/artist-albums/ArtistAlbums.tsx";
@@ -12,6 +12,8 @@ import Trash from "@/pages/trash/Trash.tsx";
 import AlbumPreview from "@/pages/album-preview/AlbumPreview.tsx";
 import { SetupBanner } from "@/features/downloader-setup";
 import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrackMenuHost.tsx";
+import { useModalStore } from "@/shared/store/modalStore.ts";
+import { WelcomeModal } from "@/features/onboarding";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
@@ -19,6 +21,13 @@ function PlayerView() {
   useEffect(() => {
     fetchState();
     initDownloadListeners().catch(console.error);
+    getOnboardingCompleted()
+      .then((completed) => {
+        if (!completed) {
+          useModalStore.getState().openModal(<WelcomeModal />);
+        }
+      })
+      .catch((err) => console.error("Failed to check onboarding state:", err));
   }, [initDownloadListeners]);
 
   return (

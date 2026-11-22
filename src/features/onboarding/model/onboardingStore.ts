@@ -23,9 +23,20 @@ export interface OnboardingState {
   reset: () => void;
 }
 
+const getInitialLibraryDir = (): string | null => {
+  if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+    try {
+      return localStorage.getItem("library_dir") || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
 const initialState = {
   step: 1 as const,
-  libraryDir: null,
+  libraryDir: getInitialLibraryDir(),
   telemetryEnabled: true,
   isSaving: false,
 };
@@ -76,5 +87,11 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     }
   },
 
-  reset: () => set({ ...initialState }),
+  reset: () =>
+    set({
+      step: 1,
+      libraryDir: getInitialLibraryDir(),
+      telemetryEnabled: true,
+      isSaving: false,
+    }),
 }));
