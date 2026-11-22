@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:fresh": "node scripts/dev-fresh.js",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
