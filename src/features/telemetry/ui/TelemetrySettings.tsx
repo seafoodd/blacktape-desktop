@@ -1,13 +1,22 @@
 import { useEffect, useState } from "react";
-import { getTelemetryEnabled, setTelemetryEnabled } from "@/shared/lib/audio.ts";
+import {
+  getTelemetryEnabled,
+  setTelemetryEnabled,
+  setOnboardingCompleted,
+} from "@/shared/lib/audio.ts";
 import { TELEMETRY_COPY } from "../model/telemetrySettingsHelper.ts";
 
 interface Props {
   rowClassName: string;
+  buttonClassName?: string;
   mutedClassName: string;
 }
 
-export const TelemetrySettings = ({ rowClassName, mutedClassName }: Props) => {
+export const TelemetrySettings = ({
+  rowClassName,
+  buttonClassName,
+  mutedClassName,
+}: Props) => {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
@@ -33,6 +42,17 @@ export const TelemetrySettings = ({ rowClassName, mutedClassName }: Props) => {
     }
   };
 
+  const handleRerunWizard = async () => {
+    try {
+      await setOnboardingCompleted(false);
+      const channel = new BroadcastChannel("blacktape_onboarding_channel");
+      channel.postMessage({ type: "OPEN_ONBOARDING" });
+      channel.close();
+    } catch (err) {
+      console.error("Failed to trigger onboarding wizard:", err);
+    }
+  };
+
   return (
     <>
       <div className={rowClassName}>
@@ -53,6 +73,16 @@ export const TelemetrySettings = ({ rowClassName, mutedClassName }: Props) => {
       <p className={mutedClassName} style={{ margin: "4px 0 12px 0", lineHeight: 1.4 }}>
         {TELEMETRY_COPY.description}
       </p>
+      <div className={rowClassName}>
+        <span>Setup Wizard</span>
+        <button
+          type="button"
+          className={buttonClassName}
+          onClick={handleRerunWizard}
+        >
+          Re-run setup wizard
+        </button>
+      </div>
     </>
   );
 };

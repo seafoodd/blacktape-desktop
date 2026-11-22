@@ -372,6 +372,7 @@ export const Settings = () => {
               <h2 style={{ marginTop: "24px" }}>Privacy</h2>
               <TelemetrySettings
                 rowClassName={styles.settingRow}
+                buttonClassName={styles.actionButton}
                 mutedClassName={styles.mutedText}
               />
             </section>
