@@ -1,0 +1,220 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    width: 460px;
+    max-width: 90vw;
+    color: var(--color-text);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.title {
+    font-size: var(--font-xl, 20px);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.subtitle {
+    font-size: var(--font-sm, 13px);
+    color: var(--color-muted, #888);
+    margin: 4px 0 0 0;
+}
+
+.closeButton {
+    background: transparent;
+    border: none;
+    color: var(--color-muted, #888);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 120ms ease, background-color 120ms ease;
+
+    &:hover {
+        color: var(--color-text);
+        background-color: var(--color-surface, rgba(255, 255, 255, 0.08));
+    }
+}
+
+.body {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.sectionLabel {
+    font-size: var(--font-sm, 13px);
+    font-weight: 500;
+    color: var(--color-text);
+    margin-bottom: 8px;
+}
+
+.folderBox {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    background-color: var(--color-surface, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--color-border, #333);
+    border-radius: 6px;
+}
+
+.folderPath {
+    flex: 1;
+    font-size: var(--font-sm, 13px);
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.folderPathMuted {
+    color: var(--color-muted, #888);
+    font-style: italic;
+}
+
+.chooseButton {
+    padding: 5px 12px;
+    font-size: var(--font-sm, 13px);
+    border-radius: 4px;
+    background-color: transparent;
+    border: 1px solid var(--color-border, #444);
+    color: var(--color-text);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 100ms ease;
+
+    &:hover {
+        background-color: var(--color-surface, rgba(255, 255, 255, 0.1));
+    }
+}
+
+.privacyCard {
+    background-color: var(--color-surface, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--color-border, #333);
+    border-radius: 6px;
+    padding: 14px;
+}
+
+.privacyText {
+    font-size: var(--font-sm, 13px);
+    color: var(--color-muted, #999);
+    line-height: 1.45;
+    margin: 0 0 10px 0;
+}
+
+.bulletList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bulletItem {
+    font-size: var(--font-xs, 12px);
+    color: var(--color-muted, #aaa);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bulletCheck {
+    color: var(--color-primary, #6366f1);
+    font-weight: bold;
+}
+
+.toggleRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.toggleLabel {
+    font-size: var(--font-sm, 13px);
+    color: var(--color-text);
+    cursor: pointer;
+    user-select: none;
+}
+
+.footer {
+    margin-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.footerLeft {
+    display: flex;
+    align-items: center;
+}
+
+.footerRight {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.primaryButton {
+    padding: 8px 18px;
+    font-size: var(--font-sm, 13px);
+    font-weight: 500;
+    border-radius: var(--radius-full, 9999px);
+    background-color: var(--color-primary, #6366f1);
+    color: #ffffff;
+    border: none;
+    cursor: pointer;
+    transition: opacity 100ms ease;
+
+    &:hover:not(:disabled) {
+        opacity: 0.9;
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+}
+
+.secondaryButton {
+    padding: 8px 16px;
+    font-size: var(--font-sm, 13px);
+    border-radius: var(--radius-full, 9999px);
+    background-color: transparent;
+    border: 1px solid var(--color-border, #444);
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background-color 100ms ease;
+
+    &:hover {
+        background-color: var(--color-surface, rgba(255, 255, 255, 0.08));
+    }
+}
+
+.skipButton {
+    background: transparent;
+    border: none;
+    color: var(--color-muted, #777);
+    font-size: var(--font-xs, 12px);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color 100ms ease;
+
+    &:hover {
+        color: var(--color-text);
+        text-decoration: underline;
+    }
+}

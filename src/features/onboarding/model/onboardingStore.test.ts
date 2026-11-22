@@ -72,7 +72,6 @@ describe("onboardingStore", () => {
     const { setTelemetryEnabled, setOnboardingCompleted, scanMusic } = await import(
       "@/shared/lib/audio.ts"
     );
-    const { useModalStore } = await import("@/shared/store/modalStore.ts");
 
     useOnboardingStore.getState().setLibraryDir("/music/path");
     useOnboardingStore.getState().setTelemetryEnabled(true);
@@ -90,7 +89,6 @@ describe("onboardingStore", () => {
     const { setTelemetryEnabled, setOnboardingCompleted, scanMusic } = await import(
       "@/shared/lib/audio.ts"
     );
-    const { useModalStore } = await import("@/shared/store/modalStore.ts");
 
     await useOnboardingStore.getState().skipOnboarding();
 
