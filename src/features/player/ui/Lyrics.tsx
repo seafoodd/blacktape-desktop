@@ -22,6 +22,7 @@ import {
 } from "@/shared/ui/context-menu";
 import { useModalStore } from "@/shared/store/modalStore";
 import { EditLyricsModal } from "./EditLyricsModal";
+import { lyricsEmptyText } from "./lyricsHelper.ts";
 
 /**
  * Command + args that load the lyrics of `song`: library songs by id (stored in the database), streamed songs
@@ -599,7 +600,7 @@ export const Lyrics = ({ className }: LyricsProps) => {
 
       {!retrieving && (!parsedLyrics || parsedLyrics.lines.length === 0) && (
         <div className={styles.emptyState}>
-          {errorStatus || "No lyrics found."}
+          {lyricsEmptyText(Boolean(currentSong), errorStatus)}
         </div>
       )}
 

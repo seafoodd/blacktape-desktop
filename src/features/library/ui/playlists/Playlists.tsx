@@ -106,6 +106,9 @@ export const Playlists = ({ className }: PlaylistsProps) => {
           New Playlist
         </button>
         <div className={styles.playlists}>
+          {playlists.length === 0 && (
+            <div className={styles.emptyNotice}>No playlists yet</div>
+          )}
           {playlists.map((playlist) => (
             <button
               key={playlist.id}

@@ -350,6 +350,9 @@ const Queue = ({ className }: QueueProps) => {
           </div>
         );
       })}
+      {queue.length === 0 && (
+        <div className={styles.emptyState}>Queue is empty</div>
+      )}
       {menu && (
         <ContextMenu
           position={menu.position}

@@ -28,6 +28,8 @@ import { MdWarningAmber } from "react-icons/md";
 import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/library/trash.ts";
 import { listen } from "@tauri-apps/api/event";
 import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
+import { EmptyLibraryHub } from "@/features/library/ui/EmptyLibraryHub.tsx";
+import { shouldShowEmptyHub } from "@/features/library/ui/emptyLibraryHubHelper.ts";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
 import FindMissingModal from "@/features/library/ui/FindMissingModal.tsx";
@@ -62,7 +64,7 @@ import {
 } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 
 const ArtistAlbums = () => {
-  const { selectedTab, albums, activeDownloads, cancelDownload } =
+  const { selectedTab, tabs, albums, activeDownloads, cancelDownload } =
     useLibraryStore();
   const { startPlayback } = useAudioStore();
   const { openModal } = useModalStore();
@@ -619,8 +621,19 @@ const ArtistAlbums = () => {
     );
   }
 
+  if (shouldShowEmptyHub(tabs.length, albums.length, selectedTab)) {
+    return <EmptyLibraryHub />;
+  }
+
   if (!selectedTab) {
-    return null;
+    return (
+      <div className={styles.container}>
+        <div className={styles.selectArtistPrompt}>
+          <h2>Select an artist</h2>
+          <p>Choose an artist from your library to view their music.</p>
+        </div>
+      </div>
+    );
   }
 
   return (

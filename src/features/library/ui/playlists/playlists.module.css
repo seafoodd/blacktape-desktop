@@ -77,6 +77,19 @@
     flex-direction: column;
 }
 
+.emptyNotice {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 24px 16px;
+    color: var(--color-muted, rgba(255, 255, 255, 0.4));
+    font-size: var(--font-sm, 12px);
+    text-align: center;
+    user-select: none;
+}
+
+
 .playlist {
     position: relative;
     display: flex;

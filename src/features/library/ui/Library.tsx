@@ -254,6 +254,17 @@ export const Library = ({ className }: LibraryProps) => {
             </div>
           </button>
         ))}
+
+        {tabs.length === 0 && downloadingArtists.length === 0 && (
+          <div className={styles.emptyNotice}>
+            <span>No artists in library</span>
+          </div>
+        )}
+        {tabs.length > 0 && filteredTabs.length === 0 && downloadingArtists.length === 0 && (
+          <div className={styles.emptyNotice}>
+            <span>No matching artists</span>
+          </div>
+        )}
       </ul>
     </div>
   );

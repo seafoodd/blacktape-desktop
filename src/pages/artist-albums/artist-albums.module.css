@@ -306,3 +306,27 @@
     margin-left: 40px;
 }
 
+.selectArtistPrompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 50vh;
+    color: var(--color-muted, #9ca3af);
+    text-align: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.selectArtistPrompt h2 {
+    font-size: var(--font-lg, 16px);
+    font-weight: 600;
+    color: var(--color-text, #fff);
+    margin: 0;
+}
+
+.selectArtistPrompt p {
+    font-size: var(--font-md, 14px);
+    margin: 0;
+}
+

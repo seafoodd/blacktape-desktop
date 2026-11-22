@@ -201,3 +201,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+.emptyState {
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    padding: var(--spacing-sm, 8px) 0;
+    text-align: center;
+    user-select: none;
+}
