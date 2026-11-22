@@ -332,7 +332,7 @@ fn download_args(
         "--ignore-errors",
         "--no-playlist",
         "--concurrent-fragments",
-        "10",
+        "4",
         "--http-chunk-size",
         "10M",
         "-o",
@@ -354,7 +354,7 @@ fn download_args(
                 "--audio-quality",
                 "0", // Ensures maximum VBR quality if ffmpeg runs
                 "--extractor-args",
-                "youtube:player-client=web_embedded,web,tv", // Fixed client to eliminate 403 / low-bitrate lockouts
+                "youtube:player-client=web_embedded,tv_samsung,web", // tv_samsung provides direct HTTPS formats when account has SABR experiment
             ]
             .map(String::from)
             .into_iter()
@@ -1221,6 +1221,12 @@ mod hardening_tests {
 
         let cookies = args.iter().position(|a| a == "--cookies-from-browser").unwrap();
         assert_eq!(args[cookies + 1], COOKIES);
+
+        let clients = args.iter().position(|a| a == "--extractor-args").unwrap();
+        assert_eq!(args[clients + 1], "youtube:player-client=web_embedded,tv_samsung,web");
+
+        let frags = args.iter().position(|a| a == "--concurrent-fragments").unwrap();
+        assert_eq!(args[frags + 1], "4");
     }
 
     #[test]

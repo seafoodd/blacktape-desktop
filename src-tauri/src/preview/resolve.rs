@@ -283,7 +283,7 @@ fn http_client() -> &'static reqwest::Client {
 /// Fast client: the embedded web player alone (~1.3 s less work than the downloader's three clients).
 pub const YOUTUBE_FAST_CLIENTS: &str = "web_embedded";
 /// Fallback when the fast client does not offer the m4a stream: the downloader's client set.
-pub const YOUTUBE_FALLBACK_CLIENTS: &str = "web_embedded,web,tv";
+pub const YOUTUBE_FALLBACK_CLIENTS: &str = "web_embedded,tv_samsung,web";
 
 /// yt-dlp arguments that print the duration, request headers and direct url of the AAC (m4a) audio stream
 /// (symphonia decodes AAC in mp4 but not YouTube's webm/opus) WITHOUT the video url: the url is either
@@ -538,7 +538,7 @@ mod tests {
         assert!(args.iter().any(|a| a == "140/bestaudio[ext=m4a]"));
         assert!(!args.iter().any(|a| a == "--" || a.starts_with("http")));
         let fallback = youtube_args(YOUTUBE_FALLBACK_CLIENTS);
-        assert!(fallback.iter().any(|a| a == "youtube:player-client=web_embedded,web,tv"));
+        assert!(fallback.iter().any(|a| a == "youtube:player-client=web_embedded,tv_samsung,web"));
     }
 
     #[test]
