@@ -19,6 +19,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { UpdateSettings } from "@/features/updater/ui/UpdateSettings";
 import { AccountsSettings } from "@/features/accounts/ui/AccountsSettings";
 import { DownloaderSettings } from "@/features/downloader-setup";
+import { TelemetrySettings } from "@/features/telemetry";
 import { SETTINGS_HEADER_HEIGHT, useChromeHeight } from "@/shared/ui/modal";
 
 type SettingsTab = "appearance" | "playback" | "library" | "downloader" | "accounts" | "about";
@@ -367,6 +368,11 @@ export const Settings = () => {
                 buttonClassName={styles.actionButton}
                 mutedClassName={styles.mutedText}
                 selectClassName={styles.select}
+              />
+              <h2 style={{ marginTop: "24px" }}>Privacy</h2>
+              <TelemetrySettings
+                rowClassName={styles.settingRow}
+                mutedClassName={styles.mutedText}
               />
             </section>
           )}
