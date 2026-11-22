@@ -1,12 +1,47 @@
+import { useEffect } from "react";
 import { bannerState, bannerText } from "../model/toolsStatus.ts";
 import { useToolsStore } from "../model/toolsStore.ts";
 import { useToolsStatus } from "./useToolsStatus.ts";
+import {
+  initScanProgressListener,
+  scanBannerText,
+  useScanStore,
+} from "@/features/library/model/scanStore.ts";
 import styles from "./downloader-setup.module.css";
 
-/** A slim, non-blocking bar while yt-dlp, deno and ffmpeg are installed the first time, or when that failed. */
+/** A slim, non-blocking bar while scanning music or installing downloader dependencies. */
 export const SetupBanner = () => {
+  const scanProgress = useScanStore((s) => s.progress);
   const status = useToolsStatus();
   const check = useToolsStore((s) => s.check);
+
+  useEffect(() => {
+    const unlisten = initScanProgressListener();
+    return () => unlisten();
+  }, []);
+
+  const scanText = scanBannerText(scanProgress);
+  if (scanText) {
+    const scanPercent =
+      scanProgress.total > 0
+        ? Math.min(100, (scanProgress.scanned / scanProgress.total) * 100)
+        : null;
+
+    return (
+      <div className={styles.banner} role="status">
+        <span className="truncate" title={scanText}>
+          {scanText}
+        </span>
+        {scanPercent !== null && (
+          <div
+            className={styles.bannerProgress}
+            style={{ width: `${scanPercent}%` }}
+          />
+        )}
+      </div>
+    );
+  }
+
   const state = bannerState(status);
   if (!state) return null;
 

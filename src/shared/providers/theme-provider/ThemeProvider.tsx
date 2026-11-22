@@ -44,7 +44,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const [fontSize, setFontSizeState] = useState<string>(() => {
-    return localStorage.getItem("font_size") || "13px";
+    return localStorage.getItem("font_size") || "14px";
   });
 
   const [bgOpacity, setBgOpacityState] = useState<number>(() => {

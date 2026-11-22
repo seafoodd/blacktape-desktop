@@ -3,6 +3,7 @@ import {
   formatFolderDisplay,
   stepTitle,
   stepSubtitle,
+  stepBadge,
   PRIVACY_BULLETS,
 } from "./welcomeModalHelper.ts";
 
@@ -13,12 +14,15 @@ describe("welcomeModalHelper", () => {
     expect(formatFolderDisplay("C:\\Music")).toBe("C:\\Music");
   });
 
-  it("returns appropriate titles and subtitles for steps", () => {
+  it("returns appropriate titles, subtitles, and badges for steps", () => {
     expect(stepTitle(1)).toBe("Welcome to Blacktape");
     expect(stepTitle(2)).toBe("Help Improve Blacktape");
 
     expect(stepSubtitle(1)).toBe("Fast, local music player and streamer");
     expect(stepSubtitle(2)).toBe("Crash reports & anonymous diagnostics");
+
+    expect(stepBadge(1)).toContain("Step 1 of 2");
+    expect(stepBadge(2)).toContain("Step 2 of 2");
   });
 
   it("provides privacy bullet points", () => {

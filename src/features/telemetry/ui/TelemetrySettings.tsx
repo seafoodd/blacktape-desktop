@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   getTelemetryEnabled,
   setTelemetryEnabled,
@@ -48,6 +49,13 @@ export const TelemetrySettings = ({
       const channel = new BroadcastChannel("blacktape_onboarding_channel");
       channel.postMessage({ type: "OPEN_ONBOARDING" });
       channel.close();
+
+      const mainWindow = await WebviewWindow.getByLabel("main");
+      if (mainWindow) {
+        await mainWindow.unminimize();
+        await mainWindow.show();
+        await mainWindow.setFocus();
+      }
     } catch (err) {
       console.error("Failed to trigger onboarding wizard:", err);
     }

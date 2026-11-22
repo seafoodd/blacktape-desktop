@@ -41,6 +41,17 @@ pub fn collect_audio_paths(dir: &str) -> Vec<PathBuf> {
 }
 
 pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
+    scan_music_dir_with_progress(dir, covers_dir, |_, _| {})
+}
+
+pub fn scan_music_dir_with_progress<F>(
+    dir: String,
+    covers_dir: &PathBuf,
+    on_progress: F,
+) -> Vec<Song>
+where
+    F: Fn(usize, usize) + Sync + Send,
+{
     if !covers_dir.exists() {
         let _ = fs::create_dir_all(covers_dir);
     }
@@ -49,15 +60,24 @@ pub fn scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
     let written_hashes: Arc<DashSet<String>> = Arc::new(DashSet::new());
 
     let entries: Vec<PathBuf> = collect_audio_paths(&dir);
+    let total = entries.len();
 
     println!(
         "[Scanner] Found {} matching files by extension on disk. Inspecting containers...",
-        entries.len()
+        total
     );
+
+    on_progress(0, total);
+    let progress_counter = std::sync::atomic::AtomicUsize::new(0);
 
     entries
         .into_par_iter()
         .filter_map(|path| {
+            let current = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if current % 10 == 0 || current == total {
+                on_progress(current, total);
+            }
+
             // One read gives the generic tags and the source fields (format-specific, see source_tag).
             let read = match crate::source_tag::read_file(&path) {
                 Ok(read) => read,

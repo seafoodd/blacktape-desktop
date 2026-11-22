@@ -85,10 +85,29 @@ async fn scan_music(
             .map_err(|e| e.to_string())?;
     }
 
-    let songs = scan::scan_music_dir(dir.clone(), &covers_path);
+    let app_clone = app.clone();
+    let songs = scan::scan_music_dir_with_progress(dir.clone(), &covers_path, move |scanned, total| {
+        let _ = app_clone.emit(
+            "scan-progress",
+            serde_json::json!({
+                "phase": "scanning",
+                "scanned": scanned,
+                "total": total,
+            }),
+        );
+    });
     db.insert_songs(songs.clone())
         .await
         .map_err(|e| e.to_string())?;
+
+    let _ = app.emit(
+        "scan-progress",
+        serde_json::json!({
+            "phase": "done",
+            "scanned": songs.len(),
+            "total": songs.len(),
+        }),
+    );
     // The trash folder lives inside the library dir, so the backend needs to know it (D11).
     db.set_app_setting(trash::LIBRARY_DIR_KEY, &dir)
         .await

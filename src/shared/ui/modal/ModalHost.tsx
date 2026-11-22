@@ -3,10 +3,10 @@ import { useModalStore } from "@/shared/store/modalStore";
 import styles from "./modal.module.css";
 
 export const ModalHost = () => {
-  const { isOpen, content, closeModal } = useModalStore();
+  const { isOpen, content, dismissible, closeModal } = useModalStore();
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !dismissible) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -16,7 +16,7 @@ export const ModalHost = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, closeModal]);
+  }, [isOpen, dismissible, closeModal]);
 
   if (!isOpen) return null;
 
@@ -25,7 +25,10 @@ export const ModalHost = () => {
       {/* The backdrop starts below the header, so the header stays usable: it can still drag the window and its
           buttons work. This layer only dims it and lets every click through. */}
       <div className={styles.headerDim} aria-hidden />
-      <div className={styles.backdrop} onMouseDown={closeModal}>
+      <div
+        className={styles.backdrop}
+        onMouseDown={dismissible ? closeModal : undefined}
+      >
         <div
           className={styles.modalContainer}
           onMouseDown={(e) => e.stopPropagation()}

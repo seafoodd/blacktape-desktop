@@ -25,7 +25,7 @@ function PlayerView() {
 
     const showOnboarding = () => {
       useOnboardingStore.getState().reset();
-      useModalStore.getState().openModal(<WelcomeModal />);
+      useModalStore.getState().openModal(<WelcomeModal />, { dismissible: false });
     };
 
     getOnboardingCompleted()
