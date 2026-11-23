@@ -73,7 +73,19 @@ export const LeftSidebar = () => {
         setActiveTab("playlists");
       }}
     >
-      <Tabs tabs={TABS} activeTab={activeTab} onChange={setActiveTab} />
+      <Tabs
+        tabs={TABS}
+        activeTab={activeTab}
+        onChange={(tab) => {
+          setActiveTab(tab);
+          if (
+            tab === "library" &&
+            useLibraryStore.getState().activeView !== "ARTIST_ALBUMS"
+          ) {
+            useLibraryStore.getState().setActiveView("ARTIST_ALBUMS");
+          }
+        }}
+      />
       <Library className={clsx({ [styles.hidden]: activeTab !== "library" })} />
       <Playlists
         className={clsx({ [styles.hidden]: activeTab !== "playlists" })}

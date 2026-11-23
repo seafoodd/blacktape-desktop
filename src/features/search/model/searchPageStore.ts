@@ -247,12 +247,12 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
     open: (query) => {
       const q = query.trim();
       if (q === "") return;
-      useLibraryStore.getState().setActiveView("SEARCH_RESULTS");
-      // A different query starts clean: old year/duration/text/platform filters would silently hide results.
-      if (q !== get().query) {
+      const isNewQuery = q !== get().query;
+      if (isNewQuery) {
         set((s) => ({ filters: { ...DEFAULT_FILTERS, tab: s.filters.tab } }));
       }
       runSearch(q);
+      useLibraryStore.getState().setActiveView("SEARCH_RESULTS");
     },
 
     retry: () => {

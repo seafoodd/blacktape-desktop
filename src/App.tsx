@@ -15,11 +15,13 @@ import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrack
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { WelcomeModal } from "@/features/onboarding";
 import { useOnboardingStore } from "@/features/onboarding/model/onboardingStore.ts";
+import { initNavigationListener } from "@/features/navigation/model/navigationStore.ts";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
 
   useEffect(() => {
+    const unlistenNav = initNavigationListener();
     fetchState();
     initDownloadListeners().catch(console.error);
 
@@ -51,7 +53,10 @@ function PlayerView() {
       }
     };
 
-    return () => channel.close();
+    return () => {
+      unlistenNav();
+      channel.close();
+    };
   }, [initDownloadListeners]);
 
   return (
