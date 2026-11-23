@@ -22,7 +22,7 @@ pub fn cover_dirs<'a>(cover_paths: impl IntoIterator<Item = &'a str>) -> Vec<Pat
 }
 
 /// Opens a folder to the interface; `recursive` includes its subfolders.
-pub fn allow_dir(app: &AppHandle, dir: &Path, recursive: bool) {
+pub fn allow_dir<R: tauri::Runtime>(app: &AppHandle<R>, dir: &Path, recursive: bool) {
     if let Err(e) = app.asset_protocol_scope().allow_directory(dir, recursive) {
         tracing::warn!(dir = %dir.display(), error = %e, "Cannot allow directory in asset protocol scope");
     }

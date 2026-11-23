@@ -252,10 +252,68 @@ pub async fn process_album_url(
         }
     }
 
-    match ytdlp::download_batch(app_handle, &tracks, output_dir, task_id).await {
-        Ok(files) => Ok((target_library_dir, files, cover_path)),
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(PathBuf, TrackDownload, usize)>(32);
+    let app_handle_clone = app_handle.clone();
+    let task_id_str = task_id.to_string();
+    let target_dir_clone = target_library_dir.clone();
+    let cover_path_clone = cover_path.clone();
+    let covers_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map(|d| d.join("covers"))
+        .unwrap_or_else(|_| PathBuf::from("covers"));
+    let _ = fs::create_dir_all(&covers_dir);
+
+    let consumer = tokio::spawn(async move {
+        let mut songs = Vec::new();
+        while let Some((temp_file, track, index)) = rx.recv().await {
+            match crate::download::orchestrator::save_downloaded_track(
+                &temp_file,
+                &track,
+                &target_dir_clone,
+                cover_path_clone.as_deref(),
+                &covers_dir,
+                platform,
+                &app_handle_clone,
+                &task_id_str,
+                index,
+            )
+            .await
+            {
+                Ok(song) => songs.push(song),
+                Err(err) => tracing::error!(
+                    title = %track.title,
+                    error = %err,
+                    "Failed to save downloaded track"
+                ),
+            }
+        }
+        songs
+    });
+
+    let download_res = ytdlp::download_batch_streaming(
+        app_handle,
+        &tracks,
+        output_dir,
+        task_id,
+        Some(tx),
+    )
+    .await;
+
+    let saved_songs = consumer.await.unwrap_or_default();
+
+    match download_res {
+        Ok(files) => {
+            if let Some((first, _)) = files.first() {
+                if let Some(parent) = first.parent() {
+                    let _ = fs::remove_dir_all(parent);
+                }
+            }
+            Ok((target_library_dir, Vec::new(), cover_path))
+        }
         Err(err) => {
-            if folder_created
+            if saved_songs.is_empty()
+                && folder_created
                 && target_library_dir.exists()
                 && fs::remove_dir_all(&target_library_dir).is_ok()
             {

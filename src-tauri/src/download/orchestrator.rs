@@ -2,14 +2,74 @@ use crate::db::db::Database;
 use crate::download::album::process_album_url;
 use crate::download::post_processor::process_and_move_track;
 use crate::download::track::process_track_url;
-use crate::download::types::{DownloadPayload, DownloadTask, ProgressEvent, TaskEvent};
+use crate::download::types::{DownloadPayload, DownloadTask, ProgressEvent, TaskEvent, TrackDownload};
 use crate::download::ytdlp;
+use crate::types::Platform;
+use crate::Song;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
 /// What the queue shows while a download waits for yt-dlp, deno or ffmpeg to be installed the first time.
 const WAITING_FOR_SETUP: &str = "Waiting for downloader setup…";
+
+pub async fn save_downloaded_track<R: tauri::Runtime>(
+    temp_file: &Path,
+    track: &TrackDownload,
+    track_target_dir: &Path,
+    cover_path: Option<&Path>,
+    covers_dir: &Path,
+    platform: Platform,
+    app_handle: &AppHandle<R>,
+    task_id: &str,
+    track_index: usize,
+) -> Result<Song, String> {
+    let _ = fs::create_dir_all(track_target_dir);
+
+    let target_cover_path = if let Some(src_cover) = cover_path {
+        let dest_cover = track_target_dir.join("cover.jpg");
+        if src_cover.exists() && !dest_cover.exists() {
+            let _ = fs::copy(src_cover, &dest_cover);
+        }
+        Some(dest_cover)
+    } else {
+        None
+    };
+
+    let song = process_and_move_track(
+        temp_file,
+        track,
+        track_target_dir,
+        target_cover_path.as_deref(),
+        covers_dir,
+        platform,
+    )?;
+
+    if let Some(ref cover_url) = song.cover_url {
+        for dir in crate::asset_scope::cover_dirs(std::iter::once(cover_url.as_str())) {
+            crate::asset_scope::allow_dir(app_handle, &dir, false);
+        }
+    }
+
+    if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() {
+        let db = db_state.lock().await;
+        tracing::debug!(song = %song.title, "Inserting song to DB");
+        if let Err(e) = db.insert_songs(vec![song.clone()]).await {
+            tracing::error!(error = %e, "DB insertion error");
+        }
+    }
+
+    let _ = app_handle.emit(
+        "download-track-saved",
+        serde_json::json!({
+            "task_id": task_id,
+            "track_index": track_index,
+            "song": song,
+        }),
+    );
+
+    Ok(song)
+}
 
 pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> Result<(), String> {
     let task_id = task.id.clone();
@@ -112,9 +172,66 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                 .map(|files| (output_path, files, None))
         }
         DownloadPayload::Batch { tracks } => {
-            ytdlp::download_batch(&app_handle, &tracks, &task.output_dir, &task_id)
-                .await
-                .map(|files| (output_path, files, None))
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<(PathBuf, TrackDownload, usize)>(32);
+            let app_handle_clone = app_handle.clone();
+            let task_id_str = task_id.clone();
+            let covers_dir_clone = covers_dir.clone();
+            let output_path_clone = output_path.clone();
+
+            let consumer = tokio::spawn(async move {
+                let mut songs = Vec::new();
+                while let Some((temp_file, track, index)) = rx.recv().await {
+                    let artist_dir = if track.album_artist.is_empty() {
+                        "Unknown Artist"
+                    } else {
+                        &track.album_artist
+                    };
+                    let album_dir = if track.album.is_empty() {
+                        "Singles"
+                    } else {
+                        &track.album
+                    };
+                    let track_target_dir = output_path_clone
+                        .join(crate::utils::sanitize_fs(artist_dir))
+                        .join(crate::utils::sanitize_fs(album_dir));
+                    match save_downloaded_track(
+                        &temp_file,
+                        &track,
+                        &track_target_dir,
+                        None,
+                        &covers_dir_clone,
+                        task.platform,
+                        &app_handle_clone,
+                        &task_id_str,
+                        index,
+                    )
+                    .await
+                    {
+                        Ok(song) => songs.push(song),
+                        Err(err) => tracing::error!(
+                            title = %track.title,
+                            error = %err,
+                            "Failed to save downloaded track"
+                        ),
+                    }
+                }
+                songs
+            });
+
+            let download_res = ytdlp::download_batch_streaming(
+                &app_handle,
+                &tracks,
+                &task.output_dir,
+                &task_id,
+                Some(tx),
+            )
+            .await;
+
+            let _ = consumer.await;
+            download_res.map(|files| {
+                cleanup_staging_dir(&files);
+                (output_path, Vec::new(), None)
+            })
         }
     };
 
@@ -145,7 +262,6 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
         }
     };
 
-    let mut new_songs = Vec::new();
     let total = downloaded_files.len();
 
     // A single track whose album the library already has (other platform): number and album come from it.
@@ -205,27 +321,20 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                 .join(crate::utils::sanitize_fs(album_dir))
         };
 
-        let _ = fs::create_dir_all(&track_target_dir);
-
-        let target_cover_path = if let Some(ref src_cover) = cover_path {
-            let dest_cover = track_target_dir.join("cover.jpg");
-            if src_cover.exists() && !dest_cover.exists() {
-                let _ = fs::copy(src_cover, &dest_cover);
-            }
-            Some(dest_cover)
-        } else {
-            None
-        };
-
-        match process_and_move_track(
+        match save_downloaded_track(
             temp_file,
             track,
             &track_target_dir,
-            target_cover_path.as_deref(),
+            cover_path.as_deref(),
             &covers_dir,
             task.platform,
-        ) {
-            Ok(song) => new_songs.push(song),
+            &app_handle,
+            &task_id,
+            i,
+        )
+        .await
+        {
+            Ok(_) => {}
             Err(err) => tracing::error!(
                 title = %track.title,
                 error = %err,
@@ -235,19 +344,6 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
     }
 
     cleanup_staging_dir(&downloaded_files);
-
-    if !new_songs.is_empty() {
-        // The new covers may sit outside the folders the interface can read yet (another download folder).
-        for dir in crate::asset_scope::cover_dirs(new_songs.iter().filter_map(|s| s.cover_url.as_deref())) {
-            crate::asset_scope::allow_dir(&app_handle, &dir, false);
-        }
-        let db_state = app_handle.state::<tokio::sync::Mutex<Database>>();
-        let db = db_state.lock().await;
-        tracing::debug!(count = new_songs.len(), "Inserting songs to DB");
-        if let Err(e) = db.insert_songs(new_songs).await {
-            tracing::error!(error = %e, "DB insertion error");
-        }
-    }
 
     emit_event(
         &app_handle,
@@ -293,12 +389,31 @@ fn cleanup_staging_dir(downloaded_files: &[(PathBuf, crate::download::types::Tra
 }
 
 #[cfg(test)]
-mod attention_tests {
-    use super::needs_attention;
+mod tests {
+    use super::*;
 
     #[test]
     fn only_an_unfocused_window_asks_for_attention() {
         assert!(needs_attention(false));
         assert!(!needs_attention(true));
+    }
+
+    #[test]
+    fn cover_preparation_copies_when_dest_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let target_dir = temp.path().join("Album");
+        fs::create_dir_all(&target_dir).unwrap();
+        let src_cover = temp.path().join("src_cover.jpg");
+        fs::write(&src_cover, b"jpeg_data").unwrap();
+
+        let dest_cover = target_dir.join("cover.jpg");
+        assert!(!dest_cover.exists());
+
+        if src_cover.exists() && !dest_cover.exists() {
+            let _ = fs::copy(&src_cover, &dest_cover);
+        }
+
+        assert!(dest_cover.exists());
+        assert_eq!(fs::read(&dest_cover).unwrap(), b"jpeg_data");
     }
 }
