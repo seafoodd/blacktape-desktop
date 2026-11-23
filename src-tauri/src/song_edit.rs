@@ -13,6 +13,7 @@ pub struct SongInfo {
     pub album: String,
     pub album_artist: String,
     pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
     pub genre: Option<String>,
     pub release_year: Option<i32>,
 }
@@ -61,6 +62,7 @@ impl SongInfo {
             album,
             album_artist,
             track_number: track_number.filter(|n| *n > 0),
+            disc_number: None,
             genre: genre
                 .map(str::trim)
                 .filter(|g| !g.is_empty())
@@ -77,6 +79,7 @@ impl SongInfo {
             album: song.album.clone(),
             album_artist: song.album_artist.clone(),
             track_number: song.track_number,
+            disc_number: song.disc_number,
             genre: song.genre.clone(),
             release_year: song.release_year,
         }
@@ -112,6 +115,7 @@ fn write_song_file_with(
             album: &info.album,
             album_artist: &info.album_artist,
             track_number: info.track_number.map(|n| n as u32),
+            disc_number: info.disc_number.map(|n| n as u32),
             genre: info.genre.as_deref(),
             release_year: info.release_year,
         },

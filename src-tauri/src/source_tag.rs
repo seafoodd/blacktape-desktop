@@ -618,6 +618,7 @@ mod tests {
                     album: "Al",
                     album_artist: "A",
                     track_number: Some(1),
+                    disc_number: None,
                     genre: None,
                     release_year: None,
                 },

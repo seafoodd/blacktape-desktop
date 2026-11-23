@@ -134,8 +134,20 @@ where
 
             let artists = parse_artists(&raw_artist);
 
+            let is_compilation = tag
+                .and_then(|t| t.get_string(ItemKey::FlagCompilation))
+                .map(|val| val == "1" || val.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
             let album_artist = tag
                 .and_then(|t| t.get_string(ItemKey::AlbumArtist).map(|s| s.to_string()))
+                .or_else(|| {
+                    if is_compilation {
+                        Some("Various Artists".to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| artists.first().cloned().unwrap_or_else(|| "Unknown Artist".to_string()));
 
             let album = tag
@@ -362,8 +374,20 @@ pub fn get_song_from_path(path: &str) -> Option<Song> {
 
     let artists = parse_artists(&raw_artist);
 
+    let is_compilation = tag
+        .and_then(|t| t.get_string(ItemKey::FlagCompilation))
+        .map(|val| val == "1" || val.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     let album_artist = tag
         .and_then(|t| t.get_string(ItemKey::AlbumArtist).map(|s| s.to_string()))
+        .or_else(|| {
+            if is_compilation {
+                Some("Various Artists".to_string())
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| {
             artists
                 .first()
@@ -638,5 +662,38 @@ mod tests {
         )];
 
         assert!(source_urls_to_backfill(&scanned, &stored).is_empty());
+    }
+
+    #[test]
+    fn test_scan_extracts_disc_number_and_compilation() {
+        use lofty::file::TaggedFileExt;
+        use lofty::tag::TagExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("comp.wav");
+        std::fs::write(&path, crate::tags::tests::silent_wav_bytes(8000, 1)).unwrap();
+
+        let mut tagged = Probe::open(&path).unwrap().read().unwrap();
+        if tagged.primary_tag().is_none() && tagged.first_tag().is_none() {
+            let tag_type = tagged.file_type().primary_tag_type();
+            tagged.insert_tag(lofty::tag::Tag::new(tag_type));
+        }
+        let tag = if tagged.primary_tag().is_some() {
+            tagged.primary_tag_mut().unwrap()
+        } else {
+            tagged.first_tag_mut().unwrap()
+        };
+        tag.set_title("Comp Song".to_string());
+        tag.set_artist("Guest Artist".to_string());
+        tag.set_album("Movie Soundtrack".to_string());
+        tag.set_track(3);
+        tag.set_disk(2);
+        tag.insert_text(ItemKey::FlagCompilation, "1".to_string());
+        tag.save_to_path(&path, lofty::config::WriteOptions::default()).unwrap();
+
+        let song = get_song_from_path(path.to_str().unwrap()).expect("song should be scanned");
+        assert_eq!(song.title, "Comp Song");
+        assert_eq!(song.album_artist, "Various Artists");
+        assert_eq!(song.track_number, Some(3));
+        assert_eq!(song.disc_number, Some(2));
     }
 }

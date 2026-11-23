@@ -16,6 +16,7 @@ pub struct BasicTags<'a> {
     pub album: &'a str,
     pub album_artist: &'a str,
     pub track_number: Option<u32>,
+    pub disc_number: Option<u32>,
     pub genre: Option<&'a str>,
     pub release_year: Option<i32>,
 }
@@ -50,6 +51,10 @@ fn write_generic_tags(path: &Path, info: &BasicTags) -> Result<(), String> {
     match info.track_number {
         Some(n) => tag.set_track(n),
         None => tag.remove_track(),
+    }
+    match info.disc_number {
+        Some(d) => tag.set_disk(d),
+        None => tag.remove_disk(),
     }
     match info.genre {
         Some(g) if !g.is_empty() => tag.set_genre(g.to_string()),
@@ -94,13 +99,13 @@ pub fn write_basic_tags_replace(path: &Path, info: &BasicTags) -> Result<(), Str
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use lofty::file::TaggedFileExt;
     use lofty::tag::Accessor;
 
     /// Builds a minimal valid 16-bit mono PCM WAV containing `seconds` of silence.
-    fn silent_wav_bytes(sample_rate: u32, seconds: u32) -> Vec<u8> {
+    pub(crate) fn silent_wav_bytes(sample_rate: u32, seconds: u32) -> Vec<u8> {
         let channels: u16 = 1;
         let bits_per_sample: u16 = 16;
         let block_align = channels * bits_per_sample / 8;
@@ -140,6 +145,7 @@ mod tests {
                 album: "Al",
                 album_artist: "X",
                 track_number: Some(5),
+                disc_number: None,
                 genre: None,
                 release_year: None,
             },
@@ -173,6 +179,7 @@ mod tests {
                 album: "Al",
                 album_artist: "X",
                 track_number: None,
+                disc_number: None,
                 genre: None,
                 release_year: None,
             },
@@ -196,6 +203,7 @@ mod tests {
                 album: "Al",
                 album_artist: "X",
                 track_number: None,
+                disc_number: None,
                 genre: Some("Rock"),
                 release_year: Some(1999),
             },
@@ -218,6 +226,7 @@ mod tests {
                 album: "Al",
                 album_artist: "X",
                 track_number: None,
+                disc_number: None,
                 genre: None,
                 release_year: None,
             },
@@ -252,6 +261,7 @@ mod tests {
                 album: "Al",
                 album_artist: "Art",
                 track_number: None,
+                disc_number: None,
                 genre: None,
                 release_year: None,
             },
@@ -267,5 +277,32 @@ mod tests {
         assert_eq!(tag.title().as_deref(), Some("New"));
         let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(leftovers.len(), 1, "temp copy must be gone");
+    }
+
+    #[test]
+    fn write_basic_tags_supports_disc_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("disc.wav");
+        std::fs::write(&path, silent_wav_bytes(8000, 1)).unwrap();
+
+        let artists = vec!["Artist".to_string()];
+        write_basic_tags(
+            &path,
+            &BasicTags {
+                title: "Disc 2 Track",
+                artists: &artists,
+                album: "Two Discs",
+                album_artist: "Artist",
+                track_number: Some(1),
+                disc_number: Some(2),
+                genre: None,
+                release_year: None,
+            },
+        )
+        .unwrap();
+
+        let tagged = Probe::open(&path).unwrap().read().unwrap();
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag()).unwrap();
+        assert_eq!(tag.disk(), Some(2));
     }
 }
