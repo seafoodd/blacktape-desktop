@@ -103,12 +103,9 @@ pub fn remove_empty_parents_up_to(path: &Path, root_dir: &Path) {
         match std::fs::read_dir(parent) {
             Ok(mut entries) => {
                 if entries.next().is_none() {
-                    println!("[Cleanup] Removing empty parent directory: {:?}", parent);
+                    tracing::debug!(parent = ?parent, "Removing empty parent directory");
                     if let Err(e) = std::fs::remove_dir(parent) {
-                        eprintln!(
-                            "[Cleanup Error] Failed to remove empty parent {:?}: {}",
-                            parent, e
-                        );
+                        tracing::warn!(parent = ?parent, error = %e, "Failed to remove empty parent directory");
                         break;
                     }
                 } else {

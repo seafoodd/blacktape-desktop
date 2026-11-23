@@ -191,7 +191,7 @@ async fn open_with_retry(
         Ok((source, total)) => Ok((source, total, info)),
         Err(first_error) => {
             // The cached url may have expired: look the track up again once.
-            eprintln!("[preview] open failed ({first_error}), re-resolving");
+            tracing::warn!(error = %first_error, "Preview open failed, re-resolving");
             resolve::forget(platform, url).await;
             let fresh = resolve::resolve(app, platform, url).await?;
             wait_until_available(&fresh).await;
@@ -214,7 +214,7 @@ pub async fn open_stream(
     let started = Instant::now();
     let info = resolve::resolve(app, platform, url).await?;
     let (source, total, info) = open_with_retry(app, platform, url, info).await?;
-    println!("[stream] {platform:?} opened in {} ms", started.elapsed().as_millis());
+    tracing::info!(platform = ?platform, elapsed_ms = started.elapsed().as_millis(), "Audio stream opened");
     let duration = total.or(info.duration_ms.map(Duration::from_millis));
     Ok((source, duration))
 }

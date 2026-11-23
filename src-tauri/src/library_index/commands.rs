@@ -441,7 +441,7 @@ pub async fn get_missing_tracks(
             let guard = db.lock().await;
             if let Err(e) = guard.upsert_album_source(&fresh).await {
                 // The answer below is still correct, only the stored copy stays old.
-                eprintln!("[library_index] could not store the refreshed album source: {e}");
+                tracing::warn!("Could not store the refreshed album source: {e}");
             }
         }
         let tracks = row_tracks_of_new(&fresh);

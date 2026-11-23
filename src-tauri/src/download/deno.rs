@@ -170,7 +170,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
         .await
         .map_err(|e| e.to_string())?;
     if let Some((deno, version)) = system {
-        println!("[deno] Using the installed deno at {deno:?}");
+        tracing::info!(path = ?deno, "Using installed system deno");
         let own = get_path(app);
         if own.is_file() {
             // Windows refuses while the app's copy runs; it is then removed on a later start
@@ -208,7 +208,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
     let tag = release.tag_name.trim();
     let marker = format!("{tag} {asset}");
     if !installed || local_marker.trim() != marker {
-        println!("[deno] Installing {tag}...");
+        tracing::info!(tag = %tag, "Installing deno");
         // the tag goes into a url path: only a plain version ("v2.9.8") is accepted
         if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
             return Err(format!("unexpected deno release tag {tag:?}"));
@@ -233,7 +233,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
         fs::write(&version_file, &marker).map_err(|e| e.to_string())?;
         // a preview process started before deno was there runs without it
         crate::preview::resolve::restart_spare(app.clone());
-        println!("[deno] Install complete!");
+        tracing::info!("Deno install complete");
     }
     tools::mark_checked(&stamp);
     tools::ready(app, Tool::Deno, tools::version_of_marker(&marker), Source::App, &files);

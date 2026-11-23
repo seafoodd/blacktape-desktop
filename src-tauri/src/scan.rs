@@ -62,9 +62,9 @@ where
     let entries: Vec<PathBuf> = collect_audio_paths(&dir);
     let total = entries.len();
 
-    println!(
-        "[Scanner] Found {} matching files by extension on disk. Inspecting containers...",
-        total
+    tracing::info!(
+        total = total,
+        "Found matching audio files by extension on disk; inspecting containers"
     );
 
     on_progress(0, total);
@@ -82,11 +82,11 @@ where
             let read = match crate::source_tag::read_file(&path) {
                 Ok(read) => read,
                 Err(err) => {
-                    eprintln!(
-                        "[Scanner Error] Reading tags failed for extension '{:?}' at {:?}: {}",
-                        path.extension().unwrap_or_default(),
-                        path,
-                        err
+                    tracing::warn!(
+                        extension = ?path.extension().unwrap_or_default(),
+                        path = ?path,
+                        error = %err,
+                        "Reading audio tags failed"
                     );
                     return None;
                 }
@@ -98,17 +98,21 @@ where
             if read.legacy {
                 if let Some(source) = &file_source {
                     if let Err(err) = crate::source_tag::write_source(&path, source) {
-                        eprintln!("[Scanner] Could not move the source out of the comment of {:?}: {}", path, err);
+                        tracing::warn!(
+                            path = ?path,
+                            error = %err,
+                            "Could not move source out of comment"
+                        );
                     }
                 }
             }
 
-            // Optional metrics tracking print
-            println!(
-                "[Scanner Success] Parsed {:?} - Format: {:?} | Bitrate: {:?} kbps",
-                path.file_name().unwrap_or_default(),
-                tagged_file.file_type(),
-                tagged_file.properties().audio_bitrate()
+            // Metrics tracking
+            tracing::debug!(
+                file = ?path.file_name().unwrap_or_default(),
+                format = ?tagged_file.file_type(),
+                bitrate_kbps = ?tagged_file.properties().audio_bitrate(),
+                "Parsed audio track"
             );
 
             let tag = tagged_file
@@ -235,7 +239,7 @@ pub fn old_scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
         let tagged_file = match Probe::open(&path).and_then(Probe::read) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("{e}");
+                tracing::warn!(path = ?path, error = %e, "Failed to read audio tags");
                 continue;
             }
         };
@@ -339,11 +343,11 @@ pub fn old_scan_music_dir(dir: String, covers_dir: &PathBuf) -> Vec<Song> {
 }
 
 pub fn get_song_from_path(path: &str) -> Option<Song> {
-    println!("get song from path");
+    tracing::debug!(path = %path, "Reading song metadata from path");
     let tagged_file = match Probe::open(path).and_then(|p| p.read()) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to read tags for {path}: {e}");
+            tracing::warn!(path = %path, error = %e, "Failed to read tags for song");
             return None;
         }
     };

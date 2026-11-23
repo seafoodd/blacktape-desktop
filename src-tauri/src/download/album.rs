@@ -112,7 +112,7 @@ async fn record_album_source(
         .unwrap_or(0);
     let db = db_state.lock().await;
     if let Err(e) = write_album_source(&db, platform, url, album, skipped, now).await {
-        eprintln!("[album_sources] could not store the source of {url}: {e}");
+        tracing::error!(url = %url, error = %e, "Could not store album source");
     }
 }
 

@@ -64,7 +64,7 @@ where
         Ok(Err(e)) => format!("error: {e}"),
         Err(_) => format!("timeout after {} ms", timeout.as_millis()),
     };
-    eprintln!("youtube_fast fallback: {reason}");
+    tracing::warn!("youtube_fast fallback: {reason}");
     slow.await
 }
 

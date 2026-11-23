@@ -32,14 +32,14 @@ pub async fn cookies_are_ready(
     window: WebviewWindow,
     payload: String,
 ) -> Result<(), String> {
-    println!("[blacktape::auth] IPC Cookie payload received!");
+    tracing::debug!("IPC Cookie payload received");
 
     if let Err(e) = write_netscape_cookies(&app, &payload).await {
-        eprintln!("[blacktape::auth ERROR] Failed to write cookie file: {}", e);
+        tracing::error!(error = %e, "Failed to write cookie file");
         return Err(e);
     }
 
-    println!("[blacktape::auth] Cookies successfully stored. Closing auth window.");
+    tracing::info!("Cookies successfully stored; closing auth window");
     let _ = window.close();
     Ok(())
 }
@@ -56,7 +56,7 @@ pub async fn launch_youtube_login(
 ) -> Result<(), String> {
     let _guard = auth_lock.0.lock().await;
 
-    println!("[blacktape::auth] launch_youtube_login command invoked.");
+    tracing::info!("launch_youtube_login invoked");
 
     if let Some(existing_win) = app.get_webview_window(LOGIN_WINDOW) {
         if force_visible {
@@ -110,11 +110,11 @@ pub async fn launch_youtube_login(
     "#)
         .on_navigation(move |url| {
             // Without the query: it carries the exported cookies (tauri://save-cookies) and Google's sign-in tokens.
-            println!(
-                "[blacktape::auth] Navigating to: {}://{}{}",
-                url.scheme(),
-                url.host_str().unwrap_or_default(),
-                url.path()
+            tracing::debug!(
+                scheme = url.scheme(),
+                host = url.host_str().unwrap_or_default(),
+                path = url.path(),
+                "Auth webview navigating"
             );
             let host = url.host_str();
 
@@ -131,9 +131,9 @@ pub async fn launch_youtube_login(
                     .to_string();
 
                 tauri::async_runtime::spawn(async move {
-                    println!("[blacktape::auth] Saving authenticated session cookies...");
+                    tracing::info!("Saving authenticated session cookies");
                     if let Err(e) = write_netscape_cookies(&app_handle_task, &clean_cookies).await {
-                        eprintln!("[blacktape::auth ERROR] Failed to write cookies: {}", e);
+                        tracing::error!(error = %e, "Failed to write cookies");
                     }
 
                     // Mark auth as successful before closing window
@@ -155,7 +155,7 @@ pub async fn launch_youtube_login(
             // 2. Unhide window if user lands on Google Accounts login
             // (the cookie-consent page, shown to signed-out visitors in the EU, also needs the user)
             if host == Some("accounts.google.com") || host == Some("consent.youtube.com") {
-                println!("[blacktape::auth] Login required. Showing window to user...");
+                tracing::info!("Login required; showing auth window to user");
                 if let Some(win) = app_handle_clone.get_webview_window(LOGIN_WINDOW) {
                     let _ = win.show();
                     let _ = win.set_focus();
@@ -212,28 +212,25 @@ pub async fn launch_youtube_login(
 
     // Check auth flag: If user manually closed window without logging in, CANCEL!
     if !is_authenticated.load(Ordering::SeqCst) {
-        println!("[blacktape::auth] Window closed without valid authentication. Canceling batch!");
+        tracing::warn!("Auth window closed without valid authentication, cancelling batch");
         return Err("Authentication canceled by user.".to_string());
     }
 
-    println!("[blacktape::auth] Authentication verified. Proceeding with download batch.");
+    tracing::info!("Authentication verified, proceeding with download batch");
     crate::auth::account::notify_changed(&app, crate::auth::account::AccountProvider::Youtube);
     Ok(())
 }
 
 async fn write_netscape_cookies(app: &AppHandle, cookies_str: &str) -> Result<(), String> {
-    println!(
-        "[blacktape::auth] write_netscape_cookies invoked with string length: {}",
-        cookies_str.len()
+    tracing::debug!(
+        length = cookies_str.len(),
+        "write_netscape_cookies invoked"
     );
 
     let cookie_file_path = cookie_file(app)?;
 
     let file = File::create(&cookie_file_path).await.map_err(|e| {
-        eprintln!(
-            "[blacktape::auth ERROR] Failed to create cookie file: {}",
-            e
-        );
+        tracing::error!(error = %e, "Failed to create cookie file");
         e.to_string()
     })?;
 
@@ -258,24 +255,18 @@ async fn write_netscape_cookies(app: &AppHandle, cookies_str: &str) -> Result<()
 
             let line = format!(".youtube.com\tTRUE\t/\tTRUE\t0\t{}\t{}\n", name, value);
             writer.write_all(line.as_bytes()).await.map_err(|e| {
-                eprintln!("[blacktape::auth ERROR] Failed writing cookie line: {}", e);
+                tracing::error!(error = %e, "Failed writing cookie line");
                 e.to_string()
             })?;
         }
     }
-    println!(
-        "[blacktape::auth] Parsed and prepared {} cookies to write.",
-        cookie_count
-    );
+    tracing::debug!(count = cookie_count, "Parsed and prepared cookies to write");
 
     writer.flush().await.map_err(|e| {
-        eprintln!("[blacktape::auth ERROR] Failed to flush BufWriter: {}", e);
+        tracing::error!(error = %e, "Failed to flush BufWriter");
         e.to_string()
     })?;
 
-    println!(
-        "[blacktape::auth SUCCESS] Authenticated yt-dlp cookies saved to: {:?}",
-        cookie_file_path
-    );
+    tracing::info!(path = ?cookie_file_path, "Authenticated yt-dlp cookies saved");
     Ok(())
 }

@@ -105,7 +105,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
     let latest = installed_marker(&release.tag_name, target_asset);
 
     if !installed || local_marker.trim() != latest {
-        println!("[ytdlp] Upgrading binary to {latest}...");
+        tracing::info!(target = %latest, "Upgrading yt-dlp binary");
         let asset_url = |name: &str| {
             release
                 .assets
@@ -128,7 +128,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
         fs::write(&version_file, &latest).map_err(|e| e.to_string())?;
         // the waiting preview process still runs the old binary
         crate::preview::resolve::restart_spare(app.clone());
-        println!("[ytdlp] Update complete!");
+        tracing::info!("yt-dlp update complete");
     }
     tools::mark_checked(&stamp);
     tools::ready(app, Tool::YtDlp, tools::version_of_marker(&latest), Source::App, &files);
@@ -137,11 +137,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
 
 pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     let now = Instant::now();
-    println!(
-        "[{:.3}s][ytdlp::execute] Executing args: {:?}",
-        now.elapsed().as_secs_f32(),
-        args
-    );
+    tracing::debug!(elapsed = ?now.elapsed(), args = ?args, "Executing yt-dlp");
 
     use crate::download::tools::{self, Tool};
     tools::wait_for(&[Tool::YtDlp, Tool::Deno], tools::PREVIEW_WAIT).await?;
@@ -161,10 +157,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     let output = cmd.output().await.map_err(|e| e.to_string())?;
 
     let duration = process_start.elapsed().as_secs_f32();
-    println!(
-        "[{:.3}s][ytdlp::execute] Process terminated with status: {}",
-        duration, output.status
-    );
+    tracing::debug!(duration_s = duration, status = %output.status, "yt-dlp process terminated");
 
     if output.status.success() {
         Ok(String::from_utf8(output.stdout)
@@ -174,10 +167,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     } else {
         let err_msg =
             String::from_utf8(output.stderr).unwrap_or_else(|_| "Execution failed".into());
-        eprintln!(
-            "[ytdlp::execute ERROR] Subprocess error message: {}",
-            err_msg
-        );
+        tracing::error!(error = %err_msg, "yt-dlp subprocess execution failed");
         tools::after_failure(app, &err_msg);
         Err(certificate_hint(&err_msg).map_or(err_msg, str::to_string))
     }
@@ -497,9 +487,12 @@ async fn download_track_internal(
     let (cookie_args, _cookie_copy) = match ctx.cookies.args(&copy_path) {
         Ok(cookies) => cookies,
         Err(err) => {
-            eprintln!(
-                "[yt-dlp] [{}] [Track {}/{}] Downloading without cookies, the cookie file could not be copied: {}",
-                ctx.session_id, track_num, total_tracks, err
+            tracing::warn!(
+                session = %ctx.session_id,
+                track = track_num,
+                total = total_tracks,
+                error = %err,
+                "Downloading without cookies, the cookie file could not be copied"
             );
             (Vec::new(), None)
         }
@@ -507,22 +500,24 @@ async fn download_track_internal(
     let args = match download_args(&track.url, &output_template.to_string_lossy(), &cookie_args, ctx.format.as_deref()) {
         Ok(args) => args,
         Err(err) => {
-            eprintln!(
-                "[yt-dlp ERROR] [{}] [Track {}/{}] {}",
-                ctx.session_id, track_num, total_tracks, err
+            tracing::error!(
+                session = %ctx.session_id,
+                track = track_num,
+                total = total_tracks,
+                error = %err,
+                "Failed to generate download args"
             );
             ctx.record_failure(err);
             return None;
         }
     };
 
-    println!(
-        "[yt-dlp] [{}] [Track {}/{}] Executing:\n  {:?} {}",
-        ctx.session_id,
-        track_num,
-        total_tracks,
-        ctx.binary_path,
-        args.join(" ")
+    tracing::debug!(
+        session = %ctx.session_id,
+        track = track_num,
+        total = total_tracks,
+        binary = ?ctx.binary_path,
+        "Executing yt-dlp command"
     );
 
     if let Some(registry) = ctx.app.try_state::<crate::download::TaskRegistry>() {
@@ -547,9 +542,12 @@ async fn download_track_internal(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(err) => {
-            eprintln!(
-                "[yt-dlp ERROR] [{}] [Track {}/{}] Process failed to execute: {}",
-                ctx.session_id, track_num, total_tracks, err
+            tracing::error!(
+                session = %ctx.session_id,
+                track = track_num,
+                total = total_tracks,
+                error = %err,
+                "yt-dlp process failed to spawn"
             );
             return None;
         }
@@ -638,9 +636,12 @@ async fn download_track_internal(
             {
                 registry.unregister_pid(&ctx.task_id, p).await;
             }
-            eprintln!(
-                "[yt-dlp ERROR] [{}] [Track {}/{}] Wait error: {}",
-                ctx.session_id, track_num, total_tracks, err
+            tracing::error!(
+                session = %ctx.session_id,
+                track = track_num,
+                total = total_tracks,
+                error = %err,
+                "yt-dlp child wait error"
             );
             return None;
         }
@@ -650,14 +651,14 @@ async fn download_track_internal(
     let stderr_str = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        eprintln!(
-            "[yt-dlp ERROR] [{}] [Track {}/{}] Exited with code {:?}\n--- STDERR ---\n{}\n--- STDOUT ---\n{}",
-            ctx.session_id,
-            track_num,
-            total_tracks,
-            status.code(),
-            stderr_str.trim(),
-            stdout_str.trim()
+        tracing::error!(
+            session = %ctx.session_id,
+            track = track_num,
+            total = total_tracks,
+            code = ?status.code(),
+            stderr = %stderr_str.trim(),
+            stdout = %stdout_str.trim(),
+            "yt-dlp process exited with error"
         );
         crate::download::tools::after_failure(&ctx.app, &stderr_str);
         let summary = failure_reason(&stderr_str, status.code());
@@ -691,12 +692,12 @@ async fn download_track_internal(
     }
 
     if !stderr_str.trim().is_empty() {
-        println!(
-            "[yt-dlp LOG] [{}] [Track {}/{}] Warnings/Info:\n{}",
-            ctx.session_id,
-            track_num,
-            total_tracks,
-            stderr_str.trim()
+        tracing::debug!(
+            session = %ctx.session_id,
+            track = track_num,
+            total = total_tracks,
+            stderr = %stderr_str.trim(),
+            "yt-dlp stderr output"
         );
     }
 
@@ -758,11 +759,11 @@ pub async fn download_batch(
     let now = Instant::now();
     let ctx = Arc::new(DownloadContext::prepare(app, output_dir, "batch", task_id).await?);
 
-    println!(
-        "[yt-dlp] [{}] Starting batch of {} tracks. Output temp dir: {:?}",
-        ctx.session_id,
-        tracks.len(),
-        ctx.temp_dir
+    tracing::info!(
+        session = %ctx.session_id,
+        tracks = tracks.len(),
+        temp_dir = ?ctx.temp_dir,
+        "Starting yt-dlp batch download"
     );
 
     if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
@@ -840,9 +841,12 @@ pub async fn download_batch(
 
             if let Some(ref path) = downloaded_file {
                 let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
-                println!(
-                    "[yt-dlp SUCCESS] [{}] [Track {}/{}] Output saved to: {:?}",
-                    ctx.session_id, track_num, total_tracks, path
+                tracing::info!(
+                    session = %ctx.session_id,
+                    track = track_num,
+                    total = total_tracks,
+                    path = ?path,
+                    "Track download saved"
                 );
 
                 let _ = app_handle.emit(
@@ -886,9 +890,13 @@ pub async fn download_batch(
 
                 Some((path.clone(), track))
             } else {
-                eprintln!(
-                    "[yt-dlp ERROR] [{}] [Track {}/{}] Process succeeded, but no output file matching '{}.*' was found in {:?}",
-                    ctx.session_id, track_num, total_tracks, track_num, ctx.temp_dir
+                tracing::error!(
+                    session = %ctx.session_id,
+                    track = track_num,
+                    total = total_tracks,
+                    temp_dir = ?ctx.temp_dir,
+                    "Process succeeded, but no output file matching '{}.*' was found",
+                    track_num
                 );
                 None
             }
@@ -902,17 +910,17 @@ pub async fn download_batch(
             Ok(None) => {}
             Err(join_err) => {
                 if !join_err.is_cancelled() {
-                    eprintln!("[yt-dlp ERROR] Task panic/join error: {}", join_err);
+                    tracing::error!(error = %join_err, "yt-dlp task panic or join error");
                 }
             }
         }
     }
 
-    println!(
-        "[yt-dlp SUMMARY] Batch finished. Downloaded {}/{} tracks in {:?}",
-        downloaded.len(),
-        total_tracks,
-        now.elapsed()
+    tracing::info!(
+        downloaded = downloaded.len(),
+        total = total_tracks,
+        elapsed = ?now.elapsed(),
+        "yt-dlp batch download finished"
     );
 
     // Nothing downloaded because every track failed: tell the user why instead of finishing silently.

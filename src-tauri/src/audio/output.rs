@@ -37,7 +37,7 @@ impl AudioOutput {
     /// The default device, or the silent output when it cannot be opened (the reason is logged).
     pub fn open_default_or_null() -> Self {
         Self::open_default().unwrap_or_else(|e| {
-            eprintln!("[audio] {e}; playing to a silent output until a device is available");
+            tracing::warn!("Audio output device unavailable ({e}); playing to silent output until device is ready");
             AudioOutput::Null(NullOutput::start())
         })
     }
@@ -71,7 +71,7 @@ impl NullOutput {
         let thread = std::thread::Builder::new()
             .name("audio-null-output".into())
             .spawn(move || drain_in_real_time(source, &flag))
-            .map_err(|e| eprintln!("[audio] cannot start the silent output thread: {e}"))
+            .map_err(|e| tracing::error!("Cannot start the silent output thread: {e}"))
             .ok();
         Self { mixer, running, thread }
     }

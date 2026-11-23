@@ -112,7 +112,7 @@ pub async fn find_album_candidates(album_artist: String, album: String) -> Vec<A
                 _ => crate::search::soundcloud::search(&q).await,
             };
             result.unwrap_or_else(|e| {
-                eprintln!("[library_index] candidate search failed: {e}");
+                tracing::warn!("Library index candidate search failed: {e}");
                 Vec::new()
             })
         });

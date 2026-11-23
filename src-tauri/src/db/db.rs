@@ -292,12 +292,12 @@ impl Database {
             Ok(Some(song)) => Ok(song),
             Ok(None) => {
                 let msg = format!("Song ID {} not found in database", song_id);
-                eprintln!("[Playback Error] {}", msg);
+                tracing::error!("{}", msg);
                 Err(msg)
             }
             Err(err) => {
                 let msg = format!("SQLx failed to decode song ID {}: {:?}", song_id, err);
-                eprintln!("[Playback Error] {}", msg);
+                tracing::error!("{}", msg);
                 Err(msg)
             }
         }

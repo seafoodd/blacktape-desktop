@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use sentry::{protocol::Event, Breadcrumb, ClientInitGuard, ClientOptions, Level};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub const TELEMETRY_SETTING_KEY: &str = "telemetry_enabled";
 pub const ONBOARDING_COMPLETED_KEY: &str = "onboarding_completed";
@@ -88,6 +89,22 @@ fn sanitize_breadcrumb(mut crumb: Breadcrumb) -> Option<Breadcrumb> {
         *msg = scrub_home_dir(msg);
     }
     Some(crumb)
+}
+
+/// Initializes the global tracing subscriber with console output and the Sentry tracing layer.
+/// Safe to call multiple times (subsequent calls in tests or restarts are no-ops).
+pub fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(false);
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(sentry::integrations::tracing::BreadcrumbLayer::default())
+        .try_init();
 }
 
 pub fn init() -> Option<ClientInitGuard> {

@@ -663,7 +663,7 @@ pub async fn trash_songs(
     if let Ok(settings) = settings {
         match auto_clean_sparing(&db, now, &settings, now).await {
             Ok(cleaned) => notify(&app, &cleaned),
-            Err(e) => eprintln!("[trash] clean after trashing failed: {e}"),
+            Err(e) => tracing::warn!("Trash clean after trashing failed: {e}"),
         }
     }
     Ok(outcome)
@@ -729,7 +729,7 @@ pub async fn set_trash_settings(
     let _ = app.emit(TRASH_CHANGED_EVENT, ());
     result.map(|outcome| {
         for failure in &outcome.failures {
-            eprintln!("[trash] clean after settings change could not delete: {failure}");
+            tracing::warn!("Trash clean after settings change could not delete: {failure}");
         }
     })
 }
@@ -749,7 +749,7 @@ pub fn spawn_auto_clean(app: AppHandle) {
 async fn run_auto_clean(app: &AppHandle) {
     let state = app.state::<DbLock>();
     if let Err(e) = state.lock().await.ensure_trash_schema().await {
-        eprintln!("[trash] could not create trash tables: {e}");
+        tracing::error!("Could not create trash tables: {e}");
         return;
     }
     let settings = {
@@ -757,7 +757,7 @@ async fn run_auto_clean(app: &AppHandle) {
         match read_settings(&guard).await {
             Ok(settings) => settings,
             Err(e) => {
-                eprintln!("[trash] auto-clean failed: {e}");
+                tracing::warn!("Trash auto-clean reading settings failed: {e}");
                 return;
             }
         }
@@ -766,11 +766,11 @@ async fn run_auto_clean(app: &AppHandle) {
     match auto_clean(&state, now_secs(), &settings).await {
         Ok(outcome) => {
             for failure in &outcome.failures {
-                eprintln!("[trash] auto-clean could not delete: {failure}");
+                tracing::warn!("Trash auto-clean could not delete: {failure}");
             }
             notify(app, &outcome);
         }
-        Err(e) => eprintln!("[trash] auto-clean failed: {e}"),
+        Err(e) => tracing::warn!("Trash auto-clean failed: {e}"),
     }
 }
 

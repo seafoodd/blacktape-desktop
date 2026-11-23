@@ -32,7 +32,7 @@ pub fn process_and_move_track(
         .map(|a| decode_html_entities(a).to_string())
         .collect();
     let album_artist = decode_html_entities(&track.album_artist).to_string();
-    println!("decoded html: {}, {}", album_artist, &track.album_artist);
+    tracing::trace!(decoded = %album_artist, raw = %track.album_artist, "Decoded album artist HTML entities");
     let album = decode_html_entities(&track.album).to_string();
     let ext = source_file
         .extension()
@@ -48,7 +48,7 @@ pub fn process_and_move_track(
         cover_path,
         platform,
     ) {
-        eprintln!("[Metadata Tagging Warning] Issue writing ID3 headers: {err}");
+        tracing::warn!(error = %err, "Issue writing metadata tags");
     }
     let clean_title = sanitize_fs(&track.title);
     let final_name = match track.track_number {

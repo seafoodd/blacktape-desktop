@@ -66,7 +66,7 @@ pub async fn parse_album_with_skipped(
     soundcloud::hydrate_playlist_tracks(&mut playlist).await?;
     let (album, skipped) = playlist_to_album(&playlist)?;
     if !skipped.is_empty() {
-        eprintln!("[SoundCloud] {}", describe_skipped(&skipped));
+        tracing::warn!("SoundCloud skipped tracks: {}", describe_skipped(&skipped));
     }
     Ok((album, skipped))
 }

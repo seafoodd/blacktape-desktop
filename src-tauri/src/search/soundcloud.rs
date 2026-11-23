@@ -66,7 +66,7 @@ pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error 
         return Err(errors.remove(0).into());
     }
     for e in errors {
-        eprintln!("[SoundCloud search] partial failure: {e}");
+        tracing::warn!("SoundCloud search partial failure: {e}");
     }
     Ok(items)
 }
@@ -153,7 +153,7 @@ async fn unavailable_set_ids(playlists: &[ScPlaylist]) -> HashSet<u64> {
     match soundcloud::fetch_tracks(&ids).await {
         Ok(fetched) => blocked_set_ids(playlists, &fetched),
         Err(e) => {
-            eprintln!("[SoundCloud search] could not check set tracks: {e}");
+            tracing::warn!("SoundCloud search could not check set tracks: {e}");
             HashSet::new()
         }
     }

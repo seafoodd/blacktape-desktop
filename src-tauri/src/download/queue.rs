@@ -53,7 +53,7 @@ pub struct TaskRegistry {
 
 impl TaskRegistry {
     pub fn kill_pid(pid: u32) {
-        println!("[Process Kill] Killing yt-dlp PID: {pid}");
+        tracing::debug!(pid = pid, "Killing child download process");
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -62,12 +62,12 @@ impl TaskRegistry {
                 .creation_flags(0x08000000)
                 .output();
             if let Ok(out) = output {
-                println!(
-                    "[Process Kill] taskkill for PID {} exited with {}. Out: {} Err: {}",
-                    pid,
-                    out.status,
-                    String::from_utf8_lossy(&out.stdout).trim(),
-                    String::from_utf8_lossy(&out.stderr).trim()
+                tracing::debug!(
+                    pid = pid,
+                    status = %out.status,
+                    stdout = %String::from_utf8_lossy(&out.stdout).trim(),
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "taskkill process result"
                 );
             }
         }
@@ -139,9 +139,10 @@ impl TaskRegistry {
 
     pub async fn register_pid(&self, task_id: &str, pid: u32) {
         if self.is_cancelled(task_id).await {
-            println!(
-                "[Process Kill] Task {} already cancelled, terminating newly registered PID {}",
-                task_id, pid
+            tracing::warn!(
+                task_id = %task_id,
+                pid = pid,
+                "Task already cancelled, terminating newly registered PID"
             );
             Self::kill_pid(pid);
             return;
@@ -329,15 +330,16 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
     let (tx, mut rx) = mpsc::unbounded_channel::<DownloadTask>();
 
     tauri::async_runtime::spawn(async move {
-        println!("[Queue Worker] Core pipeline active. Awaiting jobs...");
+        tracing::info!("Download queue core pipeline active, awaiting jobs");
 
         while let Some(task) = rx.recv().await {
             let task_id = task.id.clone();
             let app_clone = app.clone();
+            let task_id_for_log = task_id.clone();
 
             let join_handle = tokio::spawn(async move {
                 if let Err(e) = handle_download_task(task, app_clone).await {
-                    eprintln!("[Queue Worker] Task failed: {e}");
+                    tracing::error!(task_id = %task_id_for_log, error = %e, "Download task failed");
                 }
             });
 

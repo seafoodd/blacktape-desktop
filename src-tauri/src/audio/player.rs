@@ -40,7 +40,7 @@ pub const PLAYBACK_ERROR_EVENT: &str = "playback-error";
 /// panic, and the next command overwrites whatever was half done.
 pub fn lock_player(state: &Mutex<AudioPlayer>) -> MutexGuard<'_, AudioPlayer> {
     state.lock().unwrap_or_else(|poisoned| {
-        eprintln!("[audio] recovering the player after a panic in another thread");
+        tracing::warn!("Audio player recovering after a panic in another thread");
         state.clear_poison();
         poisoned.into_inner()
     })
@@ -346,9 +346,10 @@ impl AudioPlayer {
                 let state = handle.state::<Mutex<AudioPlayer>>();
                 let mut player = lock_player(&state);
                 if player.current_device_id.as_ref() != Some(&default_id) {
-                    println!(
-                        "[audio] default output device changed from {:?} to {default_id:?}",
-                        player.current_device_id
+                    tracing::info!(
+                        from = ?player.current_device_id,
+                        to = ?default_id,
+                        "Default audio output device changed"
                     );
                     player.reconnect_default_device(default_id);
                 }
@@ -438,7 +439,7 @@ impl AudioPlayer {
                 let duration = effective_duration(source.total_duration(), song.duration_ms);
                 self.append_pending(cursor, job.key, source, duration);
             }
-            Err(e) => eprintln!("[audio] cannot decode the next song {:?} ahead of time: {e}", song.title),
+            Err(e) => tracing::warn!("Cannot decode next song {:?} ahead of time: {e}", song.title),
         }
     }
 
@@ -574,7 +575,7 @@ impl AudioPlayer {
 
     /// `song` (the current song) cannot be played: the player stops on it and the UI is told why.
     fn fail_current(&mut self, song: Song, message: &str) {
-        eprintln!("[audio] cannot play {:?} ({}): {message}", song.title, song.path);
+        tracing::error!("Cannot play {:?} ({}): {message}", song.title, song.path);
         let error = PlaybackError { title: song.title.clone(), message: message.to_string() };
         self.current_song = Some(song);
         self.duration = None;
@@ -935,12 +936,15 @@ impl AudioPlayer {
         let fraction = clamp_fraction(fraction);
         let kind = self.current_source_kind();
         let before = self.seek_offset + self.player.get_pos();
-        println!(
-            "[seek] request fraction={fraction:.4} song={:?} kind={kind} paused={} queued_sources={} pos_before={before:?} stream_loading={:?}",
-            self.current_song.as_ref().map(|s| s.title.as_str()),
-            self.player.is_paused(),
-            self.player.len(),
-            self.stream_loading,
+        tracing::debug!(
+            fraction = fraction,
+            song = ?self.current_song.as_ref().map(|s| s.title.as_str()),
+            kind = %kind,
+            paused = self.player.is_paused(),
+            queued = self.player.len(),
+            pos_before = ?before,
+            stream_loading = ?self.stream_loading,
+            "Seek requested"
         );
 
         let duration = self.duration.filter(|d| !d.is_zero()).or_else(|| {
@@ -951,7 +955,7 @@ impl AudioPlayer {
         });
         let Some(duration) = duration else {
             let msg = "seek ignored: the song's length is unknown".to_string();
-            eprintln!("[seek] FAILED: {msg}");
+            tracing::warn!("Seek failed: {msg}");
             return Err(msg);
         };
         self.duration = Some(duration);
@@ -960,22 +964,22 @@ impl AudioPlayer {
 
         if self.player.len() < 1 && self.stream_loading.is_some() {
             let msg = "seek ignored: the stream is still loading".to_string();
-            eprintln!("[seek] FAILED: {msg}");
+            tracing::warn!("Seek failed: {msg}");
             return Err(msg);
         }
         if self.player.len() < 1 {
-            println!("[seek] nothing is queued in the player: reloading the current song");
+            tracing::debug!("Nothing is queued in player during seek; reloading current song");
             if let Some(song) = self.current_song.clone() {
                 self.play(song);
                 return Ok(());
             }
             let msg = "seek ignored: nothing is playing".to_string();
-            eprintln!("[seek] FAILED: {msg}");
+            tracing::warn!("Seek failed: {msg}");
             return Err(msg);
         }
 
         if remaining < Duration::from_secs(1) {
-            println!("[seek] target {target:?} is within 1 s of the end ({duration:?}): the song counts as ended");
+            tracing::debug!(target = ?target, duration = ?duration, "Seek target is within 1s of end; song counts as ended");
             self.advance_after_end();
             return Ok(());
         }
@@ -985,23 +989,28 @@ impl AudioPlayer {
         let seek_took = seek_started.elapsed();
         if let Err(e) = result {
             let msg = format!("the source cannot seek to {target:?} ({kind}): {e:?}");
-            eprintln!("[seek] FAILED: {msg} (try_seek took {seek_took:?})");
+            tracing::warn!(error = ?e, took = ?seek_took, "Seek failed: {msg}");
             return Err(msg);
         }
 
         // rodio's tracker is absolute after a seek
         let landed = self.player.get_pos();
         if let Err(msg) = check_seek_landed(target, landed) {
-            eprintln!(
-                "[seek] FAILED: try_seek returned Ok but {msg} ({kind}, queued_sources={}, try_seek took {seek_took:?})",
-                self.player.len()
+            tracing::warn!(
+                took = ?seek_took,
+                queued = self.player.len(),
+                "Seek landing check failed: {msg} ({kind})"
             );
             return Err(msg);
         }
         self.seek_offset = Duration::ZERO;
-        println!(
-            "[seek] ok: target={target:?} landed={landed:?} duration={duration:?} try_seek={seek_took:?} total={:?}",
-            started.elapsed()
+        tracing::debug!(
+            target = ?target,
+            landed = ?landed,
+            duration = ?duration,
+            try_seek = ?seek_took,
+            total = ?started.elapsed(),
+            "Seek succeeded"
         );
 
         let target_ms = i64::try_from(target.as_millis()).unwrap_or(0);
@@ -1139,7 +1148,7 @@ impl AudioPlayer {
                     self.player.play();
                 }
             }
-            Err(e) => eprintln!("Failed to reopen {} after tag edit: {e}", song.path),
+            Err(e) => tracing::error!(path = %song.path, error = %e, "Failed to reopen track after tag edit"),
         }
     }
 
@@ -1194,7 +1203,7 @@ impl AudioPlayer {
             }
         });
         if let Err(e) = spawned {
-            eprintln!("[discord] cannot start the presence thread: {e}");
+            tracing::error!("Cannot start Discord presence worker thread: {e}");
         }
         tx
     }
@@ -1206,7 +1215,7 @@ impl AudioPlayer {
             match DiscordRpcClient::new(handle.clone()) {
                 Ok(created) => *client = Some(created),
                 Err(e) => {
-                    eprintln!("[discord] cannot create the client: {e}");
+                    tracing::error!("Cannot create Discord RPC client: {e}");
                     return;
                 }
             }
@@ -1216,7 +1225,7 @@ impl AudioPlayer {
             return;
         }
         if let Err(e) = discord.update_song(&update.song, update.duration_ms, update.position_ms, update.paused) {
-            eprintln!("[discord] update failed, disconnecting: {e}");
+            tracing::warn!("Discord RPC update failed, disconnecting: {e}");
             discord.is_connected = false;
         }
     }
@@ -1259,7 +1268,7 @@ impl AudioPlayer {
         let output = match AudioOutput::open_default() {
             Ok(output) => output,
             Err(e) => {
-                eprintln!("[audio] keeping the previous output: {e}");
+                tracing::warn!("Cannot switch default audio output, keeping previous: {e}");
                 return;
             }
         };
@@ -1424,7 +1433,7 @@ impl AudioPlayer {
         match result {
             Ok((source, duration)) => self.start_source(song, source, duration),
             Err(message) => {
-                eprintln!("[stream] could not open {url}: {message}");
+                tracing::error!(url = %url, error = %message, "Could not open audio stream");
                 let _ = self.handle.emit(
                     "stream-error",
                     serde_json::json!({ "url": url, "message": message }),
@@ -1514,7 +1523,7 @@ impl AudioPlayer {
             player.preparing = None;
             match result {
                 Ok((source, duration)) => player.prepared = Some((url, source, duration)),
-                Err(e) => eprintln!("[stream] could not prepare {url}: {e}"),
+                Err(e) => tracing::warn!(url = %url, error = %e, "Could not prepare next stream track"),
             }
         });
     }

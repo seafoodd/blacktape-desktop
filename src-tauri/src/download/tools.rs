@@ -298,7 +298,7 @@ where
         match attempt().await {
             Ok(value) => return Ok(value),
             Err(f) if f.retry && n < attempts => {
-                eprintln!("[tools] attempt {n} failed, retrying: {}", f.message);
+                tracing::warn!(attempt = n, error = %f.message, "Tool download attempt failed, retrying");
                 tokio::time::sleep(pause(n)).await;
                 n += 1;
             }
@@ -530,7 +530,7 @@ pub fn after_failure(app: &AppHandle, stderr: &str) {
     let last = last_checked(&stamp).unwrap_or(0).max(LAST_ATTEMPT.load(Ordering::Relaxed));
     if due(Some(last), now, FAILURE_CHECK_GAP) {
         LAST_ATTEMPT.store(now, Ordering::Relaxed);
-        println!("[tools] yt-dlp failed in a way an update may fix; checking for one");
+        tracing::info!("yt-dlp failed in a way an update may fix; checking for update");
         spawn_check(app.clone(), Tool::YtDlp, true);
     }
 }
@@ -556,7 +556,7 @@ pub async fn check(app: AppHandle, tool: Tool, force: bool) {
         Tool::Ffmpeg => crate::download::ffmpeg::check_and_update(&app, force).await,
     };
     if let Err(e) = result {
-        eprintln!("[tools] {} setup failed: {e}", tool.label());
+        tracing::error!(tool = tool.label(), error = %e, "Tool setup failed");
         // a swap that failed half-way can leave no binary behind
         let still_usable = installed(&app, tool);
         update(&app, tool, |s| {

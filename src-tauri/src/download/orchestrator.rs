@@ -86,7 +86,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                     {
                         Ok(res) => Some(res),
                         Err(e) => {
-                            eprintln!("[download] album route of {url} failed ({e}); downloading it as a single");
+                            tracing::warn!(url = %url, error = %e, "Album route failed; downloading as a single");
                             None
                         }
                     }
@@ -226,9 +226,10 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
             task.platform,
         ) {
             Ok(song) => new_songs.push(song),
-            Err(err) => eprintln!(
-                "[Post-Processor Error] Mapping failed for {}: {err}",
-                track.title
+            Err(err) => tracing::error!(
+                title = %track.title,
+                error = %err,
+                "Post-processor track mapping failed"
             ),
         }
     }
@@ -242,9 +243,9 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
         }
         let db_state = app_handle.state::<tokio::sync::Mutex<Database>>();
         let db = db_state.lock().await;
-        println!("Inserting songs to db: {new_songs:?}");
+        tracing::debug!(count = new_songs.len(), "Inserting songs to DB");
         if let Err(e) = db.insert_songs(new_songs).await {
-            eprintln!("[Queue Worker] DB Insertion error: {e}");
+            tracing::error!(error = %e, "DB insertion error");
         }
     }
 

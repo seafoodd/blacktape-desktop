@@ -109,7 +109,7 @@ fn gunzip_file(gz: &Path, dest: &Path) -> Result<(), String> {
 pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String> {
     use crate::download::tools::{self, Source, Tool};
     if let Some(dir) = tauri::async_runtime::spawn_blocking(system_dir).await.map_err(|e| e.to_string())? {
-        println!("[ffmpeg] Using the installed ffmpeg in {dir:?}");
+        tracing::info!(dir = ?dir, "Using installed system ffmpeg");
         tools::ready(app, Tool::Ffmpeg, None, Source::System, &[]);
         return Ok(());
     }
@@ -137,7 +137,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
     let release: GithubRelease = tools::get_json(&client, RELEASE_API).await?;
     let marker = format!("{} {suffix}", release.tag_name.trim());
     if !installed || local_marker.trim() != marker {
-        println!("[ffmpeg] Installing {}...", release.tag_name);
+        tracing::info!(tag = %release.tag_name, "Installing ffmpeg");
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         for (tool, target) in TOOLS.iter().zip(&files) {
             let name = asset_name(tool, suffix);
@@ -167,7 +167,7 @@ pub async fn check_and_update(app: &AppHandle, force: bool) -> Result<(), String
             tools::swap_in(&partial, target)?;
         }
         fs::write(&version_file, &marker).map_err(|e| e.to_string())?;
-        println!("[ffmpeg] Install complete!");
+        tracing::info!("ffmpeg install complete");
     }
     tools::mark_checked(&stamp);
     tools::ready(app, Tool::Ffmpeg, tools::version_of_marker(&marker), Source::App, &files);

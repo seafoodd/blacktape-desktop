@@ -109,7 +109,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
     if track_downloads.is_empty() {
         return Err("The album was fetched successfully, but contained 0 tracks.".to_string());
     }
-    println!("track downloads {track_downloads:#?}");
+    tracing::debug!(count = track_downloads.len(), "Extracted track downloads for YouTube album");
     Ok(AlbumDownload {
         title,
         artists,

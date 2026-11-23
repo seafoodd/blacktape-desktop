@@ -24,7 +24,7 @@ impl MediaControls {
         match Self::create(window, app_handle) {
             Ok(controls) => Self { controls: Some(controls) },
             Err(e) => {
-                eprintln!("[media controls] unavailable, continuing without them: {e}");
+                tracing::warn!("Media controls unavailable, continuing without them: {e}");
                 Self { controls: None }
             }
         }
@@ -66,7 +66,7 @@ impl MediaControls {
     pub fn update_metadata(&mut self, metadata: MediaMetadata) {
         if let Some(controls) = self.controls.as_mut() {
             if let Err(e) = controls.set_metadata(metadata) {
-                eprintln!("[media controls] cannot set metadata: {e:?}");
+                tracing::warn!("Media controls cannot set metadata: {e:?}");
             }
         }
     }
@@ -86,7 +86,7 @@ impl MediaControls {
     fn set_playback(&mut self, playback: MediaPlayback) {
         if let Some(controls) = self.controls.as_mut() {
             if let Err(e) = controls.set_playback(playback) {
-                eprintln!("[media controls] cannot set the playback state: {e:?}");
+                tracing::warn!("Media controls cannot set playback state: {e:?}");
             }
         }
     }

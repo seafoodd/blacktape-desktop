@@ -84,7 +84,7 @@ async fn scan_music(
     }
 
     if !ids_to_remove.is_empty() {
-        println!("Pruning {} missing songs...", ids_to_remove.len());
+        tracing::info!(count = ids_to_remove.len(), "Pruning missing songs from DB");
         db.delete_songs(ids_to_remove)
             .await
             .map_err(|e| e.to_string())?;
@@ -125,7 +125,7 @@ async fn scan_music(
     // still has into files that lack it, so later scans keep it.
     for (path, source) in scan::source_urls_to_backfill(&songs, &db_songs) {
         if let Err(e) = source_tag::write_source(&path, &source) {
-            eprintln!("[Scanner] Could not store the source url in {path:?}: {e}");
+            tracing::warn!(path = ?path, error = %e, "Could not store source URL in file tag");
         }
     }
     Ok(db_songs)
@@ -171,8 +171,8 @@ async fn get_search_suggestions(query: String, platforms: Vec<Platform>) -> Vec<
     while let Some(res) = tasks.join_next().await {
         match res {
             Ok(Ok(results)) => raw_suggestions.extend(results),
-            Ok(Err(e)) => eprintln!("Platform search error: {e}"),
-            Err(e) => eprintln!("Task join error: {e}"),
+            Ok(Err(e)) => tracing::warn!("Platform search error: {e}"),
+            Err(e) => tracing::error!("Task join error in search suggestions: {e}"),
         }
     }
 
@@ -239,7 +239,7 @@ async fn get_lyrics(
     let lyrics_source = match fetch_handle.await {
         Ok(result) => result?,
         Err(e) => {
-            eprintln!("Lyrics fetch task panicked or cancelled: {e}");
+            tracing::error!("Lyrics fetch task panicked or cancelled: {e}");
             return Err("Failed to fetch lyrics due to an internal error".to_string());
         }
     };
@@ -339,7 +339,7 @@ async fn refetch_lyrics(
     let lyrics_source = match fetch_handle.await {
         Ok(result) => result?,
         Err(e) => {
-            eprintln!("Lyrics refetch task panicked or cancelled: {e}");
+            tracing::error!("Lyrics refetch task panicked or cancelled: {e}");
             return Err("Failed to refetch lyrics due to an internal error".to_string());
         }
     };
@@ -405,7 +405,7 @@ async fn save_song_with_player(
     // Preferred: write a copy and swap it in. The player keeps reading the old file
     // handle, so playback is not touched at all and no lock is needed.
     if let Err(e) = song_edit::write_song_file_replace(&song, info) {
-        eprintln!("[tag edit] atomic replace failed ({e}); falling back to in-place write");
+        tracing::warn!("Atomic replace failed ({e}); falling back to in-place write");
         write_song_in_place(&song, player, id, info)?;
     }
     song_edit::update_song_db(db, id, info).await
@@ -423,11 +423,11 @@ fn write_song_in_place(
     let is_current = current_file.is_some();
     let bytes = current_file.and_then(|path| match std::fs::metadata(&path) {
         Ok(meta) if meta.len() <= MAX_IN_MEMORY_BYTES => std::fs::read(&path)
-            .map_err(|e| eprintln!("[tag edit] cannot read {path} into memory: {e}"))
+            .map_err(|e| tracing::warn!("Cannot read {path} into memory: {e}"))
             .ok(),
         Ok(_) => None,
         Err(e) => {
-            eprintln!("[tag edit] cannot inspect {path}: {e}");
+            tracing::warn!("Cannot inspect {path}: {e}");
             None
         }
     });
@@ -446,7 +446,7 @@ fn write_song_in_place(
         let suspended = match handover {
             Ok(()) => None,
             Err(e) => {
-                eprintln!("[tag edit] in-memory handover failed ({e}); falling back");
+                tracing::warn!("In-memory handover failed ({e}); falling back");
                 p.release_song_file(id)
             }
         };
@@ -593,9 +593,9 @@ async fn download(
 ) -> Result<String, String> {
     if platform == Platform::Youtube {
         let res = launch_youtube_login(app_handle.clone(), false, auth_lock).await;
-        println!("launch_youtube_login res: {res:?}");
+        tracing::debug!("launch_youtube_login res: {res:?}");
         if res.is_err() {
-            eprintln!("[blacktape:lib.rs ERR] auth_window_closed");
+            tracing::warn!("YouTube auth window closed or failed");
             return Err("auth_window_closed".to_string());
         }
     }
@@ -683,7 +683,7 @@ async fn cancel_download(
     task_registry: State<'_, TaskRegistry>,
     task_id: String,
 ) -> Result<(), String> {
-    println!("[Cancel] Cancelling download task: {}", task_id);
+    tracing::info!(task_id = %task_id, "Cancelling download task");
     task_registry.mark_cancelled(&task_id).await;
     task_registry.kill_pids_for_task(&task_id).await;
 
@@ -696,7 +696,7 @@ async fn cancel_download(
             registry_clone.kill_pids_for_task(&task_id_clone).await;
 
             if let Some(temp_dir) = info.temp_dir {
-                println!("[Cancel Cleanup] Deleting temp dir: {:?}", temp_dir);
+                tracing::debug!(dir = ?temp_dir, "Deleting temp dir for cancelled download");
                 let mut deleted = false;
                 for attempt in 0..25 {
                     if !temp_dir.exists() {
@@ -704,26 +704,22 @@ async fn cancel_download(
                         break;
                     }
                     if let Err(e) = crate::utils::force_remove_dir_all(&temp_dir) {
-                        eprintln!(
-                            "[Cancel Cleanup] Retrying deleting temp dir {:?} (attempt {}): {e}",
-                            temp_dir, attempt
+                        tracing::warn!(
+                            dir = ?temp_dir,
+                            attempt = attempt,
+                            error = %e,
+                            "Retrying deleting temp dir"
                         );
                         registry_clone.kill_pids_for_task(&task_id_clone).await;
                         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                     } else {
                         deleted = true;
-                        println!(
-                            "[Cancel Cleanup] Successfully deleted temp dir: {:?}",
-                            temp_dir
-                        );
+                        tracing::debug!(dir = ?temp_dir, "Successfully deleted temp dir");
                         break;
                     }
                 }
                 if !deleted {
-                    eprintln!(
-                        "[Cancel Cleanup] Failed to delete temp dir after retries: {:?}",
-                        temp_dir
-                    );
+                    tracing::error!(dir = ?temp_dir, "Failed to delete temp dir after retries");
                 }
             }
 
@@ -816,6 +812,7 @@ fn quits_app(label: &str, event: &tauri::WindowEvent) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    telemetry::init_tracing();
     let _sentry_guard = telemetry::init();
 
     let mut builder = tauri::Builder::default()
