@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - master
   workflow_dispatch:
 
 concurrency:
@@ -15,8 +17,46 @@ env:
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
+  check-version:
+    name: Check if release needed
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          echo "Current package.json version: $VERSION (tag: $TAG)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Workflow dispatch triggered; proceeding with release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ]; then
+            echo "Tag push triggered; proceeding with release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            git fetch --tags --force
+            if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1 || gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release or tag $TAG already exists; skipping release build."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New version $TAG detected on master; triggering release build."
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   publish-tauri:
     name: Build & Publish Tauri App
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
     permissions:
       contents: write
     strategy:
@@ -115,7 +155,8 @@ jobs:
 
   finalize:
     name: Release notes
-    needs: publish-tauri
+    needs: [check-version, publish-tauri]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
