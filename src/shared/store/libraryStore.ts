@@ -406,6 +406,79 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       });
     });
 
+    let trackSavedDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    await listen<{
+      task_id: string;
+      track_index: number;
+      song: any;
+    }>("download-track-saved", (event) => {
+      const { task_id, track_index, song } = event.payload;
+
+      set((state) => {
+        const existing = state.activeDownloads[task_id];
+        if (!existing) return {};
+
+        const tracks = [...existing.tracks];
+        while (tracks.length <= track_index) {
+          tracks.push({
+            title: song?.title || `Track ${tracks.length + 1}`,
+            percent: 0,
+            status: "pending",
+            trackNumber: tracks.length + 1,
+          });
+        }
+
+        tracks[track_index] = {
+          ...tracks[track_index],
+          title: song?.title || tracks[track_index].title,
+          percent: 100,
+          status: "completed",
+        };
+
+        const totalTracks = tracks.length;
+        const totalPercentSum = tracks.reduce((sum, t) => sum + t.percent, 0);
+        const overallPercent =
+          totalTracks > 0 ? Math.round(totalPercentSum / totalTracks) : 100;
+
+        return {
+          activeDownloads: {
+            ...state.activeDownloads,
+            [task_id]: {
+              ...existing,
+              tracks,
+              overallPercent,
+            },
+          },
+        };
+      });
+
+      if (song?.source_url) {
+        invoke("swap_streams_for_downloads", { songs: [song] }).catch((e) =>
+          console.error("swap_streams_for_downloads per-track error:", e),
+        );
+      }
+
+      if (trackSavedDebounceTimer) {
+        clearTimeout(trackSavedDebounceTimer);
+      }
+      trackSavedDebounceTimer = setTimeout(async () => {
+        trackSavedDebounceTimer = null;
+        get()
+          .fetchTabs()
+          .catch((e) => console.error("Auto-fetch tabs on track saved failed", e));
+
+        const { selectedTab } = get();
+        if (selectedTab) {
+          try {
+            const albums = await getArtistAlbums(selectedTab);
+            set({ albums });
+          } catch (e) {
+            console.error("Auto-fetch albums on track saved failed", e);
+          }
+        }
+      }, 150);
+    });
+
     await listen<{
       task_id: string;
       current: number;
