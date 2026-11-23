@@ -49,6 +49,23 @@ fn scrub_home_dir(text: &str) -> String {
     cleaned
 }
 
+fn scrub_value(val: &mut sentry::protocol::Value) {
+    match val {
+        sentry::protocol::Value::String(s) => *s = scrub_home_dir(s),
+        sentry::protocol::Value::Array(arr) => {
+            for v in arr {
+                scrub_value(v);
+            }
+        }
+        sentry::protocol::Value::Object(map) => {
+            for v in map.values_mut() {
+                scrub_value(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn sanitize_event(mut event: Event<'static>) -> Option<Event<'static>> {
     if !is_enabled() {
         return None;
@@ -76,6 +93,13 @@ fn sanitize_event(mut event: Event<'static>) -> Option<Event<'static>> {
         if let Some(ref mut msg) = crumb.message {
             *msg = scrub_home_dir(msg);
         }
+        for val in crumb.data.values_mut() {
+            scrub_value(val);
+        }
+    }
+
+    for val in event.extra.values_mut() {
+        scrub_value(val);
     }
 
     Some(event)
@@ -87,6 +111,9 @@ fn sanitize_breadcrumb(mut crumb: Breadcrumb) -> Option<Breadcrumb> {
     }
     if let Some(ref mut msg) = crumb.message {
         *msg = scrub_home_dir(msg);
+    }
+    for val in crumb.data.values_mut() {
+        scrub_value(val);
     }
     Some(crumb)
 }
@@ -359,6 +386,24 @@ mod tests {
             };
             let res = sanitize_breadcrumb(crumb).expect("breadcrumb should be retained");
             assert!(res.message.unwrap().contains("<HOME>"));
+
+            let mut data_map = std::collections::BTreeMap::new();
+            data_map.insert("path".to_string(), sentry::protocol::Value::String(format!("{home}/music/song.mp3")));
+            data_map.insert(
+                "nested".to_string(),
+                sentry::protocol::Value::Array(vec![sentry::protocol::Value::String(format!("{home}/cache"))]),
+            );
+            let crumb_with_data = Breadcrumb {
+                data: data_map,
+                ..Default::default()
+            };
+            let res_data = sanitize_breadcrumb(crumb_with_data).expect("breadcrumb should be retained");
+            let path_val = res_data.data.get("path").unwrap().as_str().unwrap();
+            assert!(path_val.contains("<HOME>"));
+            assert!(!path_val.contains(&home));
+            let nested_val = res_data.data.get("nested").unwrap().as_array().unwrap();
+            assert!(nested_val[0].as_str().unwrap().contains("<HOME>"));
+            assert!(!nested_val[0].as_str().unwrap().contains(&home));
         }
     }
 
@@ -390,6 +435,10 @@ mod tests {
             }],
         };
 
+        let mut extra_map = std::collections::BTreeMap::new();
+        extra_map.insert("debug_dir".to_string(), sentry::protocol::Value::String(format!("{home}/temp")));
+        event.extra = extra_map;
+
         let sanitized = sanitize_event(event).expect("event should be kept");
         assert!(sanitized.server_name.is_none());
         assert!(!sanitized.message.as_ref().unwrap().contains(&home));
@@ -398,6 +447,9 @@ mod tests {
         assert!(sanitized.exception.values[0].value.as_ref().unwrap().contains("<HOME>"));
         assert!(!sanitized.breadcrumbs.values[0].message.as_ref().unwrap().contains(&home));
         assert!(sanitized.breadcrumbs.values[0].message.as_ref().unwrap().contains("<HOME>"));
+        let extra_dir = sanitized.extra.get("debug_dir").unwrap().as_str().unwrap();
+        assert!(extra_dir.contains("<HOME>"));
+        assert!(!extra_dir.contains(&home));
     }
 
     #[test]
@@ -406,6 +458,14 @@ mod tests {
         assert!(!is_enabled());
         set_enabled(true);
         assert!(is_enabled());
+    }
+
+    #[test]
+    fn test_init_tracing_is_idempotent() {
+        // Safe to call multiple times without panicking
+        init_tracing();
+        init_tracing();
+        tracing::info!("Tracing subscriber test message");
     }
 
     #[test]
