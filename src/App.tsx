@@ -16,12 +16,16 @@ import { useModalStore } from "@/shared/store/modalStore.ts";
 import { WelcomeModal } from "@/features/onboarding";
 import { useOnboardingStore } from "@/features/onboarding/model/onboardingStore.ts";
 import { initNavigationListener } from "@/features/navigation/model/navigationStore.ts";
+import { useGlobalShortcuts } from "@/features/keymaps/lib/useGlobalShortcuts.ts";
+import { initKeymapsSyncListener } from "@/features/keymaps/model/keymapStore.ts";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
+  useGlobalShortcuts();
 
   useEffect(() => {
     const unlistenNav = initNavigationListener();
+    const unlistenKeymaps = initKeymapsSyncListener();
     fetchState();
     initDownloadListeners().catch(console.error);
 
@@ -55,6 +59,7 @@ function PlayerView() {
 
     return () => {
       unlistenNav();
+      unlistenKeymaps();
       channel.close();
     };
   }, [initDownloadListeners]);

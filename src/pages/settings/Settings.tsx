@@ -20,9 +20,17 @@ import { UpdateSettings } from "@/features/updater/ui/UpdateSettings";
 import { AccountsSettings } from "@/features/accounts/ui/AccountsSettings";
 import { DownloaderSettings } from "@/features/downloader-setup";
 import { TelemetrySettings } from "@/features/telemetry";
+import { KeymapSettings } from "@/features/keymaps/ui/KeymapSettings.tsx";
 import { SETTINGS_HEADER_HEIGHT, useChromeHeight } from "@/shared/ui/modal";
 
-type SettingsTab = "appearance" | "playback" | "library" | "downloader" | "accounts" | "about";
+type SettingsTab =
+  | "appearance"
+  | "playback"
+  | "keymaps"
+  | "library"
+  | "downloader"
+  | "accounts"
+  | "about";
 
 export const Settings = () => {
   const {
@@ -122,6 +130,12 @@ export const Settings = () => {
             onClick={() => setActiveTab("library")}
           >
             Library
+          </button>
+          <button
+            className={`${styles.navItem} ${activeTab === "keymaps" ? styles.active : ""}`}
+            onClick={() => setActiveTab("keymaps")}
+          >
+            Keymaps
           </button>
           <button
             className={`${styles.navItem} ${activeTab === "downloader" ? styles.active : ""}`}
@@ -229,6 +243,13 @@ export const Settings = () => {
                 </span>
                 <input type="checkbox" defaultChecked disabled={true} />
               </div>
+            </section>
+          )}
+
+          {activeTab === "keymaps" && (
+            <section className={styles.section}>
+              <h2>Keyboard Shortcuts & Controls</h2>
+              <KeymapSettings />
             </section>
           )}
 

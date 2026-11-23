@@ -1,0 +1,98 @@
+.keymapList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.keymapRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: var(--font-md);
+  gap: 16px;
+}
+
+.keymapInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keymapName {
+  font-weight: 500;
+  color: var(--color-text, #fff);
+}
+
+.keymapDesc {
+  font-size: var(--font-sm, 12px);
+  color: var(--color-muted);
+}
+
+.shortcutBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: var(--font-sm, 12px);
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.shortcutBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.shortcutBtnRecording {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: var(--color-primaryLight, #818cf8);
+  color: var(--color-primaryLight, #818cf8);
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.footerActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.resetBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  color: var(--color-muted);
+  font-size: var(--font-sm, 12px);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.resetBtn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text);
+  border-color: rgba(255, 255, 255, 0.2);
+}

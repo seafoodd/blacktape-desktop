@@ -233,24 +233,7 @@ export function initNavigationListener(): () => void {
     }
   });
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.altKey && e.key === "ArrowLeft") {
-      e.preventDefault();
-      void useNavigationStore.getState().goBack();
-    } else if (e.altKey && e.key === "ArrowRight") {
-      e.preventDefault();
-      void useNavigationStore.getState().goForward();
-    }
-  };
-
-  if (typeof window !== "undefined") {
-    window.addEventListener("keydown", handleKeyDown);
-  }
-
   return () => {
     unsubLibrary();
-    if (typeof window !== "undefined") {
-      window.removeEventListener("keydown", handleKeyDown);
-    }
   };
 }
