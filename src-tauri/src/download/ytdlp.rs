@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
-use tokio::time::sleep;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -195,7 +194,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
 //     execute(app, &args).await
 // }
 
-const MAX_CONCURRENT_DOWNLOADS: usize = 4;
+const MAX_CONCURRENT_DOWNLOADS: usize = 8;
 
 #[derive(Clone)]
 struct DownloadContext {
@@ -325,6 +324,9 @@ fn download_args(
         "4",
         "--http-chunk-size",
         "10M",
+        "--buffer-size",
+        "16M",
+        "--no-cache-dir",
         "-o",
         output_template,
     ]
@@ -834,9 +836,6 @@ pub async fn download_batch(
             }
 
             let track_num = index + 1;
-            let jitter = (index % 4) * 100 + 50;
-            sleep(Duration::from_millis(jitter as u64)).await;
-
             let downloaded_file = download_track_internal(&ctx, &track, track_num, total_tracks).await;
 
             if let Some(ref path) = downloaded_file {
@@ -1266,6 +1265,16 @@ mod hardening_tests {
     #[test]
     fn download_args_refuses_option_like_urls() {
         assert!(download_args("--exec=calc", TEMPLATE, &cookie_args(), None).is_err());
+    }
+
+    #[test]
+    fn download_args_includes_performance_flags() {
+        let args = download_args("https://music.youtube.com/watch?v=abc", TEMPLATE, &[], None).unwrap();
+        assert!(args.contains(&"--buffer-size".to_string()));
+        let buf_idx = args.iter().position(|a| a == "--buffer-size").unwrap();
+        assert_eq!(args[buf_idx + 1], "16M");
+        assert!(args.contains(&"--no-cache-dir".to_string()));
+        assert_eq!(MAX_CONCURRENT_DOWNLOADS, 8);
     }
 
     #[test]
