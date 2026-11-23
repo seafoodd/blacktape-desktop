@@ -121,21 +121,28 @@ export type AlbumRow =
  * after the song before it; the order of equal numbers is songs first.
  */
 export function mergeAlbumRows(songs: readonly Song[], missing: readonly AlbumTrackInfo[]): AlbumRow[] {
-  const keyed: { row: AlbumRow; key: number; order: number }[] = [];
-  let last = 0;
+  const keyed: { row: AlbumRow; disc: number; track: number; order: number }[] = [];
+  let lastTrack = 0;
+  let lastDisc = 1;
   songs.forEach((song, i) => {
-    const key = song.track_number ?? last + 0.5;
-    last = key;
-    keyed.push({ row: { kind: "song", song }, key, order: i });
+    const disc = song.disc_number ?? lastDisc;
+    if (song.disc_number && song.disc_number !== lastDisc) {
+      lastDisc = song.disc_number;
+      lastTrack = 0;
+    }
+    const track = song.track_number ?? lastTrack + 0.5;
+    lastTrack = track;
+    keyed.push({ row: { kind: "song", song }, disc, track, order: i });
   });
   missing.forEach((track, i) => {
     keyed.push({
       row: { kind: "missing", track },
-      key: track.track_number ?? track.index + 1,
+      disc: track.disc_number ?? 1,
+      track: track.track_number ?? track.index + 1,
       order: songs.length + i,
     });
   });
-  keyed.sort((a, b) => a.key - b.key || a.order - b.order);
+  keyed.sort((a, b) => a.disc - b.disc || a.track - b.track || a.order - b.order);
   return keyed.map((k) => k.row);
 }
 

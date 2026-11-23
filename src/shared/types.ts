@@ -11,6 +11,7 @@ export type Song = {
   album: string;
   duration_ms: number;
   track_number?: number | null;
+  disc_number?: number | null;
   genre?: string | null;
   release_year?: number | null;
   cover_url?: string | null;

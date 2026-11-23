@@ -233,6 +233,17 @@ describe("mergeAlbumRows", () => {
     const songs = [song(1), song(2), song(3)];
     expect(mergeAlbumRows(songs, [])).toEqual(songs.map((s) => ({ kind: "song", song: s })));
   });
+
+  it("sorts multi-disc songs and missing tracks sequentially by disc then track", () => {
+    const s1_1: Song = { ...song(1, "D1T1"), disc_number: 1 };
+    const s2_1: Song = { ...song(1, "D2T1"), disc_number: 2 };
+    const m1_2: AlbumTrackInfo = { ...track(1, { title: "D1T2" }), track_number: 2, disc_number: 1 };
+    const m2_2: AlbumTrackInfo = { ...track(3, { title: "D2T2" }), track_number: 2, disc_number: 2 };
+
+    const rows = mergeAlbumRows([s1_1, s2_1], [m1_2, m2_2]);
+    const titles = rows.map((r) => (r.kind === "song" ? r.song.title : r.track.title));
+    expect(titles).toEqual(["D1T1", "D1T2", "D2T1", "D2T2"]);
+  });
 });
 
 const dl = (tracks: { title: string; percent: number; status: "pending" | "downloading" | "completed" | "failed"; trackNumber?: number }[]) =>

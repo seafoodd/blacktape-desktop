@@ -18,6 +18,7 @@ export interface AlbumTrackInfo {
   title: string;
   artists: string[];
   track_number: number | null;
+  disc_number?: number | null;
   /** Page url of the track (the download selects tracks by it); empty when unavailable. */
   url: string;
   available: boolean;
