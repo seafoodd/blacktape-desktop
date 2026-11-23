@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:fresh": "node scripts/dev-fresh.js",
+    "dev:fresh:stop": "node scripts/dev-fresh.js --stop",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

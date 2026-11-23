@@ -804,6 +804,28 @@ impl AudioPlayer {
         }
     }
 
+    /// Restores player queue and cursor from a previous session in paused state without starting playback.
+    pub fn restore_playback_state(&mut self, songs: Vec<Song>, current_index: usize) {
+        if songs.is_empty() {
+            return;
+        }
+        let Some(start) = queue_ops::clamp_start(songs.len(), current_index) else {
+            return;
+        };
+        self.play_order = Some((0..songs.len()).collect());
+        self.queue = songs;
+        self.cursor = Some(start);
+        self.current_song = match &self.play_order {
+            Some(order) => order
+                .get(start)
+                .and_then(|&song_idx| self.queue.get(song_idx).cloned()),
+            None => self.queue.get(start).cloned(),
+        };
+        self.player.pause();
+        self.emit_state();
+        self.update_current_metadata();
+    }
+
     pub fn play_song_in_queue(&mut self, index: i64) {
         let Ok(target_cursor) = usize::try_from(index) else {
             return;
@@ -1007,7 +1029,7 @@ impl AudioPlayer {
     }
 
     pub fn is_paused(&self) -> bool {
-        self.player.is_paused()
+        self.player.is_paused() || self.player.empty()
     }
 
     /// Decodes an in-memory copy of an audio file (same format handling as `decode_source`).

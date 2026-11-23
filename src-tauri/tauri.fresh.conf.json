@@ -1,3 +1,19 @@
 {
-  "identifier": "dev.seafood.blacktape.fresh"
+  "productName": "Blacktape (Dev Fresh)",
+  "identifier": "dev.seafood.blacktape.fresh",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Blacktape [DEV FRESH]",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 320,
+        "transparent": true,
+        "decorations": false,
+        "dragDropEnabled": false
+      }
+    ]
+  }
 }

@@ -15,6 +15,12 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { RepeatMode, Song } from "@/shared/types.ts";
+import {
+  loadSavedPlayerState,
+  loadSavedVolume,
+  savePlayerState,
+  saveVolume,
+} from "@/features/player/model/playerPersistence.ts";
 
 export type PlaybackContext = "playlist" | "library";
 
@@ -72,11 +78,16 @@ export const resetProgressSeq = () => {
   progressSeq = 0;
 };
 
+const initialVolume =
+  typeof window !== "undefined" ? (loadSavedVolume() ?? 1) : 1;
+const initialPlayer =
+  typeof window !== "undefined" ? loadSavedPlayerState() : null;
+
 export const useAudioStore = create<AudioState>((set, get) => ({
-  queue: [],
-  currentSong: null,
-  progress: 0,
-  volume: 0,
+  queue: initialPlayer?.queue ?? [],
+  currentSong: initialPlayer?.currentSong ?? null,
+  progress: initialPlayer?.progress ?? 0,
+  volume: initialVolume,
   isPlaying: false,
   isStreaming: false,
   streamLoading: false,
@@ -141,6 +152,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   setVolume: async (volume) => {
     set({ volume });
+    saveVolume(volume);
     await setVolume(volume);
   },
 
@@ -197,6 +209,18 @@ if (typeof window !== "undefined") {
     // a different song starts at 0 right away, whatever position the event still carries
     const changed = songChanged(previous, state.current_song);
     const { playbackError } = useAudioStore.getState();
+    if (state.volume !== undefined) {
+      saveVolume(state.volume);
+    }
+    if (state.current_song) {
+      savePlayerState({
+        currentSong: state.current_song,
+        queue: state.queue || [],
+        queueCursor: state.queue_cursor ?? null,
+        progress: changed ? 0 : state.progress,
+      });
+    }
+
     useAudioStore.setState({
       playbackError: keepPlaybackError(playbackError, changed, Boolean(state.is_playing)),
       isPlaying: state.is_playing,

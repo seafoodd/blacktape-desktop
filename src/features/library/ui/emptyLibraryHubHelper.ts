@@ -14,9 +14,10 @@ export function cleanSearchQuery(query: string): string {
 export function shouldShowEmptyHub(
   tabsCount: number,
   albumsCount: number,
-  selectedTab: string,
+  _selectedTab?: string,
 ): boolean {
-  if (selectedTab.trim().length > 0) return false;
+  // If there are no artists and no albums, the library is genuinely empty,
+  // regardless of any stale artist name that might be retained in storage.
   return tabsCount === 0 && albumsCount === 0;
 }
 

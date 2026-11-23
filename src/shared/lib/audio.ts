@@ -17,6 +17,11 @@ export const startPlayback = (
   currentIndex: number,
 ): Promise<void> => invoke("start_playback", { queue, currentIndex });
 
+export const restorePlaybackState = (
+  songs: Song[],
+  currentIndex: number,
+): Promise<void> => invoke("restore_playback_state", { songs, currentIndex });
+
 export const playSongInQueue = (index: number): Promise<void> =>
   invoke("play_song_in_queue", { index });
 

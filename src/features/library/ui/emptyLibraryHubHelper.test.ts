@@ -20,22 +20,20 @@ describe("emptyLibraryHubHelper", () => {
   });
 
   describe("shouldShowEmptyHub", () => {
-    it("returns true when there are no tabs, no albums, and no selected tab", () => {
+    it("returns true when there are no tabs, no albums, even if stale tab is selected", () => {
       expect(shouldShowEmptyHub(0, 0, "")).toBe(true);
       expect(shouldShowEmptyHub(0, 0, "   ")).toBe(true);
-    });
-
-    it("returns false if a tab is currently selected", () => {
-      expect(shouldShowEmptyHub(0, 0, "Daft Punk")).toBe(false);
-      expect(shouldShowEmptyHub(5, 2, "Radiohead")).toBe(false);
+      expect(shouldShowEmptyHub(0, 0, "Daft Punk")).toBe(true);
     });
 
     it("returns false if tabs exist in the library", () => {
       expect(shouldShowEmptyHub(3, 0, "")).toBe(false);
+      expect(shouldShowEmptyHub(5, 2, "Radiohead")).toBe(false);
     });
 
     it("returns false if albums exist in the library", () => {
       expect(shouldShowEmptyHub(0, 2, "")).toBe(false);
+      expect(shouldShowEmptyHub(0, 2, "Radiohead")).toBe(false);
     });
   });
 

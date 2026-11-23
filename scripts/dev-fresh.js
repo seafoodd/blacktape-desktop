@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+export const PID_FILE_NAME = ".dev-fresh.pid";
 
 export function getFreshDirs(
   platform = process.platform,
@@ -54,11 +56,99 @@ export function cleanFreshDirs(
   }
 }
 
+export function isWorkspaceDevProcess(execPath, workspaceRoot = process.cwd()) {
+  if (!execPath || typeof execPath !== "string") return false;
+  const normalizedExec = path.resolve(execPath).toLowerCase();
+  const normalizedTarget = path
+    .resolve(workspaceRoot, "src-tauri", "target")
+    .toLowerCase();
+  return normalizedExec.startsWith(normalizedTarget);
+}
+
+export function getPidFilePath(workspaceRoot = process.cwd()) {
+  return path.resolve(workspaceRoot, PID_FILE_NAME);
+}
+
+export function writePidFile(pidInfo, workspaceRoot = process.cwd()) {
+  const filePath = getPidFilePath(workspaceRoot);
+  fs.writeFileSync(filePath, JSON.stringify(pidInfo, null, 2), "utf8");
+}
+
+export function readPidFile(workspaceRoot = process.cwd()) {
+  const filePath = getPidFilePath(workspaceRoot);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function removePidFile(workspaceRoot = process.cwd()) {
+  const filePath = getPidFilePath(workspaceRoot);
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {}
+  }
+}
+
+export function stopDevFresh(workspaceRoot = process.cwd()) {
+  const pidInfo = readPidFile(workspaceRoot);
+  if (pidInfo?.runnerPid) {
+    try {
+      process.kill(pidInfo.runnerPid, "SIGTERM");
+      console.log(`[dev:fresh] Sent SIGTERM to runner process ${pidInfo.runnerPid}`);
+    } catch (_) {}
+  }
+  if (pidInfo?.childPid) {
+    try {
+      process.kill(pidInfo.childPid, "SIGTERM");
+      console.log(`[dev:fresh] Sent SIGTERM to child process ${pidInfo.childPid}`);
+    } catch (_) {}
+  }
+
+  // On Windows, terminate child processes specifically within src-tauri/target/
+  if (process.platform === "win32") {
+    if (pidInfo?.childPid) {
+      try {
+        spawnSync("taskkill", ["/PID", String(pidInfo.childPid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+      } catch (_) {}
+    }
+    if (pidInfo?.runnerPid) {
+      try {
+        spawnSync("taskkill", ["/PID", String(pidInfo.runnerPid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+      } catch (_) {}
+    }
+    try {
+      const psCmd = `Get-CimInstance Win32_Process -Filter "Name like '%blacktape%'" | Where-Object { $_.ExecutablePath -like "*src-tauri*target*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`;
+      spawnSync("powershell", ["-NoProfile", "-Command", psCmd], {
+        stdio: "ignore",
+      });
+    } catch (_) {}
+  }
+
+  removePidFile(workspaceRoot);
+  cleanFreshDirs();
+  console.log("[dev:fresh] Successfully stopped dev:fresh and cleaned profile.");
+}
+
 // Run if directly executed
 const currentFile = fileURLToPath(import.meta.url);
 const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";
 
 if (invokedFile && currentFile === invokedFile) {
+  const args = process.argv.slice(2);
+  if (args.includes("--stop")) {
+    stopDevFresh();
+    process.exit(0);
+  }
+
   cleanFreshDirs();
 
   const isWin = process.platform === "win32";
@@ -66,10 +156,10 @@ if (invokedFile && currentFile === invokedFile) {
 
   console.log(
     "\n🚀 [dev:fresh] Launching Blacktape in an isolated, temporary profile...\n" +
-      "   • Database: completely clean\n" +
+      "   • Database: completely clean (dev.seafood.blacktape.fresh)\n" +
       "   • Library: completely clean (no synced music)\n" +
       "   • Settings & LocalStorage: completely clean\n" +
-      "   • Existing database/library: completely untouched\n",
+      "   • Installed/release build: completely untouched & safe\n",
   );
 
   const child = spawn(
@@ -78,11 +168,22 @@ if (invokedFile && currentFile === invokedFile) {
     {
       stdio: "inherit",
       shell: isWin,
+      env: {
+        ...process.env,
+        BLACKTAPE_DEV_FRESH: "1",
+      },
     },
   );
 
+  writePidFile({
+    runnerPid: process.pid,
+    childPid: child.pid,
+    startedAt: new Date().toISOString(),
+  });
+
   const cleanup = () => {
     console.log("\n[dev:fresh] Cleaning up temporary profile...");
+    removePidFile();
     cleanFreshDirs();
     process.exit(0);
   };
@@ -91,6 +192,7 @@ if (invokedFile && currentFile === invokedFile) {
   process.on("SIGTERM", cleanup);
 
   child.on("exit", (code) => {
+    removePidFile();
     cleanFreshDirs();
     process.exit(code ?? 0);
   });

@@ -7,6 +7,7 @@ import {
 import { usePlaylistStore } from "@/shared/store/playlistStore.ts";
 import { useSearchPageStore } from "@/features/search/model/searchPageStore.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
+import { saveNavEntry } from "@/features/player/model/playerPersistence.ts";
 
 export interface NavEntry {
   view: ActiveView;
@@ -50,7 +51,7 @@ function getInitialNavEntry(): NavEntry {
   };
 }
 
-async function applyNavEntry(entry: NavEntry): Promise<void> {
+export async function applyNavEntry(entry: NavEntry): Promise<void> {
   switch (entry.view) {
     case "ARTIST_ALBUMS": {
       if (entry.artistName) {
@@ -134,6 +135,7 @@ export const useNavigationStore = create<NavigationStoreState>((set, get) => ({
       history: newHistory,
       currentIndex: newIndex,
     });
+    saveNavEntry(entry);
   },
 
   goBack: async () => {
@@ -147,6 +149,7 @@ export const useNavigationStore = create<NavigationStoreState>((set, get) => ({
     set({ isApplyingHistory: true, currentIndex: targetIndex });
     try {
       await applyNavEntry(targetEntry);
+      saveNavEntry(targetEntry);
     } finally {
       set({ isApplyingHistory: false });
     }
@@ -163,6 +166,7 @@ export const useNavigationStore = create<NavigationStoreState>((set, get) => ({
     set({ isApplyingHistory: true, currentIndex: targetIndex });
     try {
       await applyNavEntry(targetEntry);
+      saveNavEntry(targetEntry);
     } finally {
       set({ isApplyingHistory: false });
     }

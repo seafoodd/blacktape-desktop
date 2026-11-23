@@ -23,9 +23,9 @@ mod window_effects;
 
 use crate::audio::commands::{
     add_next_to_queue, add_to_queue, fetch_state, get_is_paused, get_position, get_volume,
-    move_in_queue, next, pause, play_song_in_queue, previous, remove_from_queue, resume, seek,
-    set_repeat_mode, set_volume, start_playback, stop, swap_streams_for_downloads, toggle,
-    toggle_shuffle,
+    move_in_queue, next, pause, play_song_in_queue, previous, remove_from_queue,
+    restore_playback_state, resume, seek, set_repeat_mode, set_volume, start_playback, stop,
+    swap_streams_for_downloads, toggle, toggle_shuffle,
 };
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
@@ -989,6 +989,7 @@ pub fn run() {
             get_album_preview,
             // Player Commands
             start_playback,
+            restore_playback_state,
             pause,
             resume,
             stop,

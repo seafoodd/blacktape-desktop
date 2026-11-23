@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
 import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import { captureFrontendError } from "@/shared/lib/telemetry.ts";
+import { loadSavedNavEntry } from "@/features/player/model/playerPersistence.ts";
 
 export type DownloadStatus =
   | "idle"
@@ -151,14 +152,17 @@ interface LibraryState {
 // Only the most recently started search may update `searchResults`; older responses still fill the cache.
 const searchGuard = createLatestGuard();
 
+const savedInitialNav =
+  typeof window !== "undefined" ? loadSavedNavEntry() : null;
+
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   sortType: SortType.Artist,
   displayType: DisplayType.Albums,
-  selectedTab: sessionStorage.getItem("selectedTab") || "",
+  selectedTab: savedInitialNav?.artistName || "",
   tabs: [],
   albums: [],
 
-  activeView: "ARTIST_ALBUMS",
+  activeView: savedInitialNav?.view || "ARTIST_ALBUMS",
   setActiveView: (view) => set({ activeView: view }),
 
   searchQuery: "",
@@ -207,9 +211,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   setSelectedTab: async (identifier) => {
-    try {
-      sessionStorage.setItem("selectedTab", identifier);
-    } catch (_) {}
     set({ selectedTab: identifier, activeView: "ARTIST_ALBUMS" });
     try {
       const albums = await getArtistAlbums(identifier);

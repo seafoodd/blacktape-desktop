@@ -636,6 +636,17 @@ const ArtistAlbums = () => {
     );
   }
 
+  if (albums.length === 0) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.selectArtistPrompt}>
+          <h2>No albums found</h2>
+          <p>This artist has no albums in your library, or their music is still being scanned.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={styles.container}

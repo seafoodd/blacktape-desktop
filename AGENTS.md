@@ -52,3 +52,11 @@ No new `cargo check` warnings, no unused exports (`npx knip`), no commented-out 
 
 - Work on a branch; `master` takes changes only through a PR with passing CI.
 - Commit messages follow the existing history: `feat(scope): …`, `fix(scope): …`, `chore: …`.
+
+## Process and Release Build Safety
+
+The user regularly runs an installed release version of Blacktape to listen to music while working.
+- NEVER kill, terminate, or inspect processes outside this workspace (`src-tauri/target/`).
+- When checking running dev processes, always verify `ExecutablePath` contains `src-tauri\target` or use `npm run dev:fresh:stop`.
+- Never execute commands like `taskkill /IM blacktape-desktop.exe` as this will kill the user's release music player.
+

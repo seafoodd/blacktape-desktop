@@ -20,8 +20,17 @@ const song = {
 };
 
 describe("audioStore progress race protection", () => {
+  let storageMap: Map<string, string>;
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    storageMap = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storageMap.get(key) ?? null,
+      setItem: (key: string, val: string) => storageMap.set(key, val),
+      removeItem: (key: string) => storageMap.delete(key),
+      clear: () => storageMap.clear(),
+    });
     resetProgressSeq();
     useAudioStore.setState({
       currentSong: song,
@@ -79,5 +88,12 @@ describe("audioStore progress race protection", () => {
     await updatePromise;
 
     expect(useAudioStore.getState().progress).toBe(0.6);
+  });
+
+  it("persists volume to localStorage when setVolume is called", async () => {
+    vi.spyOn(audioLib, "setVolume").mockResolvedValue(undefined);
+    await useAudioStore.getState().setVolume(0.72);
+    expect(useAudioStore.getState().volume).toBe(0.72);
+    expect(localStorage.getItem("blacktape_player_volume")).toBe("0.72");
   });
 });

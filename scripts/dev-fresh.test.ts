@@ -1,6 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
-import { getFreshDirs, cleanFreshDirs } from "./dev-fresh.js";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import {
+  getFreshDirs,
+  cleanFreshDirs,
+  isWorkspaceDevProcess,
+  writePidFile,
+  readPidFile,
+  removePidFile,
+  PID_FILE_NAME,
+} from "./dev-fresh.js";
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 describe("getFreshDirs", () => {
   it("returns Windows AppData and LocalAppData paths", () => {
@@ -8,13 +18,19 @@ describe("getFreshDirs", () => {
       APPDATA: "C:\\Users\\Test\\AppData\\Roaming",
       LOCALAPPDATA: "C:\\Users\\Test\\AppData\\Local",
     });
-    expect(dirs).toContain("C:\\Users\\Test\\AppData\\Roaming\\dev.seafood.blacktape.fresh");
-    expect(dirs).toContain("C:\\Users\\Test\\AppData\\Local\\dev.seafood.blacktape.fresh");
+    expect(dirs).toContain(
+      "C:\\Users\\Test\\AppData\\Roaming\\dev.seafood.blacktape.fresh",
+    );
+    expect(dirs).toContain(
+      "C:\\Users\\Test\\AppData\\Local\\dev.seafood.blacktape.fresh",
+    );
   });
 
   it("returns macOS Application Support path", () => {
     const dirs = getFreshDirs("darwin", {}, "/Users/test");
-    expect(dirs).toEqual(["/Users/test/Library/Application Support/dev.seafood.blacktape.fresh"]);
+    expect(dirs).toEqual([
+      "/Users/test/Library/Application Support/dev.seafood.blacktape.fresh",
+    ]);
   });
 
   it("returns Linux XDG paths", () => {
@@ -46,5 +62,92 @@ describe("cleanFreshDirs", () => {
 
     existsSpy.mockRestore();
     rmSpy.mockRestore();
+  });
+});
+
+describe("isWorkspaceDevProcess", () => {
+  const workspaceRoot = "C:\\Dev\\blacktape-desktop";
+
+  it("returns true for binaries within workspace src-tauri/target", () => {
+    expect(
+      isWorkspaceDevProcess(
+        "C:\\Dev\\blacktape-desktop\\src-tauri\\target\\debug\\blacktape-desktop.exe",
+        workspaceRoot,
+      ),
+    ).toBe(true);
+
+    expect(
+      isWorkspaceDevProcess(
+        "C:/Dev/blacktape-desktop/src-tauri/target/release/blacktape-desktop.exe",
+        workspaceRoot,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for installed or release binaries outside workspace", () => {
+    expect(
+      isWorkspaceDevProcess(
+        "Y:\\tools\\Blacktape\\blacktape-desktop.exe",
+        workspaceRoot,
+      ),
+    ).toBe(false);
+
+    expect(
+      isWorkspaceDevProcess(
+        "C:\\Program Files\\Blacktape\\blacktape-desktop.exe",
+        workspaceRoot,
+      ),
+    ).toBe(false);
+
+    expect(
+      isWorkspaceDevProcess(
+        "C:\\Users\\seafood\\AppData\\Local\\Programs\\Blacktape\\blacktape-desktop.exe",
+        workspaceRoot,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false for invalid, null or empty paths", () => {
+    expect(isWorkspaceDevProcess("", workspaceRoot)).toBe(false);
+    expect(isWorkspaceDevProcess(null as unknown as string, workspaceRoot)).toBe(
+      false,
+    );
+    expect(
+      isWorkspaceDevProcess(undefined as unknown as string, workspaceRoot),
+    ).toBe(false);
+  });
+});
+
+describe("pidFile helpers", () => {
+  const tmpDir = path.join(os.tmpdir(), "blacktape-test-" + Date.now());
+
+  beforeEach(() => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (_) {}
+  });
+
+  it("writes, reads, and removes PID file correctly", () => {
+    const pidInfo = {
+      runnerPid: 12345,
+      childPid: 67890,
+      startedAt: "2026-11-23T14:00:00.000Z",
+    };
+
+    expect(readPidFile(tmpDir)).toBeNull();
+
+    writePidFile(pidInfo, tmpDir);
+    expect(fs.existsSync(path.join(tmpDir, PID_FILE_NAME))).toBe(true);
+
+    const read = readPidFile(tmpDir);
+    expect(read).toEqual(pidInfo);
+
+    removePidFile(tmpDir);
+    expect(fs.existsSync(path.join(tmpDir, PID_FILE_NAME))).toBe(false);
+    expect(readPidFile(tmpDir)).toBeNull();
   });
 });

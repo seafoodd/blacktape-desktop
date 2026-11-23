@@ -1,6 +1,12 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { PlayerControls } from "@/features/player";
-import { fetchState, getOnboardingCompleted, setOnboardingCompleted } from "./shared/lib/audio";
+import {
+  fetchState,
+  getOnboardingCompleted,
+  restorePlaybackState,
+  setOnboardingCompleted,
+  setVolume,
+} from "./shared/lib/audio";
 import { useEffect } from "react";
 import { Header, LeftSidebar, MainLayout, RightSidebar } from "@/layouts";
 import ArtistAlbums from "@/pages/artist-albums/ArtistAlbums.tsx";
@@ -15,9 +21,17 @@ import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrack
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { WelcomeModal } from "@/features/onboarding";
 import { useOnboardingStore } from "@/features/onboarding/model/onboardingStore.ts";
-import { initNavigationListener } from "@/features/navigation/model/navigationStore.ts";
+import {
+  applyNavEntry,
+  initNavigationListener,
+} from "@/features/navigation/model/navigationStore.ts";
 import { useGlobalShortcuts } from "@/features/keymaps/lib/useGlobalShortcuts.ts";
 import { initKeymapsSyncListener } from "@/features/keymaps/model/keymapStore.ts";
+import {
+  loadSavedNavEntry,
+  loadSavedPlayerState,
+  loadSavedVolume,
+} from "@/features/player/model/playerPersistence.ts";
 
 function PlayerView() {
   const { activeView, initDownloadListeners } = useLibraryStore();
@@ -26,6 +40,25 @@ function PlayerView() {
   useEffect(() => {
     const unlistenNav = initNavigationListener();
     const unlistenKeymaps = initKeymapsSyncListener();
+
+    const savedVol = loadSavedVolume();
+    if (savedVol !== null) {
+      void setVolume(savedVol);
+    }
+
+    const savedPlayer = loadSavedPlayerState();
+    if (savedPlayer && savedPlayer.queue.length > 0) {
+      void restorePlaybackState(
+        savedPlayer.queue,
+        savedPlayer.queueCursor ?? 0,
+      );
+    }
+
+    const savedNav = loadSavedNavEntry();
+    if (savedNav && (savedNav.view !== "ARTIST_ALBUMS" || savedNav.artistName)) {
+      void applyNavEntry(savedNav);
+    }
+
     fetchState();
     initDownloadListeners().catch(console.error);
 

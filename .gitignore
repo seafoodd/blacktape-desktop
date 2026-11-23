@@ -33,6 +33,7 @@ src-tauri/gen/
 .cache
 # local signing keys
 /~/
+.dev-fresh.pid
 
 # Local Cargo overrides (contains local SENTRY_DSN)
 .cargo/

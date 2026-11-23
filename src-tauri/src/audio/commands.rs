@@ -43,6 +43,17 @@ pub async fn start_playback(
 }
 
 #[command]
+pub fn restore_playback_state(
+    songs: Vec<Song>,
+    current_index: usize,
+    player_state: State<'_, Mutex<AudioPlayer>>,
+) -> Result<(), String> {
+    let mut player = lock_player(&player_state);
+    player.restore_playback_state(songs, current_index);
+    Ok(())
+}
+
+#[command]
 pub fn play_song_in_queue(
     index: i64,
     player_state: State<'_, Mutex<AudioPlayer>>,
