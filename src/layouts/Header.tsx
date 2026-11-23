@@ -11,7 +11,6 @@ import { MAIN_HEADER_HEIGHT, dismissOnPress, useChromeHeight } from "@/shared/ui
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { CgMenuLeft } from "react-icons/cg";
 import { MdChevronLeft, MdChevronRight, MdHome } from "react-icons/md";
-import clsx from "clsx";
 import { useNavigationStore } from "@/features/navigation/model/navigationStore.ts";
 import styles from "./header.module.css";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
