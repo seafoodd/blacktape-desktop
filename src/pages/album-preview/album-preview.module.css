@@ -163,10 +163,23 @@
 }
 
 .percent {
-    color: var(--color-info);
     font-size: var(--font-sm);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    min-width: 36px;
+    text-align: right;
+}
+
+.percentCompleted {
+    color: var(--color-accent, #3b82f6);
+}
+
+.percentActive {
+    color: #fff;
+}
+
+.percentPending {
+    color: var(--color-muted, rgba(255, 255, 255, 0.45));
 }
 
 .titleBadge {

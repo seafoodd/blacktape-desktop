@@ -342,6 +342,57 @@ describe("trackTaskStates", () => {
   it("omits tasks the library no longer knows", () => {
     expect(trackTaskStates({ gone: [u(0)] }, {})).toEqual({});
   });
+
+  it("reports distinct per-track percentages when detailed task.tracks are present", () => {
+    const previewTracks = [
+      track(0, { title: "Track One", track_number: 1 }),
+      track(1, { title: "Track Two", track_number: 2 }),
+      track(2, { title: "Track Three", track_number: 3 }),
+    ];
+    const task = {
+      status: "downloading",
+      overallPercent: 50,
+      tracks: [
+        { title: "Track One", percent: 100, status: "completed", trackNumber: 1 },
+        { title: "Track Two", percent: 45, status: "downloading", trackNumber: 2 },
+        { title: "Track Three", percent: 0, status: "pending", trackNumber: 3 },
+      ],
+    };
+    expect(
+      trackTaskStates(
+        { "task-1": [u(0), u(1), u(2)] },
+        { "task-1": task },
+        previewTracks,
+      ),
+    ).toEqual({
+      [u(0)]: { phase: "running", percent: 100 },
+      [u(1)]: { phase: "running", percent: 45 },
+      [u(2)]: { phase: "running", percent: 0 },
+    });
+  });
+
+  it("discovers active album download by previewUrl when taskTracks is empty", () => {
+    const previewTracks = [
+      track(0, { title: "Track One", track_number: 1 }),
+      track(1, { title: "Track Two", track_number: 2 }),
+    ];
+    const albumUrl = "https://example.test/album/1";
+    const task = {
+      url: albumUrl,
+      status: "downloading",
+      overallPercent: 50,
+      tracks: [
+        { title: "Track One", percent: 100, status: "completed" },
+        { title: "Track Two", percent: 15, status: "downloading" },
+      ],
+    };
+    expect(
+      trackTaskStates({}, { "task-1": task }, previewTracks, albumUrl),
+    ).toEqual({
+      [u(0)]: { phase: "running", percent: 100 },
+      [u(1)]: { phase: "running", percent: 15 },
+    });
+  });
 });
 
 describe("trackRowStatus", () => {

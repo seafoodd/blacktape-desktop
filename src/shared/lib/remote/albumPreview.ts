@@ -183,28 +183,81 @@ const RUNNING_STATUSES: ReadonlySet<string> = new Set(["idle", "downloading", "p
 const clampPercent = (value: number): number =>
   Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : 0;
 
+export interface ActiveDownloadInfo {
+  status: string;
+  overallPercent: number;
+  tracks?: readonly { title: string; percent: number; status: string; trackNumber?: number }[];
+  placement?: { title: string; track_number: number | null };
+  trackUrls?: readonly string[];
+  url?: string;
+}
+
 /**
  * Rows served by the tasks of this page: track url -> state. `taskTracks` maps a task id to the track urls it
- * downloads; `active` is the library's `activeDownloads`. A failed or cancelled task serves no row (the row
- * shows its download button again); a completed one reports "done" until the library drops the task.
+ * downloads; `active` is the library's `activeDownloads`. When `previewTracks` is available and the task reports
+ * individual track progress, each row shows its own percentage (like in `ArtistAlbums`).
  */
 export function trackTaskStates(
   taskTracks: Readonly<Record<string, readonly string[]>>,
-  active: Readonly<Record<string, { status: string; overallPercent: number }>>,
+  active: Readonly<Record<string, ActiveDownloadInfo>>,
+  previewTracks?: readonly AlbumTrackInfo[],
+  previewUrl?: string,
 ): Record<string, TrackTaskState> {
   const out: Record<string, TrackTaskState> = {};
-  for (const [taskId, urls] of Object.entries(taskTracks)) {
+  const mergedTaskTracks: Record<string, readonly string[]> = { ...taskTracks };
+
+  // If this album has an active download running in the library (e.g. started from search results
+  // or a previous visit), ensure its tracks are mapped.
+  if (previewUrl && previewTracks) {
+    for (const [taskId, task] of Object.entries(active)) {
+      if (task.url === previewUrl && !mergedTaskTracks[taskId]) {
+        mergedTaskTracks[taskId] =
+          task.trackUrls && task.trackUrls.length > 0
+            ? task.trackUrls
+            : previewTracks.map((t) => t.url);
+      }
+    }
+  }
+
+  for (const [taskId, urls] of Object.entries(mergedTaskTracks)) {
     const task = active[taskId];
     if (!task) continue;
-    let state: TrackTaskState | undefined;
-    if (RUNNING_STATUSES.has(task.status)) {
-      state = { phase: "running", percent: clampPercent(task.overallPercent) };
-    } else if (task.status === "completed") {
-      state = { phase: "done" };
+
+    if (task.status === "completed") {
+      for (const url of urls) out[url] = { phase: "done" };
+      continue;
     }
-    if (!state) continue;
-    for (const url of urls) out[url] = state;
+
+    if (!RUNNING_STATUSES.has(task.status)) continue;
+
+    for (const url of urls) {
+      if (task.tracks && task.tracks.length > 0 && previewTracks) {
+        const pTrack = previewTracks.find((t) => t.url === url);
+        if (pTrack) {
+          const title = pTrack.title.trim().toLowerCase();
+          const num = pTrack.track_number ?? pTrack.index + 1;
+          const found =
+            task.tracks.find((t) => t.title.trim().toLowerCase() === title) ??
+            task.tracks.find((t) => t.trackNumber === num);
+          if (found) {
+            if (found.status === "completed" || found.percent >= 100) {
+              out[url] = { phase: "running", percent: 100 };
+            } else {
+              out[url] = { phase: "running", percent: clampPercent(found.percent) };
+            }
+            continue;
+          } else {
+            // Track belongs to the download but hasn't started yet
+            out[url] = { phase: "running", percent: 0 };
+            continue;
+          }
+        }
+      }
+
+      out[url] = { phase: "running", percent: clampPercent(task.overallPercent) };
+    }
   }
+
   return out;
 }
 

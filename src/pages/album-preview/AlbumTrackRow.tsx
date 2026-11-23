@@ -122,14 +122,21 @@ export const AlbumTrackRow = ({
         <span className={styles.duration}>{formatTrackDuration(track.duration_ms)}</span>
         <div className={styles.rowAction}>
           {status.kind === "downloaded" && <DownloadStatusBadge state="downloaded" size={16} />}
-          {status.kind === "running" &&
-            (status.percent > 0 ? (
-              <span className={styles.percent} aria-live="polite">
-                {status.percent}%
-              </span>
-            ) : (
-              <span className={styles.spinner} role="status" aria-label="Downloading" />
-            ))}
+          {status.kind === "running" && (
+            <span
+              className={clsx(
+                styles.percent,
+                status.percent >= 100
+                  ? styles.percentCompleted
+                  : status.percent > 0
+                    ? styles.percentActive
+                    : styles.percentPending,
+              )}
+              aria-live="polite"
+            >
+              {status.percent}%
+            </span>
+          )}
           {status.kind === "download" && (
             <span onDoubleClick={(e) => e.stopPropagation()}>
               <DownloadSplitButton

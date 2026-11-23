@@ -58,8 +58,8 @@ const AlbumPreview = () => {
   const refs = useMemo(() => (preview ? trackRefs(preview) : []), [preview]);
   const libraryStates = useTrackStatuses(refs);
   const taskStates = useMemo(
-    () => trackTaskStates(trackTasks, activeDownloads),
-    [trackTasks, activeDownloads],
+    () => trackTaskStates(trackTasks, activeDownloads, preview?.tracks, preview?.url),
+    [trackTasks, activeDownloads, preview],
   );
   const albumState = useMemo(
     () => (preview ? albumLibraryState(preview, libraryStates) : "none"),
