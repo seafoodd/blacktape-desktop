@@ -4,12 +4,14 @@ import styles from "./playlists.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
 import { useEffect, useState } from "react";
 import { BiPlus } from "react-icons/bi";
+import { MdFavorite } from "react-icons/md";
 import clsx from "clsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { CreatePlaylistModal } from "./CreatePlaylistModal";
 import { usePlaylistStore } from "@/shared/store/playlistStore.ts";
 import { ActiveView, useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { PlaylistCover } from "@/features/library/ui/playlists/PlaylistCover.tsx";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 
 interface PlaylistsProps {
   className?: string;
@@ -22,18 +24,29 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     playlists,
     fetchPlaylists,
     selectPlaylist,
+    unselectPlaylist,
     activePlaylistId,
   } = usePlaylistStore();
-  const { setActiveView, setSelectedTab } = useLibraryStore();
+  const { activeView, setActiveView, setSelectedTab } = useLibraryStore();
+  const {
+    favoriteIds,
+    fetchFavoriteIds,
+    fetchFavoriteSongs,
+    addFavorites,
+  } = useFavoritesStore();
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<number | null>(
     null,
   );
+  const [dragOverFavorites, setDragOverFavorites] = useState(false);
 
   useEffect(() => {
     fetchPlaylists().catch((e) => {
       console.log("fetch playlists error: ", e);
     });
-  }, []);
+    fetchFavoriteIds().catch((e) => {
+      console.log("fetch favorite ids error: ", e);
+    });
+  }, [fetchPlaylists, fetchFavoriteIds]);
 
   const handleNewPlaylist = () => {
     openModal(<CreatePlaylistModal />);
@@ -43,6 +56,13 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     await selectPlaylist(id);
     setSelectedTab("");
     setActiveView("PLAYLIST" as ActiveView);
+  };
+
+  const handleSelectFavorites = async () => {
+    unselectPlaylist();
+    setSelectedTab("");
+    setActiveView("FAVORITES" as ActiveView);
+    await fetchFavoriteSongs();
   };
 
   const handleDragOver = (e: React.DragEvent, playlistId: number) => {
@@ -75,6 +95,39 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     }
   };
 
+  const handleDragOverFavorites = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (!dragOverFavorites) {
+      setDragOverFavorites(true);
+    }
+  };
+
+  const handleDragLeaveFavorites = () => {
+    setDragOverFavorites(false);
+  };
+
+  const handleDropFavorites = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverFavorites(false);
+    const data = e.dataTransfer.getData(SONG_DRAG_MIME);
+    if (!data) return;
+
+    try {
+      const songIds = decodeSongDrag(data);
+      if (songIds.length === 0) return;
+      await addFavorites(songIds);
+    } catch (err) {
+      console.error("Failed to add songs to favorites via drag and drop:", err);
+    }
+  };
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const showFavorites =
+    !normalizedQuery ||
+    "favorites".includes(normalizedQuery) ||
+    "favorite songs".includes(normalizedQuery);
+
   return (
     <div className={clsx(styles.container, className)}>
       <div className={styles.searchWrapper}>
@@ -88,7 +141,7 @@ export const Playlists = ({ className }: PlaylistsProps) => {
             if (e.key === "Enter" && query.trim() !== "") {
               e.preventDefault();
               const firstItem = document.querySelector<HTMLElement>(
-                `.${styles.artistItem}`,
+                `.${styles.playlist}`,
               );
               firstItem?.focus();
             }
@@ -106,6 +159,34 @@ export const Playlists = ({ className }: PlaylistsProps) => {
           New Playlist
         </button>
         <div className={styles.playlists}>
+          {showFavorites && (
+            <>
+              <button
+                className={clsx(styles.playlist, {
+                  [styles.active]: activeView === "FAVORITES",
+                  [styles.dragOver]: dragOverFavorites,
+                })}
+                onClick={handleSelectFavorites}
+                onDragOver={handleDragOverFavorites}
+                onDragLeave={handleDragLeaveFavorites}
+                onDrop={handleDropFavorites}
+              >
+                <div className={styles.favoritesCover}>
+                  <MdFavorite size={28} className={styles.favoritesCoverIcon} />
+                </div>
+                <div className={styles.playlistInfo}>
+                  <span className={clsx(styles.playlistName, "truncate")}>
+                    Favorites
+                  </span>
+                  <span className={clsx(styles.trackCount, "truncate")}>
+                    {favoriteIds.size} Track
+                    {favoriteIds.size === 1 ? "" : "s"}
+                  </span>
+                </div>
+              </button>
+              <div className={styles.divider} />
+            </>
+          )}
           {playlists.length === 0 && (
             <div className={styles.emptyNotice}>No playlists yet</div>
           )}
@@ -144,3 +225,4 @@ export const Playlists = ({ className }: PlaylistsProps) => {
     </div>
   );
 };
+

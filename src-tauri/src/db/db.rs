@@ -1,4 +1,4 @@
-use crate::db::schema::{ALBUM_SOURCES_SCHEMA_SQL, TRASH_SCHEMA_SQL};
+use crate::db::schema::{ALBUM_SOURCES_SCHEMA_SQL, FAVORITES_SCHEMA_SQL, TRASH_SCHEMA_SQL};
 use crate::lyrics::LyricsSource;
 use crate::types::{Album, ArtistSummary, Playlist, Song};
 use sqlx::sqlite::{SqliteConnection, SqlitePool};
@@ -21,6 +21,9 @@ impl Database {
         db.ensure_album_sources_schema()
             .await
             .expect("Failed to create album sources table");
+        db.ensure_favorites_schema()
+            .await
+            .expect("Failed to create favorites table");
         db
     }
 
@@ -958,6 +961,94 @@ impl Database {
         Ok(())
     }
 
+    /// Creates the `favorite_songs` table if it is missing (migration 8 does the same). Safe to run repeatedly.
+    pub async fn ensure_favorites_schema(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(FAVORITES_SCHEMA_SQL).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_favorite_song_ids(&self) -> Result<Vec<i64>, sqlx::Error> {
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT song_id FROM favorite_songs ORDER BY date_added DESC")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn get_favorite_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
+        sqlx::query_as::<_, Song>(
+            "SELECT s.id, s.path, s.title, s.artists, s.album_artist, s.album, s.track_number,
+                    s.duration_ms, s.cover_url, s.external_cover_url, s.genre, s.release_year,
+                    s.lyrics, s.lyrics_source, s.source, s.source_url, s.source_item_id,
+                    s.canonical_track_slug, s.canonical_album_slug, s.quality_tier
+             FROM songs s
+             JOIN favorite_songs f ON s.id = f.song_id
+             ORDER BY f.date_added DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn is_favorite(&self, song_id: i64) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM favorite_songs WHERE song_id = ?)",
+        )
+        .bind(song_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
+    pub async fn add_favorite(&self, song_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR IGNORE INTO favorite_songs (song_id) VALUES (?)")
+            .bind(song_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_favorite(&self, song_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM favorite_songs WHERE song_id = ?")
+            .bind(song_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn toggle_favorite(&self, song_id: i64) -> Result<bool, sqlx::Error> {
+        let is_fav = self.is_favorite(song_id).await?;
+        if is_fav {
+            self.remove_favorite(song_id).await?;
+            Ok(false)
+        } else {
+            self.add_favorite(song_id).await?;
+            Ok(true)
+        }
+    }
+
+    pub async fn add_favorites(&self, song_ids: &[i64]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for &id in song_ids {
+            sqlx::query("INSERT OR IGNORE INTO favorite_songs (song_id) VALUES (?)")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn remove_favorites(&self, song_ids: &[i64]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for &id in song_ids {
+            sqlx::query("DELETE FROM favorite_songs WHERE song_id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn get_app_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
             .bind(key)
@@ -1137,7 +1228,11 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        Database { pool }
+        let db = Database { pool };
+        db.ensure_favorites_schema()
+            .await
+            .expect("Failed to create favorites table");
+        db
     }
 
     #[tokio::test]
@@ -1571,5 +1666,47 @@ pub(crate) mod tests {
         let song = only_song(&db).await;
         assert_eq!(song.source_url.as_deref(), Some("https://x.bandcamp.com/track/a"));
         assert_eq!(song.source_item_id.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn test_favorites_crud_and_toggle() {
+        let db = setup_test_db().await;
+        let s1 = make_source_song("/m/1.mp3", Platform::Local, None, None);
+        let s2 = make_source_song("/m/2.mp3", Platform::Local, None, None);
+        db.insert_songs(vec![s1, s2]).await.unwrap();
+
+        let all = db.get_all_songs().await.unwrap();
+        let id1 = all[0].id.unwrap();
+        let id2 = all[1].id.unwrap();
+
+        // Initially no favorites
+        assert_eq!(db.get_favorite_song_ids().await.unwrap().len(), 0);
+        assert!(!db.is_favorite(id1).await.unwrap());
+
+        // Add favorite
+        db.add_favorite(id1).await.unwrap();
+        assert!(db.is_favorite(id1).await.unwrap());
+        assert!(!db.is_favorite(id2).await.unwrap());
+        let favs = db.get_favorite_songs().await.unwrap();
+        assert_eq!(favs.len(), 1);
+        assert_eq!(favs[0].id, Some(id1));
+
+        // Toggle favorite off
+        let toggled = db.toggle_favorite(id1).await.unwrap();
+        assert!(!toggled);
+        assert!(!db.is_favorite(id1).await.unwrap());
+
+        // Toggle favorite on
+        let toggled_on = db.toggle_favorite(id1).await.unwrap();
+        assert!(toggled_on);
+        assert!(db.is_favorite(id1).await.unwrap());
+
+        // Batch add
+        db.add_favorites(&[id1, id2]).await.unwrap();
+        assert_eq!(db.get_favorite_song_ids().await.unwrap().len(), 2);
+
+        // Batch remove
+        db.remove_favorites(&[id1, id2]).await.unwrap();
+        assert_eq!(db.get_favorite_song_ids().await.unwrap().len(), 0);
     }
 }

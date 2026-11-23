@@ -22,7 +22,7 @@ import {
   saveVolume,
 } from "@/features/player/model/playerPersistence.ts";
 
-export type PlaybackContext = "playlist" | "library";
+export type PlaybackContext = "playlist" | "library" | "favorites";
 
 /** Why the current song could not be played (`playback-error` event of the player). */
 export interface PlaybackError {

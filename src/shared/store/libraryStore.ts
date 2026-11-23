@@ -73,7 +73,8 @@ export type ActiveView =
   | "SEARCH_RESULTS"
   | "ALBUM_PREVIEW"
   | "PLAYLIST"
-  | "TRASH";
+  | "TRASH"
+  | "FAVORITES";
 
 export enum ItemType {
   Track = "Track",

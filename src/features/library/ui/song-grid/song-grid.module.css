@@ -7,7 +7,7 @@
 
 .tableHeader {
     display: grid;
-    grid-template-columns: 48px minmax(120px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr) 80px;
+    grid-template-columns: 48px minmax(120px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr) 96px;
     gap: 16px;
     align-items: center;
     padding: 0 12px;
@@ -36,7 +36,7 @@
 
 .songRow {
     display: grid;
-    grid-template-columns: 48px minmax(120px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr) 80px;
+    grid-template-columns: 48px minmax(120px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr) 96px;
     gap: 16px;
     width: 100%;
     align-items: center;
@@ -87,11 +87,17 @@
     }
 
     &:hover .durationText {
-        display: none;
+        visibility: hidden;
     }
 
     &:hover .threeDotButton {
-        display: flex;
+        visibility: visible;
+        opacity: 1;
+    }
+
+    &:hover .favoriteButton {
+        visibility: visible;
+        opacity: 1;
     }
 }
 
@@ -167,6 +173,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 8px;
     position: relative;
 }
 
@@ -190,18 +197,68 @@
     flex-shrink: 0;
 }
 
+.favoriteButton {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 50%;
+    color: var(--color-muted);
+    width: 28px;
+    height: 28px;
+    visibility: hidden;
+    opacity: 0;
+    flex-shrink: 0;
+    transition: opacity 100ms ease;
+
+    &.isFavorite {
+        visibility: visible;
+        opacity: 1;
+        color: #ef4444;
+    }
+
+    &:hover {
+        color: #ef4444;
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+}
+
+.endSlot {
+    display: grid;
+    align-items: center;
+    justify-items: end;
+    width: 52px;
+    min-width: 52px;
+    flex-shrink: 0;
+
+    & > * {
+        grid-area: 1 / 1;
+    }
+}
+
+.durationText {
+    display: block;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
 .threeDotButton {
-    display: none;
-    /*position: absolute;*/
-    right: 12px;
+    display: flex;
+    visibility: hidden;
+    opacity: 0;
     background: transparent;
     border: none;
     cursor: pointer;
     align-items: center;
     justify-content: center;
+    padding: 0;
+    transition: opacity 100ms ease;
 
     &:hover .threeDotIcon {
-        display: flex;
         background-color: rgba(255, 255, 255, 0.1);
         color: white;
     }

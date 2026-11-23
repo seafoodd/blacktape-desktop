@@ -2,6 +2,7 @@ import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { usePlaylistStore } from "@/shared/store/playlistStore.ts";
 import { playlistApi } from "@/shared/api/playlists";
 import { getArtistAlbums } from "@/shared/lib/audio.ts";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 
 /**
  * Reloads everything that shows song metadata after a library change:
@@ -35,6 +36,10 @@ export async function refreshLibrary(): Promise<void> {
         }
       }),
     );
+  }
+  tasks.push(useFavoritesStore.getState().fetchFavoriteIds());
+  if (useLibraryStore.getState().activeView === "FAVORITES") {
+    tasks.push(useFavoritesStore.getState().fetchFavoriteSongs());
   }
   await Promise.all(tasks);
 }

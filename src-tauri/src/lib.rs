@@ -4,6 +4,7 @@ pub mod auth;
 pub mod db;
 mod discord_presence;
 pub mod download;
+pub mod favorites;
 pub mod library_index;
 mod lyrics;
 mod playlists;
@@ -32,6 +33,10 @@ use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
 use crate::db::schema::{db_file_path, get_migrations, DB_URL};
 use crate::download::{DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
+use crate::favorites::commands::{
+    add_favorites, get_favorite_ids, get_favorite_songs, remove_favorites,
+    toggle_favorite,
+};
 use crate::lyrics::{fetch_lyrics, fetch_lyrics_from_provider, LyricsSource};
 use crate::playlists::commands::{
     add_songs_to_playlist, create_playlist, delete_playlist, get_all_playlists, get_playlist_by_id,
@@ -1049,6 +1054,12 @@ pub fn run() {
             remove_songs_from_playlist,
             reorder_playlist_song,
             move_playlist_songs,
+            // Favorites
+            get_favorite_songs,
+            get_favorite_ids,
+            toggle_favorite,
+            add_favorites,
+            remove_favorites,
             // Trash
             trash::trash_songs,
             trash::list_trash,

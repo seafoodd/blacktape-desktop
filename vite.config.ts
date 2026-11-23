@@ -13,6 +13,7 @@ export default defineConfig(async () => ({
   plugins: [react(), svgr()],
   test: {
     setupFiles: ["./src/test-setup.ts"],
+    exclude: ["**/.worktrees/**", "**/node_modules/**", "**/dist/**"],
   },
   resolve: {
     alias: {

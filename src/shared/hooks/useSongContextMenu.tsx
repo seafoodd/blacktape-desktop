@@ -13,6 +13,7 @@ import { EditLyricsModal } from "@/features/player/ui/EditLyricsModal.tsx";
 import EditSongInfoModal from "@/features/library/ui/EditSongInfoModal.tsx";
 import FetchLyricsModal from "@/features/library/ui/FetchLyricsModal.tsx";
 import DeleteSongModal from "@/features/library/ui/DeleteSongModal.tsx";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 
 interface UseSongContextMenuOptions {
   playbackContext: PlaybackContext;
@@ -101,6 +102,14 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
             {
               separator: true,
               label: "",
+            },
+            {
+              label: useFavoritesStore.getState().isFavorite(song.id)
+                ? "Remove from Favorites"
+                : "Add to Favorites",
+              action: () => {
+                void useFavoritesStore.getState().toggleFavorite(song.id);
+              },
             },
             {
               label: "Add to Playlist...",

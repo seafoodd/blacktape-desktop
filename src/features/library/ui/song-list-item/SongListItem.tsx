@@ -3,7 +3,12 @@ import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
-import { MdPause, MdPlayArrow } from "react-icons/md";
+import {
+  MdFavorite,
+  MdFavoriteBorder,
+  MdPause,
+  MdPlayArrow,
+} from "react-icons/md";
 import { formatDuration } from "@/shared/lib/ui/time.ts";
 import React from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
@@ -11,6 +16,7 @@ import { Song } from "@/shared/types.ts";
 import { ContextMenuPosition } from "@/shared/ui/context-menu";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/ui/dragSongs.ts";
 import { QualityBadge } from "@/shared/ui/quality-badge/QualityBadge.tsx";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 
 interface SongListItemProps {
   song: Song;
@@ -41,6 +47,8 @@ const SongListItem = ({
   index,
 }: SongListItemProps) => {
   const { currentSong, isPlaying, isStreaming, togglePlay } = useAudioStore();
+  const isFav = useFavoritesStore((s) => s.favoriteIds.has(song.id));
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   // A song that was streamed (before it was downloaded) is the current one too while its stream plays.
   const isCurrent =
     !!currentSong &&
@@ -200,6 +208,20 @@ const SongListItem = ({
         <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
       </div>
       <div className={styles.songRight}>
+        <button
+          className={clsx(styles.favoriteButton, {
+            [styles.isFavorite]: isFav,
+          })}
+          title={isFav ? "Remove from favorites" : "Add to favorites"}
+          aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void toggleFavorite(song.id);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          {isFav ? <MdFavorite size={16} /> : <MdFavoriteBorder size={16} />}
+        </button>
         <QualityBadge song={song} className={styles.qualityBadge} />
         {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}
         <div className={styles.endSlot}>

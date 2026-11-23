@@ -12,7 +12,12 @@ import {
 } from "@/shared/ui/context-menu";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
-import { MdPause, MdPlayArrow } from "react-icons/md";
+import {
+  MdFavorite,
+  MdFavoriteBorder,
+  MdPause,
+  MdPlayArrow,
+} from "react-icons/md";
 import { coverSrc } from "@/shared/lib/remote/cover";
 import {
   EMPTY_SELECTION,
@@ -23,6 +28,7 @@ import {
 import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 
 interface SongGridProps {
   songs: Song[];
@@ -52,6 +58,10 @@ export const SongGrid = ({
 }: SongGridProps) => {
   const { isPlaying, startPlayback, togglePlay } = useAudioStore();
   const { openModal } = useModalStore();
+  const favoriteIds = useFavoritesStore((s) => s.favoriteIds);
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
+  const addFavorites = useFavoritesStore((s) => s.addFavorites);
+  const removeFavorites = useFavoritesStore((s) => s.removeFavorites);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     index: number;
@@ -133,6 +143,18 @@ export const SongGrid = ({
         },
       },
       { separator: true, label: "" },
+      {
+        label: "Add to Favorites",
+        action: () => {
+          void addFavorites(ids);
+        },
+      },
+      {
+        label: "Remove from Favorites",
+        action: () => {
+          void removeFavorites(ids);
+        },
+      },
       {
         label: "Add to Playlist...",
         action: () => openModal(<AddToPlaylistModal songIds={ids} />),
@@ -271,6 +293,8 @@ export const SongGrid = ({
             selected={selection.selected.has(index)}
             selectedAbove={selection.selected.has(index - 1)}
             selectedBelow={selection.selected.has(index + 1)}
+            isFavorite={favoriteIds.has(song.id)}
+            onToggleFavorite={toggleFavorite}
             onSelect={handleSelect}
             onPlay={onPlay}
             onTogglePlay={() =>
@@ -312,6 +336,8 @@ interface SongGridRowProps {
   selected: boolean;
   selectedAbove: boolean;
   selectedBelow: boolean;
+  isFavorite: boolean;
+  onToggleFavorite: (songId: number) => void;
   onSelect: (index: number, e: React.MouseEvent) => void;
   onPlay: (index: number) => void;
   onTogglePlay: () => void;
@@ -333,6 +359,8 @@ const SongGridRow = ({
   selected,
   selectedAbove,
   selectedBelow,
+  isFavorite,
+  onToggleFavorite,
   onSelect,
   onPlay,
   onTogglePlay,
@@ -460,16 +488,36 @@ const SongGridRow = ({
           styles.cellDuration,
         )}
       >
-        <span className={styles.durationText}>
-          {formatDuration(song.duration_ms)}
-        </span>
         <button
-          className={styles.threeDotButton}
-          onClick={handleThreeDots}
-          aria-label="Song options"
+          className={clsx(styles.favoriteButton, {
+            [styles.isFavorite]: isFavorite,
+          })}
+          title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(song.id);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
+          {isFavorite ? (
+            <MdFavorite size={18} />
+          ) : (
+            <MdFavoriteBorder size={18} />
+          )}
         </button>
+        <div className={styles.endSlot}>
+          <span className={styles.durationText}>
+            {formatDuration(song.duration_ms)}
+          </span>
+          <button
+            className={styles.threeDotButton}
+            onClick={handleThreeDots}
+            aria-label="Song options"
+          >
+            <HiDotsHorizontal className={styles.threeDotIcon} size={24} />
+          </button>
+        </div>
       </div>
     </div>
   );

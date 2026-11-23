@@ -179,6 +179,14 @@
         background-color: rgba(255, 255, 255, 0.1);
     }
 
+    &.favoriteActive {
+        color: #ef4444;
+
+        &:hover:not(:disabled) {
+            color: #f87171;
+        }
+    }
+
     &:disabled {
         opacity: 0.4;
         cursor: default;

@@ -156,7 +156,7 @@
     align-items: center;
     justify-items: end;
     /* "10:23" fits: the badges stay one column in every row */
-    min-width: 30px;
+    min-width: 44px;
     /* the badge-to-duration gap equals the track number-to-title gap (18px) for "m:ss" durations */
     margin-left: 11.85px;
 
@@ -167,6 +167,7 @@
 
 .songDuration {
     display: block;
+    font-variant-numeric: tabular-nums;
 }
 
 .song:hover .songDuration {
@@ -175,6 +176,39 @@
 
 .song:hover .threeDotButton {
     visibility: visible;
+}
+
+.song:hover .favoriteButton {
+    visibility: visible;
+    opacity: 1;
+}
+
+.favoriteButton {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 50%;
+    color: var(--color-muted);
+    visibility: hidden;
+    opacity: 0;
+    margin-right: 6px;
+    flex-shrink: 0;
+    transition: opacity 100ms ease;
+
+    &.isFavorite {
+        visibility: visible;
+        opacity: 1;
+        color: #ef4444;
+    }
+
+    &:hover {
+        color: #ef4444;
+        background-color: rgba(255, 255, 255, 0.1);
+    }
 }
 
 .threeDotButton {

@@ -129,3 +129,19 @@ export const getOnboardingCompleted = (): Promise<boolean> =>
 
 export const setOnboardingCompleted = (completed: boolean): Promise<void> =>
   invoke("set_onboarding_completed", { completed });
+
+export const getFavoriteSongs = (): Promise<Song[]> =>
+  invoke<Song[]>("get_favorite_songs");
+
+export const getFavoriteIds = (): Promise<number[]> =>
+  invoke<number[]>("get_favorite_ids");
+
+export const toggleFavorite = (songId: number): Promise<boolean> =>
+  invoke<boolean>("toggle_favorite", { songId });
+
+export const addFavorites = (songIds: number[]): Promise<void> =>
+  invoke("add_favorites", { songIds });
+
+export const removeFavorites = (songIds: number[]): Promise<void> =>
+  invoke("remove_favorites", { songIds });
+

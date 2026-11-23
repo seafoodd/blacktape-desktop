@@ -2,14 +2,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   useNavigationStore,
   isSameNavEntry,
+  applyNavEntry,
 } from "./navigationStore.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
+
+const setActiveViewMock = vi.fn();
+const setSelectedTabMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@/shared/store/libraryStore.ts", () => ({
   useLibraryStore: {
     getState: vi.fn(() => ({
-      setSelectedTab: vi.fn().mockResolvedValue(undefined),
-      setActiveView: vi.fn(),
+      setSelectedTab: setSelectedTabMock,
+      setActiveView: setActiveViewMock,
     })),
     setState: vi.fn(),
   },
@@ -136,6 +140,20 @@ describe("navigationStore", () => {
           { view: "ALBUM_PREVIEW", previewItem: item1 },
           { view: "ALBUM_PREVIEW", previewItem: item2 },
         ),
+      ).toBe(false);
+    });
+
+    it("applies FAVORITES entry", async () => {
+      await applyNavEntry({ view: "FAVORITES" });
+      expect(setActiveViewMock).toHaveBeenCalledWith("FAVORITES");
+    });
+
+    it("compares FAVORITES entries", () => {
+      expect(
+        isSameNavEntry({ view: "FAVORITES" }, { view: "FAVORITES" }),
+      ).toBe(true);
+      expect(
+        isSameNavEntry({ view: "FAVORITES" }, { view: "TRASH" }),
       ).toBe(false);
     });
   });

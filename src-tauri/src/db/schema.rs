@@ -53,6 +53,16 @@ pub const ALBUM_SOURCES_SCHEMA_SQL: &str = "
     CREATE INDEX IF NOT EXISTS idx_album_sources_artist ON album_sources(album_artist COLLATE NOCASE);
 ";
 
+pub const FAVORITES_SCHEMA_SQL: &str = "
+    CREATE TABLE IF NOT EXISTS favorite_songs (
+        song_id INTEGER PRIMARY KEY,
+        date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_favorite_songs_date ON favorite_songs(date_added DESC);
+";
+
 pub fn get_migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -139,6 +149,12 @@ pub fn get_migrations() -> Vec<Migration> {
             version: 7,
             description: "create album sources table",
             sql: ALBUM_SOURCES_SCHEMA_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "create favorite songs table",
+            sql: FAVORITES_SCHEMA_SQL,
             kind: MigrationKind::Up,
         },
     ]

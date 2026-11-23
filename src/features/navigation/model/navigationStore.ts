@@ -92,6 +92,10 @@ export async function applyNavEntry(entry: NavEntry): Promise<void> {
       useLibraryStore.getState().setActiveView("TRASH");
       break;
     }
+    case "FAVORITES": {
+      useLibraryStore.getState().setActiveView("FAVORITES");
+      break;
+    }
   }
 }
 

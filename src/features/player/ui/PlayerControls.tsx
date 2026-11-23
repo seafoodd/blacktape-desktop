@@ -12,6 +12,7 @@ import { formatDuration } from "@/shared/lib/ui/time.ts";
 import {
   MdCloudQueue,
   MdCheck,
+  MdFavorite,
   MdFavoriteBorder,
   MdFileDownload,
   MdPlaylistAdd,
@@ -28,6 +29,7 @@ import {
 import clsx from "clsx";
 import { coverSrc } from "@/shared/lib/remote/cover";
 import placeholderSongImage from "@/assets/react.svg";
+import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
 import {
   ItemType,
   useLibraryStore,
@@ -156,6 +158,10 @@ export const PlayerControls = () => {
   };
 
   const openModal = useModalStore((s) => s.openModal);
+  const isCurrentFavorite = useFavoritesStore((s) =>
+    currentSong ? s.favoriteIds.has(currentSong.id) : false,
+  );
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const albumUrl = streamAlbumUrl(currentSong?.source_url);
   const target = currentSong
     ? albumTarget(currentSong, isStreaming, albumUrl)
@@ -356,11 +362,29 @@ export const PlayerControls = () => {
                 </button>
                 <button
                   type="button"
-                  className={styles.songAction}
-                  disabled
-                  title="Favorites are not implemented yet"
+                  className={clsx(styles.songAction, {
+                    [styles.favoriteActive]: isCurrentFavorite,
+                  })}
+                  disabled={!currentSong}
+                  title={
+                    !currentSong
+                      ? "No track playing"
+                      : isCurrentFavorite
+                        ? "Remove from favorites"
+                        : "Add to favorites"
+                  }
+                  aria-label={
+                    isCurrentFavorite
+                      ? "Remove from favorites"
+                      : "Add to favorites"
+                  }
+                  onClick={() => {
+                    if (currentSong) {
+                      void toggleFavorite(currentSong.id);
+                    }
+                  }}
                 >
-                  <MdFavoriteBorder />
+                  {isCurrentFavorite ? <MdFavorite /> : <MdFavoriteBorder />}
                 </button>
                 {streamTrack &&
                   (downloading || downloaded || !downloadParams ? (
