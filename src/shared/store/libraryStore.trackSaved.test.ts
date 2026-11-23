@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useLibraryStore, ItemType } from "@/shared/store/libraryStore.ts";
 
 const registeredListeners: Record<string, (event: any) => Promise<void> | void> = {};
