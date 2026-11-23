@@ -66,8 +66,30 @@ fn scrub_value(val: &mut sentry::protocol::Value) {
     }
 }
 
+fn is_cancellation_event(event: &Event<'static>) -> bool {
+    if let Some(ref msg) = event.message {
+        let lower = msg.to_lowercase();
+        if lower.contains("auth_window_closed") || lower.contains("auth window closed") {
+            return true;
+        }
+    }
+    for exc in &event.exception.values {
+        if let Some(ref val) = exc.value {
+            let lower = val.to_lowercase();
+            if lower.contains("auth_window_closed") || lower.contains("auth window closed") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn sanitize_event(mut event: Event<'static>) -> Option<Event<'static>> {
     if !is_enabled() {
+        return None;
+    }
+
+    if is_cancellation_event(&event) {
         return None;
     }
 
@@ -450,6 +472,25 @@ mod tests {
         let extra_dir = sanitized.extra.get("debug_dir").unwrap().as_str().unwrap();
         assert!(extra_dir.contains("<HOME>"));
         assert!(!extra_dir.contains(&home));
+    }
+
+    #[test]
+    fn test_sanitize_event_drops_auth_window_closed() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        set_enabled(true);
+
+        let mut event = Event::default();
+        event.exception = Values {
+            values: vec![Exception {
+                value: Some("Error: [libraryStore.startDownload] auth_window_closed".to_string()),
+                ..Default::default()
+            }],
+        };
+        assert!(sanitize_event(event).is_none());
+
+        let mut msg_event = Event::default();
+        msg_event.message = Some("auth_window_closed".to_string());
+        assert!(sanitize_event(msg_event).is_none());
     }
 
     #[test]

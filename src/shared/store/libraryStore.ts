@@ -7,7 +7,10 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
 import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
-import { captureFrontendError } from "@/shared/lib/telemetry.ts";
+import {
+  captureFrontendError,
+  isCancellationError,
+} from "@/shared/lib/telemetry.ts";
 import { loadSavedNavEntry } from "@/features/player/model/playerPersistence.ts";
 
 export type DownloadStatus =
@@ -602,7 +605,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       });
     } catch (e) {
       console.error("Download invoke failed:", e);
-      captureFrontendError(e, "libraryStore.startDownload");
+      if (!isCancellationError(e)) {
+        captureFrontendError(e, "libraryStore.startDownload");
+      }
       set((state) => {
         const existing = state.activeDownloads[taskId];
         if (!existing) return {};

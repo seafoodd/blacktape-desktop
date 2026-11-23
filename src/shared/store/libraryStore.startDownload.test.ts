@@ -97,4 +97,15 @@ describe("startDownload format", () => {
     void useLibraryStore.getState().startDownload(albumParams([TRACK_1]));
     expect(invoke).toHaveBeenCalledWith("download", expect.objectContaining({ format: null }));
   });
+
+  it("handles auth_window_closed cancellation without reporting to telemetry", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("auth_window_closed");
+
+    await useLibraryStore.getState().startDownload(albumParams([TRACK_1]));
+
+    const entries = Object.values(useLibraryStore.getState().activeDownloads);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("failed");
+    expect(entries[0].message).toBe("auth_window_closed");
+  });
 });

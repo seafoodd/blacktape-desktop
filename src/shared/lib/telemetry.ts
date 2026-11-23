@@ -1,8 +1,25 @@
+export function isCancellationError(error: unknown): boolean {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("auth_window_closed") ||
+    lower.includes("auth window closed") ||
+    lower.includes("user_cancelled") ||
+    lower.includes("user cancelled")
+  );
+}
+
 export function captureFrontendError(error: unknown, context?: string): void {
   if (context) {
     console.error(`[${context}]`, error);
   } else {
     console.error(error);
+  }
+
+  // Do not report user cancellations (e.g. user closed auth window) to Sentry
+  if (isCancellationError(error)) {
+    return;
   }
 
   // Only forward when tauri-plugin-sentry injected the bridge (i.e. SENTRY_DSN was set at build time)
