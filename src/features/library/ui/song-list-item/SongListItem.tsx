@@ -17,6 +17,7 @@ import { ContextMenuPosition } from "@/shared/ui/context-menu";
 import { SONG_DRAG_MIME, encodeSongDrag } from "@/shared/lib/ui/dragSongs.ts";
 import { QualityBadge } from "@/shared/ui/quality-badge/QualityBadge.tsx";
 import { useFavoritesStore } from "@/features/favorites/model/favoritesStore.ts";
+import { shouldShowTrackArtist, formatTrackArtists } from "./songListItemHelper.ts";
 
 interface SongListItemProps {
   song: Song;
@@ -205,7 +206,14 @@ const SongListItem = ({
             )}
           </button>
         </div>
-        <div className={clsx(styles.songTitle, "truncate")}>{song.title}</div>
+        <div className={clsx(styles.songTitle, "truncate")}>
+          <span>{song.title}</span>
+          {shouldShowTrackArtist(song) && (
+            <span className={styles.songArtistSuffix}>
+              {" · "}{formatTrackArtists(song)}
+            </span>
+          )}
+        </div>
       </div>
       <div className={styles.songRight}>
         <button

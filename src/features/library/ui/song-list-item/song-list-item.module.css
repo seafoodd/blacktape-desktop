@@ -140,6 +140,11 @@
     min-width: 0;
 }
 
+.songArtistSuffix {
+    color: var(--color-muted, rgba(255, 255, 255, 0.45));
+    font-weight: normal;
+}
+
 .songRight {
     display: flex;
     align-items: center;
