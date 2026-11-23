@@ -752,11 +752,23 @@ pub async fn download_single(
         .ok_or_else(|| format!("Failed to download track: {}", track.title))
 }
 
+pub type TrackDoneSender = tokio::sync::mpsc::Sender<(PathBuf, TrackDownload, usize)>;
+
 pub async fn download_batch(
     app: &AppHandle,
     tracks: &[TrackDownload],
     output_dir: &str,
     task_id: &str,
+) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
+    download_batch_streaming(app, tracks, output_dir, task_id, None).await
+}
+
+pub async fn download_batch_streaming(
+    app: &AppHandle,
+    tracks: &[TrackDownload],
+    output_dir: &str,
+    task_id: &str,
+    track_sender: Option<TrackDoneSender>,
 ) -> Result<Vec<(PathBuf, TrackDownload)>, String> {
     let now = Instant::now();
     let ctx = Arc::new(DownloadContext::prepare(app, output_dir, "batch", task_id).await?);
@@ -818,6 +830,7 @@ pub async fn download_batch(
         let app_handle = app.clone();
         let ctx = Arc::clone(&ctx);
         let task_id = task_id.to_string();
+        let track_sender = track_sender.clone();
 
         join_set.spawn(async move {
             if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
@@ -887,6 +900,10 @@ pub async fn download_batch(
                         .await;
                 }
 
+                if let Some(ref sender) = track_sender {
+                    let _ = sender.send((path.clone(), track.clone(), index)).await;
+                }
+
                 Some((path.clone(), track))
             } else {
                 tracing::error!(
@@ -901,6 +918,8 @@ pub async fn download_batch(
             }
         });
     }
+
+    drop(track_sender);
 
     let mut downloaded: Vec<(PathBuf, TrackDownload)> = Vec::new();
     while let Some(res) = join_set.join_next().await {
@@ -1275,6 +1294,34 @@ mod hardening_tests {
         assert_eq!(args[buf_idx + 1], "16M");
         assert!(args.contains(&"--no-cache-dir".to_string()));
         assert_eq!(MAX_CONCURRENT_DOWNLOADS, 8);
+    }
+
+    #[tokio::test]
+    async fn track_done_sender_transmits_completed_track() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(PathBuf, TrackDownload, usize)>(2);
+        let sample_track = TrackDownload {
+            title: "Test Track".into(),
+            artists: vec!["Test Artist".into()],
+            album: "Test Album".into(),
+            album_artist: "Test Artist".into(),
+            track_number: Some(1),
+            disc_number: Some(1),
+            duration_ms: Some(120_000),
+            url: "https://example.com/audio".into(),
+            ..Default::default()
+        };
+        let sample_path = PathBuf::from("/temp/1.opus");
+        let sender: TrackDoneSender = tx;
+        sender.send((sample_path.clone(), sample_track.clone(), 0)).await.unwrap();
+        drop(sender);
+
+        let received = rx.recv().await;
+        assert!(received.is_some());
+        let (path, track, idx) = received.unwrap();
+        assert_eq!(path, sample_path);
+        assert_eq!(track.title, "Test Track");
+        assert_eq!(idx, 0);
+        assert!(rx.recv().await.is_none());
     }
 
     #[test]
