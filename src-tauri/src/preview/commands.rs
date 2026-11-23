@@ -50,6 +50,7 @@ pub fn stream_song(request: &StreamRequest, duration_ms: Option<u64>) -> Song {
         album: request.album.clone().unwrap_or_default(),
         duration_ms: duration_ms.unwrap_or(0),
         track_number: None,
+        disc_number: None,
         genre: None,
         release_year: None,
         cover_url: request.cover.clone().filter(|c| !c.is_empty()),

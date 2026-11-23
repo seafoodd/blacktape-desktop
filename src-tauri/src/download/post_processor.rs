@@ -83,6 +83,7 @@ pub fn process_and_move_track(
         album,
         duration_ms,
         track_number: track.track_number,
+        disc_number: None,
         genre: track.genres.as_ref().and_then(|g| g.first().cloned()),
         release_year: track.release_year,
         cover_url: final_cover,

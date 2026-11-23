@@ -108,6 +108,7 @@ mod tests {
             album: "b".into(),
             duration_ms: 1000,
             track_number: None,
+            disc_number: None,
             genre: None,
             release_year: None,
             cover_url: None,

@@ -212,6 +212,7 @@ mod tests {
             album: "Al".into(),
             duration_ms: 0,
             track_number: None,
+            disc_number: None,
             genre: None,
             release_year: None,
             cover_url: None,

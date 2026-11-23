@@ -1559,6 +1559,7 @@ mod tests {
             album: "Album".to_string(),
             duration_ms: 180_000,
             track_number: Some(1),
+            disc_number: None,
             genre: None,
             release_year: None,
             cover_url: Some("/covers/a.jpg".to_string()),

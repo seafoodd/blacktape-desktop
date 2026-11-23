@@ -31,7 +31,7 @@ impl Database {
         sqlx::query_as::<_, Song>(
             "SELECT *
              FROM songs
-             ORDER BY album_artist ASC, album ASC, track_number ASC",
+             ORDER BY album_artist ASC, album ASC, disc_number ASC, track_number ASC",
         )
         .fetch_all(&self.pool)
         .await
@@ -56,7 +56,7 @@ impl Database {
 
     pub async fn get_artist_albums(&self, artist_name: &str) -> Result<Vec<Album>, sqlx::Error> {
         let songs = sqlx::query_as::<_, Song>(
-            "SELECT * FROM songs WHERE album_artist = ? ORDER BY album ASC, track_number ASC",
+            "SELECT * FROM songs WHERE album_artist = ? ORDER BY album ASC, disc_number ASC, track_number ASC",
         )
         .bind(artist_name)
         .fetch_all(&self.pool)
@@ -150,18 +150,19 @@ impl Database {
     pub async fn insert_song(&self, song: Song) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO songs (
-                path, title, artists, album_artist, album, track_number,
+                path, title, artists, album_artist, album, track_number, disc_number,
                 duration_ms, cover_url, external_cover_url, genre, release_year,
                 lyrics, lyrics_source, source, source_url, source_item_id,
                 canonical_track_slug, canonical_album_slug, quality_tier
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 artists = excluded.artists,
                 album_artist = excluded.album_artist,
                 album = excluded.album,
                 track_number = excluded.track_number,
+                disc_number = excluded.disc_number,
                 duration_ms = excluded.duration_ms,
                 cover_url = excluded.cover_url,
                 genre = excluded.genre,
@@ -179,6 +180,7 @@ impl Database {
         .bind(&song.album_artist)
         .bind(&song.album)
         .bind(song.track_number)
+        .bind(song.disc_number)
         .bind(song.duration_ms as i64)
         .bind(&song.cover_url)
         .bind(&song.external_cover_url)
@@ -204,18 +206,19 @@ impl Database {
         for song in songs {
             sqlx::query(
                 "INSERT INTO songs (
-                    path, title, artists, album_artist, album, track_number,
+                    path, title, artists, album_artist, album, track_number, disc_number,
                     duration_ms, cover_url, external_cover_url, genre, release_year,
                     lyrics, lyrics_source, source, source_url, source_item_id,
                     canonical_track_slug, canonical_album_slug, quality_tier
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path) DO UPDATE SET
                     title = excluded.title,
                     artists = excluded.artists,
                     album_artist = excluded.album_artist,
                     album = excluded.album,
                     track_number = excluded.track_number,
+                    disc_number = excluded.disc_number,
                     duration_ms = excluded.duration_ms,
                     cover_url = excluded.cover_url,
                     genre = excluded.genre,
@@ -234,6 +237,7 @@ impl Database {
             .bind(&song.album_artist)
             .bind(&song.album)
             .bind(song.track_number)
+            .bind(song.disc_number)
             .bind(song.duration_ms as i64)
             .bind(&song.cover_url)
             .bind(&song.external_cover_url)
@@ -258,7 +262,7 @@ impl Database {
     pub async fn get_song_by_id(&self, id: i64) -> Result<Option<Song>, sqlx::Error> {
         let song = sqlx::query_as::<_, Song>(
             "SELECT
-                id, path, title, artists, album_artist, album, track_number,
+                id, path, title, artists, album_artist, album, track_number, disc_number,
                 duration_ms, cover_url, external_cover_url, genre, release_year,
                 lyrics, lyrics_source, source, source_url, source_item_id,
                 canonical_track_slug, canonical_album_slug, quality_tier
@@ -275,7 +279,7 @@ impl Database {
     pub async fn get_songs_by_ids(&self, ids: &[i64]) -> Result<Vec<Song>, sqlx::Error> {
         sqlx::query_as::<_, Song>(
             "SELECT
-                id, path, title, artists, album_artist, album, track_number,
+                id, path, title, artists, album_artist, album, track_number, disc_number,
                 duration_ms, cover_url, external_cover_url, genre, release_year,
                 lyrics, lyrics_source, source, source_url, source_item_id,
                 canonical_track_slug, canonical_album_slug, quality_tier
@@ -439,7 +443,7 @@ impl Database {
 
     pub async fn get_playlist_songs(&self, playlist_id: i64) -> Result<Vec<Song>, sqlx::Error> {
         sqlx::query_as::<_, Song>(
-            "SELECT s.id, s.path, s.title, s.artists, s.album_artist, s.album, s.track_number,
+            "SELECT s.id, s.path, s.title, s.artists, s.album_artist, s.album, s.track_number, s.disc_number,
                     s.duration_ms, s.cover_url, s.external_cover_url, s.genre, s.release_year,
                     s.lyrics, s.lyrics_source, s.source, s.source_url, s.source_item_id,
                     s.canonical_track_slug, s.canonical_album_slug, s.quality_tier
@@ -846,18 +850,19 @@ async fn insert_song_tx(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO songs (
-            id, path, title, artists, album_artist, album, track_number,
+            id, path, title, artists, album_artist, album, track_number, disc_number,
             duration_ms, cover_url, external_cover_url, genre, release_year,
             lyrics, lyrics_source, source, source_url, source_item_id,
             canonical_track_slug, canonical_album_slug, quality_tier
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET
             title = excluded.title,
             artists = excluded.artists,
             album_artist = excluded.album_artist,
             album = excluded.album,
             track_number = excluded.track_number,
+            disc_number = excluded.disc_number,
             duration_ms = excluded.duration_ms,
             cover_url = excluded.cover_url,
             genre = excluded.genre,
@@ -876,6 +881,7 @@ async fn insert_song_tx(
     .bind(&song.album_artist)
     .bind(&song.album)
     .bind(song.track_number)
+    .bind(song.disc_number)
     .bind(song.duration_ms as i64)
     .bind(&song.cover_url)
     .bind(&song.external_cover_url)
@@ -976,7 +982,7 @@ impl Database {
 
     pub async fn get_favorite_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
         sqlx::query_as::<_, Song>(
-            "SELECT s.id, s.path, s.title, s.artists, s.album_artist, s.album, s.track_number,
+            "SELECT s.id, s.path, s.title, s.artists, s.album_artist, s.album, s.track_number, s.disc_number,
                     s.duration_ms, s.cover_url, s.external_cover_url, s.genre, s.release_year,
                     s.lyrics, s.lyrics_source, s.source, s.source_url, s.source_item_id,
                     s.canonical_track_slug, s.canonical_album_slug, s.quality_tier
@@ -1197,6 +1203,7 @@ pub(crate) mod tests {
                 album_artist TEXT NOT NULL DEFAULT 'Unknown Artist',
                 album TEXT,
                 track_number INTEGER,
+                disc_number INTEGER,
                 duration_ms INTEGER NOT NULL,
                 cover_url TEXT,
                 external_cover_url TEXT,
@@ -1545,6 +1552,7 @@ pub(crate) mod tests {
             album: "Album".to_string(),
             duration_ms: 1000,
             track_number: Some(1),
+            disc_number: None,
             genre: None,
             release_year: None,
             cover_url: None,
@@ -1708,5 +1716,32 @@ pub(crate) mod tests {
         // Batch remove
         db.remove_favorites(&[id1, id2]).await.unwrap();
         assert_eq!(db.get_favorite_song_ids().await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_multi_disc_sorting_and_crud() {
+        let db = setup_test_db().await;
+        let make_song = |path: &str, title: &str, disc: Option<i32>, track: Option<i32>| -> Song {
+            let mut s = make_source_song(path, Platform::Local, None, None);
+            s.title = title.to_string();
+            s.album = "Double Album".to_string();
+            s.album_artist = "Band".to_string();
+            s.disc_number = disc;
+            s.track_number = track;
+            s
+        };
+
+        // Insert out of order: Disc 2 track 1, Disc 1 track 2, Disc 2 track 2, Disc 1 track 1
+        let s2_1 = make_song("/m/d2t1.mp3", "D2T1", Some(2), Some(1));
+        let s1_2 = make_song("/m/d1t2.mp3", "D1T2", Some(1), Some(2));
+        let s2_2 = make_song("/m/d2t2.mp3", "D2T2", Some(2), Some(2));
+        let s1_1 = make_song("/m/d1t1.mp3", "D1T1", Some(1), Some(1));
+
+        db.insert_songs(vec![s2_1, s1_2, s2_2, s1_1]).await.unwrap();
+
+        let albums = db.get_artist_albums("Band").await.unwrap();
+        assert_eq!(albums.len(), 1);
+        let titles: Vec<&str> = albums[0].songs.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, vec!["D1T1", "D1T2", "D2T1", "D2T2"]);
     }
 }

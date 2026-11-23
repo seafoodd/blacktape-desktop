@@ -157,6 +157,12 @@ pub fn get_migrations() -> Vec<Migration> {
             sql: FAVORITES_SCHEMA_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 9,
+            description: "add disc_number to songs",
+            sql: "ALTER TABLE songs ADD COLUMN disc_number INTEGER;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
