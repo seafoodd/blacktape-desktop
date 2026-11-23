@@ -82,6 +82,15 @@ describe("isWorkspaceDevProcess", () => {
         workspaceRoot,
       ),
     ).toBe(true);
+
+    const linuxWorkspace =
+      "/home/runner/work/blacktape-desktop/blacktape-desktop";
+    expect(
+      isWorkspaceDevProcess(
+        "/home/runner/work/blacktape-desktop/blacktape-desktop/src-tauri/target/debug/blacktape-desktop",
+        linuxWorkspace,
+      ),
+    ).toBe(true);
   });
 
   it("returns false for installed or release binaries outside workspace", () => {
@@ -104,6 +113,12 @@ describe("isWorkspaceDevProcess", () => {
         "C:\\Users\\seafood\\AppData\\Local\\Programs\\Blacktape\\blacktape-desktop.exe",
         workspaceRoot,
       ),
+    ).toBe(false);
+
+    const linuxWorkspace =
+      "/home/runner/work/blacktape-desktop/blacktape-desktop";
+    expect(
+      isWorkspaceDevProcess("/usr/bin/blacktape-desktop", linuxWorkspace),
     ).toBe(false);
   });
 

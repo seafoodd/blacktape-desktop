@@ -58,11 +58,27 @@ export function cleanFreshDirs(
 
 export function isWorkspaceDevProcess(execPath, workspaceRoot = process.cwd()) {
   if (!execPath || typeof execPath !== "string") return false;
-  const normalizedExec = path.resolve(execPath).toLowerCase();
-  const normalizedTarget = path
-    .resolve(workspaceRoot, "src-tauri", "target")
-    .toLowerCase();
-  return normalizedExec.startsWith(normalizedTarget);
+  const isWindowsPath =
+    /^[a-zA-Z]:[/\\]/.test(execPath) ||
+    /^[a-zA-Z]:[/\\]/.test(workspaceRoot) ||
+    execPath.includes("\\") ||
+    workspaceRoot.includes("\\");
+
+  const pathModule = isWindowsPath ? path.win32 : path.posix;
+  const resolvedTarget = pathModule.resolve(
+    workspaceRoot,
+    "src-tauri",
+    "target",
+  );
+  const resolvedExec = pathModule.resolve(workspaceRoot, execPath);
+
+  const normTarget = resolvedTarget.replace(/\\/g, "/").toLowerCase();
+  const normExec = resolvedExec.replace(/\\/g, "/").toLowerCase();
+
+  return (
+    normExec === normTarget ||
+    normExec.startsWith(normTarget.endsWith("/") ? normTarget : `${normTarget}/`)
+  );
 }
 
 export function getPidFilePath(workspaceRoot = process.cwd()) {
