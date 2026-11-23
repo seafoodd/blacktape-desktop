@@ -62,6 +62,7 @@ import {
   findTrashItem,
   albumHasTrackGaps,
 } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
+import { albumHasMultipleDiscs, rowDiscNumber } from "./artistAlbumsDisc.ts";
 
 const ArtistAlbums = () => {
   const { selectedTab, tabs, albums, activeDownloads, cancelDownload } =
@@ -875,50 +876,76 @@ const ArtistAlbums = () => {
                   const download = missing
                     ? Object.values(activeDownloads).find((d) => linkedAlbumOf(d) === album.title)
                     : undefined;
+                  const hasMultiDiscs = albumHasMultipleDiscs(
+                    album.songs,
+                    missing ? missing.tracks : undefined,
+                  );
+                  let lastDisc = 0;
                   const selectedAt = (i: number) => {
                     const r = rows[i];
                     return !!r && selection.selected.has(r.id);
                   };
-                  return rows.map(({ row, id }, i) =>
-                    row.kind === "song" ? (
-                      <SongListItem
-                        key={row.song.id}
-                        selectedAbove={selectedAt(i - 1)}
-                        selectedBelow={selectedAt(i + 1)}
-                        dragIds={
-                          selection.selected.has(row.song.id)
-                            ? orderedIds.filter((x) => x > 0 && selection.selected.has(x))
-                            : [row.song.id]
-                        }
-                        song={row.song}
-                        onPlay={handlePlaySongRow}
-                        onSelect={handleSelectSong}
-                        onOpenMenu={handleOpenSongMenu}
-                        selected={selection.selected.has(row.song.id)}
-                      />
-                    ) : (
-                      missing && (
-                        <MissingTrackRow
-                          key={`missing-${row.track.index}-${row.track.url}`}
-                          album={album.title}
-                          missing={missing}
-                          track={row.track}
-                          percent={missingTrackPercent(download, row.track)}
-                          downloading={missingTrackDownloading(download, row.track)}
-                          ghost={row.track.url === ""}
-                          unavailable={unavailable.has(row.track.url)}
-                          failure={missingFailures[row.track.url]}
-                          trashId={findTrashItem(trashed, album.title, row.track)?.id}
-                          selected={selection.selected.has(id)}
-                          selectedAbove={selectedAt(i - 1)}
-                          selectedBelow={selectedAt(i + 1)}
-                          onPlay={() => void playFromRow(id)}
-                          onSelect={(e) => handleSelectMissing(id, e)}
-                          onMenu={(e) => handleMissingMenu(id, e)}
-                        />
-                      )
-                    ),
-                  );
+                  return rows.map(({ row, id }, i) => {
+                    const disc = rowDiscNumber(row);
+                    const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
+                    if (showDiscHeader) {
+                      lastDisc = disc;
+                    }
+                    const prevRow = rows[i - 1]?.row;
+                    const nextRow = rows[i + 1]?.row;
+                    const sameDiscAbove = !hasMultiDiscs || (prevRow && rowDiscNumber(prevRow) === disc);
+                    const sameDiscBelow = !hasMultiDiscs || (nextRow && rowDiscNumber(nextRow) === disc);
+
+                    return (
+                      <React.Fragment key={row.kind === "song" ? row.song.id : `missing-${row.track.index}-${row.track.url}`}>
+                        {showDiscHeader && (
+                          <li
+                            key={`disc-header-${album.title}-${disc}`}
+                            className={styles.discHeader}
+                            role="presentation"
+                          >
+                            <span className={styles.discHeaderTitle}>DISC {disc}</span>
+                          </li>
+                        )}
+                        {row.kind === "song" ? (
+                          <SongListItem
+                            selectedAbove={sameDiscAbove && selectedAt(i - 1)}
+                            selectedBelow={sameDiscBelow && selectedAt(i + 1)}
+                            dragIds={
+                              selection.selected.has(row.song.id)
+                                ? orderedIds.filter((x) => x > 0 && selection.selected.has(x))
+                                : [row.song.id]
+                            }
+                            song={row.song}
+                            onPlay={handlePlaySongRow}
+                            onSelect={handleSelectSong}
+                            onOpenMenu={handleOpenSongMenu}
+                            selected={selection.selected.has(row.song.id)}
+                          />
+                        ) : (
+                          missing && (
+                            <MissingTrackRow
+                              album={album.title}
+                              missing={missing}
+                              track={row.track}
+                              percent={missingTrackPercent(download, row.track)}
+                              downloading={missingTrackDownloading(download, row.track)}
+                              ghost={row.track.url === ""}
+                              unavailable={unavailable.has(row.track.url)}
+                              failure={missingFailures[row.track.url]}
+                              trashId={findTrashItem(trashed, album.title, row.track)?.id}
+                              selected={selection.selected.has(id)}
+                              selectedAbove={sameDiscAbove && selectedAt(i - 1)}
+                              selectedBelow={sameDiscBelow && selectedAt(i + 1)}
+                              onPlay={() => void playFromRow(id)}
+                              onSelect={(e) => handleSelectMissing(id, e)}
+                              onMenu={(e) => handleMissingMenu(id, e)}
+                            />
+                          )
+                        )}
+                      </React.Fragment>
+                    );
+                  });
                 })()}
               </ul>
             </div>
