@@ -160,6 +160,68 @@ pub fn get_migrations() -> Vec<Migration> {
     ]
 }
 
+/// If a newer version of Blacktape ran on this machine and applied migrations beyond
+/// what this binary knows about (e.g. during a rollback, downgrade, or running a release build
+/// after a dev build), `tauri-plugin-sql` / sqlx would fail plugin initialization with:
+/// `migration X was previously applied but is missing in the resolved migrations`.
+///
+/// This function removes records from `_sqlx_migrations` where `version > max_version`
+/// so that `tauri-plugin-sql` can safely initialize without panicking. The existing tables and data
+/// created by the newer migrations remain untouched. When the newer binary runs again,
+/// its idempotent `CREATE TABLE IF NOT EXISTS` migrations will re-record the migration cleanly.
+pub async fn prune_future_migrations(db_path: &Path, max_version: i64) -> Result<usize, sqlx::Error> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(false);
+    let mut conn = <sqlx::SqliteConnection as sqlx::Connection>::connect_with(&options).await?;
+
+    let table_exists: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(&mut conn)
+    .await?;
+
+    if table_exists.is_none() {
+        return Ok(0);
+    }
+
+    let result = sqlx::query("DELETE FROM _sqlx_migrations WHERE version > ?")
+        .bind(max_version)
+        .execute(&mut conn)
+        .await?;
+
+    let pruned = result.rows_affected() as usize;
+    if pruned > 0 {
+        eprintln!(
+            "[db] Pruned {} migration(s) newer than version {} from _sqlx_migrations to maintain backward compatibility",
+            pruned,
+            max_version
+        );
+    }
+
+    Ok(pruned)
+}
+
+pub fn migration_guard_plugin<R: tauri::Runtime>(migrations: &[Migration]) -> tauri::plugin::TauriPlugin<R> {
+    let max_version = migrations.iter().map(|m| m.version as i64).max().unwrap_or(0);
+    tauri::plugin::Builder::new("migration_guard")
+        .setup(move |app, _api| {
+            use tauri::Manager;
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                let db_path = db_file_path(&config_dir);
+                let _ = tauri::async_runtime::block_on(async {
+                    prune_future_migrations(&db_path, max_version).await
+                });
+            }
+            Ok(())
+        })
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +238,78 @@ mod tests {
     fn database_file_sits_in_the_config_folder() {
         let dir = Path::new("config-dir");
         assert_eq!(db_file_path(dir), dir.join("blacktape.db"));
+    }
+
+    #[tokio::test]
+    async fn prune_future_migrations_removes_newer_versions_preserving_tables() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_prune.db");
+
+        // 1. Create a database with _sqlx_migrations containing versions 1..=8
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let mut conn = <sqlx::SqliteConnection as sqlx::Connection>::connect_with(&options)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            );",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        // Also create a table created by migration 8
+        sqlx::query("CREATE TABLE favorite_songs (song_id INTEGER PRIMARY KEY);")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        for v in 1..=8 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+                 VALUES (?, 'migration', 1, X'1234', 10);",
+            )
+            .bind(v)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        }
+        drop(conn);
+
+        // 2. Prune with max_version = 7 (simulating binary knowing only versions 1..=7)
+        let pruned = prune_future_migrations(&db_path, 7).await.unwrap();
+        assert_eq!(pruned, 1);
+
+        // 3. Verify only versions 1..=7 remain in _sqlx_migrations
+        let mut conn = <sqlx::SqliteConnection as sqlx::Connection>::connect_with(&options)
+            .await
+            .unwrap();
+        let versions: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+
+        // 4. Verify table created by migration 8 is untouched
+        let table_exists: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'favorite_songs'",
+        )
+        .fetch_optional(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(table_exists, Some(1));
+
+        // 5. Running it again is an idempotent no-op
+        let pruned_again = prune_future_migrations(&db_path, 7).await.unwrap();
+        assert_eq!(pruned_again, 0);
     }
 }

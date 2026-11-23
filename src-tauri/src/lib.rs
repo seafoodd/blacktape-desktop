@@ -857,6 +857,7 @@ pub fn run() {
                 ));
             });
         })
+        .plugin(crate::db::schema::migration_guard_plugin(&get_migrations()))
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(DB_URL, get_migrations())
