@@ -77,6 +77,7 @@ pub async fn process_track_url(
             tracks: vec![TrackMetaItem {
                 title: track_info.title.clone(),
                 track_number: track_info.track_number.or(Some(1)),
+                disc_number: track_info.disc_number,
             }],
         },
     );

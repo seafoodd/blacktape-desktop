@@ -118,6 +118,7 @@ pub fn track_to_download(
         album_artist,
         album: album_title,
         track_number,
+        disc_number: None,
         genres: genre.map(|g| vec![g.to_string()]),
         release_year,
         url,

@@ -525,6 +525,7 @@ mod tests {
             title: format!("t{index}"),
             artists: vec![],
             track_number: Some(index as i32 + 1),
+            disc_number: None,
             url: url.to_string(),
             available: true,
             note: None,

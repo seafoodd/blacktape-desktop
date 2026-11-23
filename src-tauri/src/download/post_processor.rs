@@ -51,9 +51,10 @@ pub fn process_and_move_track(
         tracing::warn!(error = %err, "Issue writing metadata tags");
     }
     let clean_title = sanitize_fs(&track.title);
-    let final_name = match track.track_number {
-        Some(num) => format!("{:02} - {}.{}", num, clean_title, ext),
-        None => format!("{}.{}", clean_title, ext),
+    let final_name = match (track.disc_number, track.track_number) {
+        (Some(disc), Some(num)) if disc > 1 => format!("{}-{:02} - {}.{}", disc, num, clean_title, ext),
+        (_, Some(num)) => format!("{:02} - {}.{}", num, clean_title, ext),
+        _ => format!("{}.{}", clean_title, ext),
     };
     let destination_path = target_album_dir.join(final_name);
     fs::create_dir_all(target_album_dir)
@@ -83,7 +84,7 @@ pub fn process_and_move_track(
         album,
         duration_ms,
         track_number: track.track_number,
-        disc_number: None,
+        disc_number: track.disc_number,
         genre: track.genres.as_ref().and_then(|g| g.first().cloned()),
         release_year: track.release_year,
         cover_url: final_cover,
@@ -134,6 +135,9 @@ fn apply_metadata_tags(
     }
     if let Some(num) = track.track_number {
         tag.set_track(num as u32);
+    }
+    if let Some(disc) = track.disc_number {
+        tag.set_disk(disc as u32);
     }
     if let Some(path) = cover_path.filter(|p| p.exists()) {
         if let Ok(mut img) = File::open(path) {

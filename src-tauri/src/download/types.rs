@@ -20,6 +20,7 @@ pub struct ProgressEvent {
 pub struct TrackMetaItem {
     pub title: String,
     pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +49,7 @@ pub struct TrackDownload {
     pub album_artist: String,
     pub album: String,
     pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
     pub source_item_id: Option<String>,
@@ -74,6 +76,8 @@ pub struct TrackPlacement {
     pub album_artist: String,
     pub title: String,
     pub track_number: Option<i32>,
+    #[serde(default)]
+    pub disc_number: Option<i32>,
 }
 
 impl TrackPlacement {
@@ -83,6 +87,9 @@ impl TrackPlacement {
         track.artists = vec![self.album_artist.clone()];
         track.title = self.title.clone();
         track.track_number = self.track_number;
+        if self.disc_number.is_some() {
+            track.disc_number = self.disc_number;
+        }
     }
 }
 
@@ -130,6 +137,7 @@ mod placement_tests {
             album_artist: String::new(),
             album: String::new(),
             track_number: None,
+            disc_number: None,
             genres: None,
             release_year: None,
             source_item_id: None,
@@ -140,7 +148,7 @@ mod placement_tests {
     #[test]
     fn placement_overrides_names_and_number() {
         let mut t = track();
-        TrackPlacement { album: "The Album".into(), album_artist: "Artist".into(), title: "Song".into(), track_number: Some(5) }
+        TrackPlacement { album: "The Album".into(), album_artist: "Artist".into(), title: "Song".into(), track_number: Some(5), disc_number: None }
             .apply(&mut t);
         assert_eq!((t.album.as_str(), t.album_artist.as_str(), t.title.as_str()), ("The Album", "Artist", "Song"));
         assert_eq!(t.artists, vec!["Artist".to_string()]);

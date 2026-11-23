@@ -15,6 +15,8 @@ pub struct AlbumTrackInfo {
     pub title: String,
     pub artists: Vec<String>,
     pub track_number: Option<i32>,
+    #[serde(default)]
+    pub disc_number: Option<i32>,
     /// Page url of the track; the download selects tracks by it. Empty for unavailable tracks.
     pub url: String,
     /// False for tracks that cannot be downloaded (e.g. SoundCloud Go+ previews).
@@ -58,6 +60,7 @@ pub fn build_preview(
             title: t.title.clone(),
             artists: t.artists.clone(),
             track_number: t.track_number,
+            disc_number: t.disc_number,
             url: t.url.clone(),
             available: true,
             note: None,
@@ -76,6 +79,7 @@ pub fn build_preview(
                 title: s.title.clone(),
                 artists: Vec::new(),
                 track_number: i32::try_from(s.position).ok(),
+                disc_number: None,
                 url: String::new(),
                 available: false,
                 note: Some(s.reason.clone()),
@@ -283,6 +287,7 @@ mod tests {
             title: String::new(),
             artists: vec![],
             track_number: None,
+            disc_number: None,
             url: String::new(),
             available: true,
             note: None,
@@ -316,6 +321,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(row.duration_ms, None);
+    }
+
+    #[test]
+    fn test_preview_various_artists_and_disc() {
+        let mut t1 = track("Song 1", "https://u/1", Some(1));
+        t1.disc_number = Some(1);
+        let mut t2 = track("Song 2", "https://u/2", Some(1));
+        t2.disc_number = Some(2);
+
+        let mut a = album(vec![t1, t2]);
+        a.album_artist = "Various Artists".to_string();
+
+        let preview = build_preview(Platform::Youtube, "https://music.youtube.com/browse/xxx", a, &[]);
+        assert_eq!(preview.artist, "Various Artists");
+        assert_eq!(preview.tracks[0].disc_number, Some(1));
+        assert_eq!(preview.tracks[1].disc_number, Some(2));
     }
 
     #[test]

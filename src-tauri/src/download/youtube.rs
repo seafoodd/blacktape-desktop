@@ -73,7 +73,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
     let album_artist = artists
         .first()
         .cloned()
-        .unwrap_or_else(|| "Unknown Artist".into());
+        .unwrap_or_else(|| "Various Artists".into());
 
     let external_cover_url = album
         .cover
@@ -96,6 +96,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
                 album_artist: album_artist.clone(),
                 album: title.clone(),
                 track_number: Some((idx + 1) as i32),
+                disc_number: None,
                 genres: None,
                 release_year,
                 url: format!("https://music.youtube.com/watch?v={}", track.id),
@@ -164,6 +165,7 @@ pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), S
             album_artist,
             album: album_name,
             track_number: track_item.track_nr.map(|n| n as i32),
+            disc_number: None,
             genres: None,
             release_year,
             url: format!("https://music.youtube.com/watch?v={}", video_id),
@@ -195,6 +197,7 @@ pub async fn parse_track(url: &str) -> Result<(TrackDownload, Option<String>), S
         album_artist: artist,
         album: "Singles".into(),
         track_number: None,
+        disc_number: None,
         genres: None,
         release_year,
         url: format!("https://youtube.com/watch?v={}", video_id),

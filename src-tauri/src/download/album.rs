@@ -42,6 +42,7 @@ pub fn without_owned(
             title: t.title.clone(),
             artists: t.artists.clone(),
             track_number: t.track_number,
+            disc_number: t.disc_number,
             url: t.url.clone(),
             available: true,
             note: None,
@@ -180,6 +181,7 @@ pub async fn process_album_url(
                 .map(|(idx, t)| TrackMetaItem {
                     title: t.title.clone(),
                     track_number: t.track_number.or(Some((idx + 1) as i32)),
+                    disc_number: t.disc_number,
                 })
                 .collect(),
         },
