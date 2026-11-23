@@ -13,6 +13,7 @@ async fn setup_test_db() -> Database {
             album_artist TEXT NOT NULL DEFAULT 'Unknown Artist',
             album TEXT NOT NULL,
             track_number INTEGER,
+            disc_number INTEGER,
             duration_ms INTEGER NOT NULL,
             cover_url TEXT,
             external_cover_url TEXT,
@@ -59,6 +60,7 @@ async fn test_song_insertion_and_mapping() {
         source_item_id: None,
         canonical_track_slug: "".to_string(),
         canonical_album_slug: "".to_string(),
+        disc_number: None,
         quality_tier: QualityTier::Low,
     };
 
@@ -99,6 +101,7 @@ async fn test_artist_summary_aggregation() {
         canonical_track_slug: "".to_string(),
         canonical_album_slug: "".to_string(),
         album_artist: "Queen".to_string(),
+        disc_number: None,
         quality_tier: QualityTier::Low,
     };
 
@@ -122,6 +125,7 @@ async fn test_artist_summary_aggregation() {
         source_item_id: None,
         canonical_track_slug: "".to_string(),
         canonical_album_slug: "".to_string(),
+        disc_number: None,
         quality_tier: QualityTier::Low,
     };
 

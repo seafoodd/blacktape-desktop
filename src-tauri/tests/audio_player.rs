@@ -22,6 +22,7 @@ fn create_mock_song(id: i64, title: &str, duration_ms: u64) -> Song {
         canonical_track_slug: "".to_string(),
         canonical_album_slug: "".to_string(),
         album_artist: "".to_string(),
+        disc_number: None,
         quality_tier: QualityTier::Low,
     }
 }

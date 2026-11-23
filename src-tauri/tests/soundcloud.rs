@@ -122,6 +122,7 @@ async fn library_db() -> Database {
             album_artist TEXT NOT NULL DEFAULT 'Unknown Artist',
             album TEXT NOT NULL,
             track_number INTEGER,
+            disc_number INTEGER,
             duration_ms INTEGER NOT NULL,
             cover_url TEXT,
             external_cover_url TEXT,
