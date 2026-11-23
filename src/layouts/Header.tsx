@@ -136,15 +136,17 @@ export const Header = () => {
           >
             <MdChevronRight size={22} />
           </button>
-          <button
-            type="button"
-            className={clsx(styles.navButton, isHome && styles.navButtonActive)}
-            onClick={() => void goHome()}
-            title="Home"
-            aria-label="Home"
-          >
-            <MdHome size={19} />
-          </button>
+          {!isHome && (
+            <button
+              type="button"
+              className={styles.navButton}
+              onClick={() => void goHome()}
+              title="Home"
+              aria-label="Home"
+            >
+              <MdHome size={19} />
+            </button>
+          )}
         </div>
       </div>
 
