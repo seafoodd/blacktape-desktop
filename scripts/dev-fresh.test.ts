@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   getFreshDirs,
   cleanFreshDirs,
+  seedFreshToolsAndCookies,
   isWorkspaceDevProcess,
   writePidFile,
   readPidFile,
@@ -164,5 +165,59 @@ describe("pidFile helpers", () => {
     removePidFile(tmpDir);
     expect(fs.existsSync(path.join(tmpDir, PID_FILE_NAME))).toBe(false);
     expect(readPidFile(tmpDir)).toBeNull();
+  });
+});
+
+describe("seedFreshToolsAndCookies", () => {
+  const tmpBase = path.join(os.tmpdir(), "blacktape-seed-" + Date.now());
+  const appData = path.join(tmpBase, "AppData", "Roaming");
+  const localAppData = path.join(tmpBase, "AppData", "Local");
+
+  beforeEach(() => {
+    fs.mkdirSync(path.join(appData, "dev.seafood.blacktape"), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(localAppData, "dev.seafood.blacktape"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(appData, "dev.seafood.blacktape", "youtube_cookies.txt"),
+      "test-cookie",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(localAppData, "dev.seafood.blacktape", "yt-dlp.exe"),
+      "test-ytdlp",
+      "utf8",
+    );
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpBase, { recursive: true, force: true });
+    } catch (_) {}
+  });
+
+  it("copies cookies and tools to fresh directory on Windows", () => {
+    seedFreshToolsAndCookies("win32", {
+      APPDATA: appData,
+      LOCALAPPDATA: localAppData,
+    });
+
+    const dstCookies = path.join(
+      appData,
+      "dev.seafood.blacktape.fresh",
+      "youtube_cookies.txt",
+    );
+    const dstYtdlp = path.join(
+      localAppData,
+      "dev.seafood.blacktape.fresh",
+      "yt-dlp.exe",
+    );
+
+    expect(fs.existsSync(dstCookies)).toBe(true);
+    expect(fs.readFileSync(dstCookies, "utf8")).toBe("test-cookie");
+    expect(fs.existsSync(dstYtdlp)).toBe(true);
+    expect(fs.readFileSync(dstYtdlp, "utf8")).toBe("test-ytdlp");
   });
 });

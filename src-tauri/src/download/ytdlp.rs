@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
+use tokio::time::sleep;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -194,7 +195,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
 //     execute(app, &args).await
 // }
 
-const MAX_CONCURRENT_DOWNLOADS: usize = 8;
+const MAX_CONCURRENT_DOWNLOADS: usize = 4;
 
 #[derive(Clone)]
 struct DownloadContext {
@@ -346,7 +347,7 @@ fn download_args(
                 "--audio-quality",
                 "0", // Ensures maximum VBR quality if ffmpeg runs
                 "--extractor-args",
-                "youtube:player-client=web_embedded,tv_samsung,web", // tv_samsung provides direct HTTPS formats when account has SABR experiment
+                "youtube:player_js_variant=tv;player-client=tv_samsung,web", // tv_samsung provides direct HTTPS formats and player_js_variant=tv bypasses broken addOnDisposeCallback in YouTube base.js
             ]
             .map(String::from)
             .into_iter()
@@ -849,6 +850,9 @@ pub async fn download_batch_streaming(
             }
 
             let track_num = index + 1;
+            let jitter = (index % 4) * 150 + 50;
+            sleep(Duration::from_millis(jitter as u64)).await;
+
             let downloaded_file = download_track_internal(&ctx, &track, track_num, total_tracks).await;
 
             if let Some(ref path) = downloaded_file {
@@ -1249,7 +1253,7 @@ mod hardening_tests {
         assert_eq!(args[cookies + 1], COOKIES);
 
         let clients = args.iter().position(|a| a == "--extractor-args").unwrap();
-        assert_eq!(args[clients + 1], "youtube:player-client=web_embedded,tv_samsung,web");
+        assert_eq!(args[clients + 1], "youtube:player_js_variant=tv;player-client=tv_samsung,web");
 
         let frags = args.iter().position(|a| a == "--concurrent-fragments").unwrap();
         assert_eq!(args[frags + 1], "4");
@@ -1293,7 +1297,7 @@ mod hardening_tests {
         let buf_idx = args.iter().position(|a| a == "--buffer-size").unwrap();
         assert_eq!(args[buf_idx + 1], "16M");
         assert!(args.contains(&"--no-cache-dir".to_string()));
-        assert_eq!(MAX_CONCURRENT_DOWNLOADS, 8);
+        assert_eq!(MAX_CONCURRENT_DOWNLOADS, 4);
     }
 
     #[tokio::test]

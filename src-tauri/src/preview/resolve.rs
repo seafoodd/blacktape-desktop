@@ -280,10 +280,10 @@ fn http_client() -> &'static reqwest::Client {
 // YouTube
 // ---------------------------------------------------------------------------------------------
 
-/// Fast client: the embedded web player alone (~1.3 s less work than the downloader's three clients).
-pub const YOUTUBE_FAST_CLIENTS: &str = "web_embedded";
-/// Fallback when the fast client does not offer the m4a stream: the downloader's client set.
-pub const YOUTUBE_FALLBACK_CLIENTS: &str = "web_embedded,tv_samsung,web";
+/// Fast client: tv_samsung (direct HTTPS audio without web_embedded JS challenge issues).
+pub const YOUTUBE_FAST_CLIENTS: &str = "tv_samsung";
+/// Fallback when the fast client does not offer the m4a stream: tv_samsung followed by web.
+pub const YOUTUBE_FALLBACK_CLIENTS: &str = "tv_samsung,web";
 
 /// yt-dlp arguments that print the duration, request headers and direct url of the AAC (m4a) audio stream
 /// (symphonia decodes AAC in mp4 but not YouTube's webm/opus) WITHOUT the video url: the url is either
@@ -298,7 +298,7 @@ pub fn youtube_args(clients: &str) -> Vec<String> {
         "--no-check-formats",
         "--no-update",
         "--extractor-args",
-        &format!("youtube:player-client={clients}"),
+        &format!("youtube:player_js_variant=tv;player-client={clients}"),
         "-f",
         "140/bestaudio[ext=m4a]",
         "--print",
@@ -534,11 +534,11 @@ mod tests {
     #[test]
     fn youtube_args_select_clients_and_leave_the_url_out() {
         let args = youtube_args(YOUTUBE_FAST_CLIENTS);
-        assert!(args.iter().any(|a| a == "youtube:player-client=web_embedded"));
+        assert!(args.iter().any(|a| a == "youtube:player_js_variant=tv;player-client=tv_samsung"));
         assert!(args.iter().any(|a| a == "140/bestaudio[ext=m4a]"));
         assert!(!args.iter().any(|a| a == "--" || a.starts_with("http")));
         let fallback = youtube_args(YOUTUBE_FALLBACK_CLIENTS);
-        assert!(fallback.iter().any(|a| a == "youtube:player-client=web_embedded,tv_samsung,web"));
+        assert!(fallback.iter().any(|a| a == "youtube:player_js_variant=tv;player-client=tv_samsung,web"));
     }
 
     #[test]
