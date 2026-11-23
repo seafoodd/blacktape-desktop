@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { WindowControls } from "@/layouts/WindowControls";
-import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
+import { useTheme } from "@/shared/providers/theme-provider/ThemeContext.ts";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
 import { pickFolder } from "@/shared/lib/ui/dialog.ts";
 import { scanMusic, windowBlurSupported } from "@/shared/lib/audio.ts";

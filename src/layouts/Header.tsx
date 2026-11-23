@@ -1,7 +1,7 @@
 import { SearchBar } from "@/features/search";
 import { UpdateButton } from "@/features/updater";
 import { builtinThemes } from "@/shared/providers/theme-provider/themes.ts";
-import { useTheme } from "@/shared/providers/theme-provider/ThemeProvider.tsx";
+import { useTheme } from "@/shared/providers/theme-provider/ThemeContext.ts";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { pickFolder } from "@/shared/lib/ui/dialog.ts";
 import { scanMusic } from "@/shared/lib/audio.ts";
@@ -13,8 +13,7 @@ import { CgMenuLeft } from "react-icons/cg";
 import { MdChevronLeft, MdChevronRight, MdHome } from "react-icons/md";
 import { useNavigationStore } from "@/features/navigation/model/navigationStore.ts";
 import styles from "./header.module.css";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { focusOrOpenSettingsWindow } from "@/layouts/settingsWindow.ts";
 
 export const Header = () => {
   const { activeThemeId, setThemeId } = useTheme();
@@ -51,37 +50,6 @@ export const Header = () => {
     await fetchTabs();
   }
 
-  const openNativeSettingsWindow = async () => {
-    // Await the promise to get the actual WebviewWindow instance or null
-    const existingWindow = await WebviewWindow.getByLabel("settings");
-
-    if (existingWindow) {
-      await existingWindow.setFocus();
-      return;
-    }
-
-    const mainWindow = getCurrentWindow();
-    const position = await mainWindow.outerPosition();
-    const size = await mainWindow.outerSize();
-
-    const width = 800;
-    const height = 600;
-
-    const x = position.x + Math.round((size.width - width) / 2);
-    const y = position.y + Math.round((size.height - height) / 2);
-
-    new WebviewWindow("settings", {
-      url: "/settings",
-      title: "Settings",
-      width,
-      height,
-      x,
-      y,
-      decorations: false,
-      transparent: true,
-    });
-  };
-
   return (
     <header data-tauri-drag-region className={styles.header}>
       <div className={styles.leftNav}>
@@ -109,7 +77,7 @@ export const Header = () => {
           </Dropdown.Item>
 
           <Dropdown.Separator />
-          <Dropdown.Item onClick={openNativeSettingsWindow}>
+          <Dropdown.Item onClick={focusOrOpenSettingsWindow}>
             Settings
           </Dropdown.Item>
         </Dropdown.Root>

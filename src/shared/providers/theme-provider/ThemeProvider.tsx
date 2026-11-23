@@ -1,11 +1,5 @@
-import {
-  createContext,
-  ReactNode,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
-import { builtinThemes, ThemePalette } from "./themes";
+import { ReactNode, useEffect, useState } from "react";
+import { builtinThemes } from "./themes.ts";
 import {
   DEFAULT_BG_BLUR,
   DEFAULT_BG_OPACITY,
@@ -15,22 +9,7 @@ import {
   windowBlurEnabled,
 } from "@/shared/providers/theme-provider/appearance.ts";
 import { applyWindowBlur } from "@/shared/providers/theme-provider/windowBlur.ts";
-
-interface ThemeContextValue {
-  activeThemeId: string;
-  setThemeId: (id: string) => void;
-  palette: ThemePalette;
-  enableDynamicArt: boolean;
-  setEnableDynamicArt: (val: boolean) => void;
-  fontSize: string;
-  setFontSize: (size: string) => void;
-  bgOpacity: number;
-  setBgOpacity: (opacity: number) => void;
-  bgBlur: boolean;
-  setBgBlur: (blur: boolean) => void;
-}
-
-const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
+import { ThemeContext } from "./ThemeContext.ts";
 
 const themeChannel = new BroadcastChannel("blacktape_theme_sync");
 
@@ -172,10 +151,4 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       {children}
     </ThemeContext.Provider>
   );
-};
-
-export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) throw new Error("useTheme must be used within a ThemeProvider");
-  return context;
 };
