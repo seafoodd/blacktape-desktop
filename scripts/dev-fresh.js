@@ -59,45 +59,68 @@ export function cleanFreshDirs(
 export function seedFreshToolsAndCookies(
   platform = process.platform,
   env = process.env,
+  home = os.homedir(),
 ) {
-  const p = platform === "win32" ? path.win32 : path.posix;
+  const baseDirs = [];
   if (platform === "win32") {
     if (env.APPDATA) {
-      const srcRoaming = p.join(env.APPDATA, "dev.seafood.blacktape");
-      const dstRoaming = p.join(env.APPDATA, "dev.seafood.blacktape.fresh");
-      const cookieSrc = p.join(srcRoaming, "youtube_cookies.txt");
-      if (fs.existsSync(cookieSrc)) {
-        try {
-          fs.mkdirSync(dstRoaming, { recursive: true });
-          fs.copyFileSync(cookieSrc, p.join(dstRoaming, "youtube_cookies.txt"));
-        } catch (_) {}
-      }
+      baseDirs.push({
+        src: path.join(env.APPDATA, "dev.seafood.blacktape"),
+        dst: path.join(env.APPDATA, "dev.seafood.blacktape.fresh"),
+      });
     }
     if (env.LOCALAPPDATA) {
-      const srcLocal = p.join(env.LOCALAPPDATA, "dev.seafood.blacktape");
-      const dstLocal = p.join(env.LOCALAPPDATA, "dev.seafood.blacktape.fresh");
-      if (fs.existsSync(srcLocal)) {
-        try {
-          fs.mkdirSync(dstLocal, { recursive: true });
-          for (const file of [
-            "yt-dlp.exe",
-            "yt-dlp.version",
-            "yt-dlp.checked",
-            "deno.exe",
-          ]) {
-            const s = p.join(srcLocal, file);
-            if (fs.existsSync(s)) {
-              fs.copyFileSync(s, p.join(dstLocal, file));
-            }
-          }
-          const ffmpegSrc = p.join(srcLocal, "ffmpeg");
-          const ffmpegDst = p.join(dstLocal, "ffmpeg");
-          if (fs.existsSync(ffmpegSrc)) {
-            fs.cpSync(ffmpegSrc, ffmpegDst, { recursive: true });
-          }
-        } catch (_) {}
-      }
+      baseDirs.push({
+        src: path.join(env.LOCALAPPDATA, "dev.seafood.blacktape"),
+        dst: path.join(env.LOCALAPPDATA, "dev.seafood.blacktape.fresh"),
+      });
     }
+  } else if (platform === "darwin") {
+    const appSupport = path.join(home, "Library", "Application Support");
+    baseDirs.push({
+      src: path.join(appSupport, "dev.seafood.blacktape"),
+      dst: path.join(appSupport, "dev.seafood.blacktape.fresh"),
+    });
+  } else {
+    const dataHome = env.XDG_DATA_HOME || path.join(home, ".local", "share");
+    const configHome = env.XDG_CONFIG_HOME || path.join(home, ".config");
+    baseDirs.push({
+      src: path.join(dataHome, "dev.seafood.blacktape"),
+      dst: path.join(dataHome, "dev.seafood.blacktape.fresh"),
+    });
+    baseDirs.push({
+      src: path.join(configHome, "dev.seafood.blacktape"),
+      dst: path.join(configHome, "dev.seafood.blacktape.fresh"),
+    });
+  }
+
+  for (const { src, dst } of baseDirs) {
+    if (!fs.existsSync(src)) continue;
+    try {
+      fs.mkdirSync(dst, { recursive: true });
+      const cookieFile = path.join(src, "youtube_cookies.txt");
+      if (fs.existsSync(cookieFile)) {
+        fs.copyFileSync(cookieFile, path.join(dst, "youtube_cookies.txt"));
+      }
+      for (const file of [
+        "yt-dlp.exe",
+        "yt-dlp",
+        "yt-dlp.version",
+        "yt-dlp.checked",
+        "deno.exe",
+        "deno",
+      ]) {
+        const s = path.join(src, file);
+        if (fs.existsSync(s)) {
+          fs.copyFileSync(s, path.join(dst, file));
+        }
+      }
+      const ffmpegSrc = path.join(src, "ffmpeg");
+      const ffmpegDst = path.join(dst, "ffmpeg");
+      if (fs.existsSync(ffmpegSrc)) {
+        fs.cpSync(ffmpegSrc, ffmpegDst, { recursive: true });
+      }
+    } catch (_) {}
   }
 }
 
