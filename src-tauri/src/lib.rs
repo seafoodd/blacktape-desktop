@@ -31,7 +31,7 @@ use crate::audio::commands::{
 use crate::audio::media_controls::MediaControls;
 use crate::auth::youtube::{cookies_are_ready, launch_youtube_login};
 use crate::db::db::Database;
-use crate::db::schema::{db_file_path, get_migrations, DB_URL};
+use crate::db::schema::db_file_path;
 use crate::download::{DownloadPayload, DownloadQueue, DownloadTask, TaskRegistry};
 use crate::favorites::commands::{
     add_favorites, get_favorite_ids, get_favorite_songs, remove_favorites,
@@ -857,12 +857,6 @@ pub fn run() {
                 ));
             });
         })
-        .plugin(crate::db::schema::migration_guard_plugin(&get_migrations()))
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations(DB_URL, get_migrations())
-                .build(),
-        )
         .manage(Mutex::new(None::<discord_presence::DiscordRpcClient>))
         .on_window_event(|window, event| {
             if quits_app(window.label(), event) {

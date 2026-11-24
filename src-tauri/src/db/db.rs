@@ -10,10 +10,29 @@ pub struct Database {
 
 impl Database {
     pub async fn new(db_path: &str) -> Self {
-        let pool = SqlitePool::connect(&format!("sqlite:{db_path}"))
+        let is_memory = db_path == ":memory:" || db_path == "sqlite::memory:";
+        if !is_memory {
+            let path_to_check = db_path.strip_prefix("sqlite:").unwrap_or(db_path);
+            if let Some(parent) = std::path::Path::new(path_to_check).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let connect_url = if is_memory {
+            "sqlite::memory:".to_string()
+        } else if db_path.starts_with("sqlite:") {
+            db_path.to_string()
+        } else {
+            format!("sqlite:{db_path}?mode=rwc")
+        };
+        let pool = SqlitePool::connect(&connect_url)
             .await
             .expect("Failed to connect to database");
         let db = Self { pool };
+
+        crate::db::schema::run_migrations(&db.pool, &crate::db::schema::get_migrations())
+            .await
+            .expect("Failed to apply database migrations");
+
         // The trash tables must exist before the first scan writes `library_dir`.
         db.ensure_trash_schema()
             .await

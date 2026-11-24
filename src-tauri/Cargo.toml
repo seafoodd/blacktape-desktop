@@ -32,7 +32,6 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 discord-rich-presence = "1.1.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart", "stream", "gzip"] }
 tokio = "1.51.1"
-tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "json", "macros"] }
 sha2 = "0.10"
 regex = "1.12.3"

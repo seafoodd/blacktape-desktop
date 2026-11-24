@@ -10,9 +10,6 @@
     "frontendDist": "../dist"
   },
   "plugins": {
-    "sql": {
-      "preload": ["sqlite:blacktape.db"]
-    },
     "updater": {
       "endpoints": [
         "https://github.com/seafoodd/blacktape-desktop/releases/latest/download/latest.json"
