@@ -19,7 +19,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-#yt-dlp = "=2.7.2"
 rustypipe = "0.11.4"
 tauri = { version = "2", features = ["protocol-asset", "test", "macos-private-api"] }
 tauri-plugin-opener = "2"
@@ -31,11 +30,11 @@ lofty = "0.24.0"
 tauri-plugin-dialog = "2.6.0"
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 discord-rich-presence = "1.1.0"
-reqwest = { version = "0.12", features = ["blocking", "json", "multipart", "stream", "gzip", "brotli"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart", "stream", "gzip"] }
 tokio = "1.51.1"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "json", "macros"] }
-sha2 = "0.11.0"
+sha2 = "0.10"
 regex = "1.12.3"
 rayon = "1.12.0"
 jwalk = "0.8.1"
@@ -48,7 +47,6 @@ percent-encoding = "2.3.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
 ogg = "0.9.2"
 opus = "0.3.1"
-base64 = "0.22.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }

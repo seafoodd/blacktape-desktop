@@ -1,4 +1,3 @@
-use base64::Engine;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::path::Path;
@@ -117,7 +116,7 @@ impl CoverFetcher {
             return None;
         }
 
-        // Provider 1: ImgBB (Base64)
+        // Provider 1: ImgBB
         if let Some(url) = self.upload_to_imgbb(image_bytes) {
             return Some(url);
         }
@@ -140,6 +139,14 @@ impl CoverFetcher {
         None
     }
 
+    fn parse_imgbb_response(body: &str) -> Option<String> {
+        let json: serde_json::Value = serde_json::from_str(body).ok()?;
+        json.get("data")?
+            .get("url")?
+            .as_str()
+            .map(str::to_string)
+    }
+
     fn upload_to_imgbb(&self, image_bytes: &[u8]) -> Option<String> {
         use reqwest::blocking::multipart;
 
@@ -147,18 +154,17 @@ impl CoverFetcher {
             return None;
         }
 
-        let base64_image = base64::engine::general_purpose::STANDARD.encode(image_bytes);
-        let form = multipart::Form::new().text("image", base64_image);
+        let form = multipart::Form::new().part(
+            "image",
+            multipart::Part::bytes(image_bytes.to_vec()).file_name("cover.jpg"),
+        );
         let url = format!("https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}");
 
         let response = self.client.post(&url).multipart(form).send().ok()?;
 
         if response.status().is_success() {
-            if let Ok(json) = response.json::<serde_json::Value>() {
-                if let Some(direct_url) = json["data"]["url"].as_str() {
-                    return Some(direct_url.to_string());
-                }
-            }
+            let body = response.text().ok()?;
+            return Self::parse_imgbb_response(&body);
         }
 
         None
@@ -411,5 +417,45 @@ mod tests {
         assert_eq!(CoverFetcher::parse_cover_art_url(json), None);
         assert_eq!(CoverFetcher::parse_cover_art_url("{}"), None);
         assert_eq!(CoverFetcher::parse_cover_art_url("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_imgbb_response_valid() {
+        let json = r#"{
+            "data": {
+                "id": "2ndCYJK",
+                "title": "cover",
+                "url_viewer": "https://ibb.co/2ndCYJK",
+                "url": "https://i.ibb.co/w04MgRZ/cover.jpg",
+                "display_url": "https://i.ibb.co/w04MgRZ/cover.jpg",
+                "width": 500,
+                "height": 500,
+                "size": 42000,
+                "time": 1552042650,
+                "expiration": 0,
+                "image": {
+                    "filename": "cover.jpg",
+                    "name": "cover",
+                    "mime": "image/jpeg",
+                    "extension": "jpg",
+                    "url": "https://i.ibb.co/w04MgRZ/cover.jpg"
+                }
+            },
+            "success": true,
+            "status": 200
+        }"#;
+
+        assert_eq!(
+            CoverFetcher::parse_imgbb_response(json),
+            Some("https://i.ibb.co/w04MgRZ/cover.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_imgbb_response_missing_or_invalid() {
+        assert_eq!(CoverFetcher::parse_imgbb_response("{}"), None);
+        assert_eq!(CoverFetcher::parse_imgbb_response(r#"{"data":{}}"#), None);
+        assert_eq!(CoverFetcher::parse_imgbb_response("not json"), None);
+        assert_eq!(CoverFetcher::parse_imgbb_response(r#"{"status":400,"error":{"message":"Bad request"}}"#), None);
     }
 }
