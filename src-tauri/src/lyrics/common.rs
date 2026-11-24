@@ -47,9 +47,9 @@ pub fn build_url(base: &str, params: &[(&str, &str)]) -> String {
             if i > 0 {
                 url.push('&');
             }
-            url.push_str(&urlencoding::encode(k));
+            url.push_str(&percent_encoding::utf8_percent_encode(k, percent_encoding::NON_ALPHANUMERIC).to_string());
             url.push('=');
-            url.push_str(&urlencoding::encode(v));
+            url.push_str(&percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC).to_string());
         }
     }
     url

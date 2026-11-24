@@ -8,21 +8,22 @@ pub fn set_hidden(path: &Path, hidden: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::prelude::OsStrExt;
-        use winapi::um::fileapi;
-        use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, INVALID_FILE_ATTRIBUTES,
+        };
         let wide: Vec<u16> = std::ffi::OsStr::new(path)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         unsafe {
-            let current = fileapi::GetFileAttributesW(wide.as_ptr());
-            if current != fileapi::INVALID_FILE_ATTRIBUTES {
+            let current = GetFileAttributesW(wide.as_ptr());
+            if current != INVALID_FILE_ATTRIBUTES {
                 let new_attrs = if hidden {
                     current | FILE_ATTRIBUTE_HIDDEN
                 } else {
                     current & !FILE_ATTRIBUTE_HIDDEN
                 };
-                if fileapi::SetFileAttributesW(wide.as_ptr(), new_attrs) == 0 {
+                if SetFileAttributesW(wide.as_ptr(), new_attrs) == 0 {
                     return Err(std::io::Error::last_os_error());
                 }
             } else {

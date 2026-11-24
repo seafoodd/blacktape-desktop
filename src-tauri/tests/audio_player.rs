@@ -83,9 +83,7 @@ fn test_shuffle_guarantees_current_song_stays_first() {
     if let Some(c) = cursor {
         let current_idx = play_order.remove(c);
 
-        use rand::seq::SliceRandom;
-        let mut rng = rand::rng();
-        play_order.shuffle(&mut rng);
+        fastrand::shuffle(&mut play_order);
 
         play_order.insert(0, current_idx);
         cursor = Some(0);

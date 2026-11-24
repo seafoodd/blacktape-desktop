@@ -1,17 +1,17 @@
 use crate::trash::TRASH_DIR_NAME;
 use crate::types::{Platform, QualityTier, Song};
 use crate::utils::{determine_quality, make_canonical_slug};
-use dashmap::{DashMap, DashSet};
 use jwalk::WalkDir;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use xxhash_rust::xxh3::xxh3_64 as hash64;
 
 /// Audio files under `dir`, skipping every directory named like the trash folder (D18).
@@ -56,8 +56,8 @@ where
         let _ = fs::create_dir_all(covers_dir);
     }
 
-    let dir_covers: Arc<DashMap<PathBuf, Option<String>>> = Arc::new(DashMap::new());
-    let written_hashes: Arc<DashSet<String>> = Arc::new(DashSet::new());
+    let dir_covers: Arc<Mutex<HashMap<PathBuf, Option<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let written_hashes: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let entries: Vec<PathBuf> = collect_audio_paths(&dir);
     let total = entries.len();
@@ -158,20 +158,30 @@ where
             let mut final_cover = None;
 
             if let Some(p) = &parent {
-                let entry = dir_covers.entry(p.clone()).or_insert_with(|| {
-                    [
-                        "cover.jpg",
-                        "cover.png",
-                        "folder.jpg",
-                        "front.jpg",
-                        "front.png",
-                    ]
+                let cached = {
+                    let guard = dir_covers.lock().unwrap();
+                    guard.get(p).cloned()
+                };
+                final_cover = match cached {
+                    Some(val) => val,
+                    None => {
+                        let found = [
+                            "cover.jpg",
+                            "cover.png",
+                            "folder.jpg",
+                            "front.jpg",
+                            "front.png",
+                        ]
                         .iter()
                         .map(|name| p.join(name))
                         .find(|file| file.exists())
-                        .map(|file| file.to_string_lossy().to_string())
-                });
-                final_cover = entry.value().clone();
+                        .map(|file| file.to_string_lossy().to_string());
+
+                        let mut guard = dir_covers.lock().unwrap();
+                        guard.entry(p.clone()).or_insert(found.clone());
+                        found
+                    }
+                };
             }
 
             if final_cover.is_none() {
@@ -188,7 +198,11 @@ where
                     };
                     let full_path = covers_dir.join(format!("{hash}.{ext}"));
 
-                    if written_hashes.insert(hash) && !full_path.exists() {
+                    let should_write = {
+                        let mut guard = written_hashes.lock().unwrap();
+                        guard.insert(hash)
+                    };
+                    if should_write && !full_path.exists() {
                         let _ = fs::write(&full_path, pic.data());
                     }
                     final_cover = Some(full_path.to_string_lossy().to_string());

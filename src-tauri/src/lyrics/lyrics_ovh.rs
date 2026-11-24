@@ -27,11 +27,11 @@ struct ArtistData {
 }
 
 async fn get_lyrics(client: &reqwest::Client, artist: &str, title: &str) -> Option<LyricsSource> {
-    // `urlencoding::encode` escapes '/', so inputs cannot alter the URL path.
+    // `percent_encoding` escapes '/', so inputs cannot alter the URL path.
     let url = format!(
         "https://api.lyrics.ovh/v1/{}/{}",
-        urlencoding::encode(artist),
-        urlencoding::encode(title)
+        percent_encoding::utf8_percent_encode(artist, percent_encoding::NON_ALPHANUMERIC),
+        percent_encoding::utf8_percent_encode(title, percent_encoding::NON_ALPHANUMERIC)
     );
     let data: LyricsResponse = get_json(client, &url, "Blacktape").await.ok()?;
     is_acceptable(&data.lyrics).then(|| LyricsSource {
@@ -47,8 +47,8 @@ pub async fn fetch(
 ) -> Result<LyricsSource, String> {
     let suggest_url = format!(
         "https://api.lyrics.ovh/suggest/{}-{}",
-        urlencoding::encode(artist_input),
-        urlencoding::encode(title_input)
+        percent_encoding::utf8_percent_encode(artist_input, percent_encoding::NON_ALPHANUMERIC),
+        percent_encoding::utf8_percent_encode(title_input, percent_encoding::NON_ALPHANUMERIC)
     );
 
     let mut clean_artist = artist_input.to_string();

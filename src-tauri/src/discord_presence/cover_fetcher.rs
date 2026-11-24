@@ -1,7 +1,6 @@
 use base64::Engine;
-use quick_xml::de::from_str;
 use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::Path;
 use std::{collections::HashMap, fs, sync::Mutex};
 
@@ -9,42 +8,33 @@ use crate::types::Song;
 
 const IMGBB_API_KEY: &str = "e5242a0d55eb6e3de9abe441dadb343e";
 
-#[derive(Debug, Deserialize, Serialize)]
-struct MusicBrainzMetadata {
-    #[serde(rename = "release-list")]
-    release_list: ReleaseList,
+#[derive(Debug, Deserialize)]
+struct MusicBrainzResponse {
+    #[serde(default)]
+    releases: Vec<MusicBrainzRelease>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct ReleaseList {
-    #[serde(rename = "release", default)]
-    releases: Vec<Release>,
-
-    #[serde(rename = "@count", default)]
-    #[allow(dead_code)]
-    count: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Release {
-    #[serde(rename = "@id")]
+#[derive(Debug, Deserialize)]
+struct MusicBrainzRelease {
     id: String,
-
-    #[serde(rename = "title")]
+    #[serde(default)]
+    #[allow(dead_code)]
     title: String,
-
-    #[serde(rename = "@score", default)]
-    score: Option<u8>,
+    #[serde(default)]
+    score: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CoverArtArchiveResponse {
+    #[serde(default)]
     pub images: Vec<CoverImage>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CoverImage {
+    #[serde(default)]
     pub front: bool,
+    #[serde(default)]
     pub approved: bool,
     pub thumbnails: Thumbnails,
 }
@@ -273,15 +263,33 @@ impl CoverFetcher {
         None
     }
 
+    fn parse_release_mbid(json_body: &str) -> Option<String> {
+        let metadata: MusicBrainzResponse = serde_json::from_str(json_body).ok()?;
+        metadata
+            .releases
+            .into_iter()
+            .find(|r| r.score.unwrap_or(0) > 50)
+            .map(|r| r.id)
+    }
+
+    fn parse_cover_art_url(json_body: &str) -> Option<String> {
+        let cover_data: CoverArtArchiveResponse = serde_json::from_str(json_body).ok()?;
+        cover_data
+            .images
+            .into_iter()
+            .find(|img| img.front && img.approved)
+            .map(|img| img.thumbnails.large)
+    }
+
     fn get_release_mbid(&self, song: &Song) -> Option<String> {
         let query = format!(
             "release:\"{}\" AND artist:\"{}\"",
             song.album, song.album_artist
         );
-        let encoded_query = urlencoding::encode(&query);
-
+        let encoded_query =
+            percent_encoding::utf8_percent_encode(&query, percent_encoding::NON_ALPHANUMERIC);
         let url =
-            format!("https://musicbrainz.org/ws/2/release/?query={encoded_query}&fmt=xml&limit=8");
+            format!("https://musicbrainz.org/ws/2/release/?query={encoded_query}&fmt=json&limit=8");
 
         let response = self.client.get(&url).send().ok()?;
 
@@ -289,16 +297,8 @@ impl CoverFetcher {
             return None;
         }
 
-        let xml_body = response.text().ok()?;
-        let cleaned_xml = strip_xml_namespaces(&xml_body);
-        let metadata: MusicBrainzMetadata = from_str(&cleaned_xml).ok()?;
-
-        metadata
-            .release_list
-            .releases
-            .into_iter()
-            .find(|r| r.score.unwrap_or(0) > 50)
-            .map(|r| r.id)
+        let body = response.text().ok()?;
+        Self::parse_release_mbid(&body)
     }
 
     fn get_cover_art_url(&self, mbid: &str) -> Result<Option<String>, reqwest::Error> {
@@ -309,18 +309,107 @@ impl CoverFetcher {
             return Ok(None);
         }
 
-        let cover_data: CoverArtArchiveResponse = response.json()?;
+        let body = match response.text() {
+            Ok(b) => b,
+            Err(e) => return Err(e),
+        };
 
-        Ok(cover_data
-            .images
-            .into_iter()
-            .find(|img| img.front && img.approved)
-            .map(|img| img.thumbnails.large))
+        Ok(Self::parse_cover_art_url(&body))
     }
 }
 
-fn strip_xml_namespaces(xml: &str) -> String {
-    xml.replace("xmlns=\"http://musicbrainz.org/ns/mmd-2.0#\"", "")
-        .replace("xmlns:ns2=\"http://musicbrainz.org/ns/ext#-2.0\"", "")
-        .replace("ns2:", "")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_release_mbid_valid() {
+        let json = r#"{
+            "count": 2,
+            "releases": [
+                {
+                    "id": "release-id-low-score",
+                    "title": "Low Score Album",
+                    "score": 40
+                },
+                {
+                    "id": "release-id-high-score",
+                    "title": "High Score Album",
+                    "score": 95
+                }
+            ]
+        }"#;
+
+        assert_eq!(
+            CoverFetcher::parse_release_mbid(json),
+            Some("release-id-high-score".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_release_mbid_no_high_score() {
+        let json = r#"{
+            "releases": [
+                {
+                    "id": "release-id-low",
+                    "title": "Album",
+                    "score": 50
+                }
+            ]
+        }"#;
+
+        assert_eq!(CoverFetcher::parse_release_mbid(json), None);
+    }
+
+    #[test]
+    fn test_parse_release_mbid_empty_or_invalid() {
+        assert_eq!(CoverFetcher::parse_release_mbid("{}"), None);
+        assert_eq!(CoverFetcher::parse_release_mbid(r#"{"releases":[]}"#), None);
+        assert_eq!(CoverFetcher::parse_release_mbid("not json"), None);
+    }
+
+    #[test]
+    fn test_parse_cover_art_url_approved_front() {
+        let json = r#"{
+            "images": [
+                {
+                    "front": false,
+                    "approved": true,
+                    "thumbnails": { "large": "http://example.com/back.jpg" }
+                },
+                {
+                    "front": true,
+                    "approved": false,
+                    "thumbnails": { "large": "http://example.com/unapproved.jpg" }
+                },
+                {
+                    "front": true,
+                    "approved": true,
+                    "thumbnails": { "large": "http://example.com/front.jpg" }
+                }
+            ]
+        }"#;
+
+        assert_eq!(
+            CoverFetcher::parse_cover_art_url(json),
+            Some("http://example.com/front.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_cover_art_url_no_matching_images() {
+        let json = r#"{
+            "images": [
+                {
+                    "front": true,
+                    "approved": false,
+                    "thumbnails": { "large": "http://example.com/unapproved.jpg" }
+                }
+            ]
+        }"#;
+
+        assert_eq!(CoverFetcher::parse_cover_art_url(json), None);
+        assert_eq!(CoverFetcher::parse_cover_art_url("{}"), None);
+        assert_eq!(CoverFetcher::parse_cover_art_url("invalid"), None);
+    }
 }

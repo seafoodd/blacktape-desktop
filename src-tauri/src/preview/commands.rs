@@ -7,7 +7,6 @@ use crate::preview::http_source::HttpSource;
 use crate::preview::resolve::{self, StreamInfo};
 use crate::preview::segmented_source::SegmentedSource;
 use crate::types::{Platform, QualityTier, Song};
-use rand::RngExt;
 use rodio::{Decoder, Source};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
@@ -269,7 +268,7 @@ pub fn stream_queue(
     }
     let shuffle = shuffle == Some(true);
     let songs: Vec<Song> = requests.iter().map(|r| stream_song(r, r.duration_ms)).collect();
-    let index = start_index(songs.len(), index, shuffle, |n| rand::rng().random_range(0..n));
+    let index = start_index(songs.len(), index, shuffle, |n| fastrand::usize(..n));
     let mut p = lock_player(&player);
     if shuffle && !p.is_shuffle() {
         // Turned on BEFORE the playback starts: `start_playback` then shuffles the new queue with the chosen
@@ -504,7 +503,7 @@ mod tests {
     #[test]
     fn real_roll_stays_in_range() {
         for _ in 0..200 {
-            let i = start_index(4, 0, true, |n| rand::rng().random_range(0..n));
+            let i = start_index(4, 0, true, |n| fastrand::usize(..n));
             assert!(i < 4);
         }
     }

@@ -10,8 +10,6 @@ use crate::{
     audio::media_controls::MediaControls,
     types::{PlayerState, Song},
 };
-use rand::rng;
-use rand::seq::SliceRandom;
 use rodio::cpal::{
     self,
     traits::{DeviceTrait, HostTrait},
@@ -877,7 +875,7 @@ impl AudioPlayer {
     fn apply_shuffle_to_queue(&mut self) {
         if let Some(order) = self.play_order.as_deref() {
             let (order, cursor) =
-                queue_ops::shuffle_keeping_current(order, self.cursor, |rest| rest.shuffle(&mut rng()));
+                queue_ops::shuffle_keeping_current(order, self.cursor, |rest| fastrand::shuffle(rest));
             self.play_order = Some(order);
             // without a current song the cursor stays where it was (none)
             if self.cursor.is_some() {
