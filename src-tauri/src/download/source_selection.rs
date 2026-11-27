@@ -26,6 +26,24 @@ pub fn candidate_improves_local(
     !local_file_exists || candidate_tier_rank(cand_tier) > local_tier_rank(local_tier)
 }
 
+fn best_candidate_index(candidates: &[crate::metadata::types::AudioCandidate]) -> usize {
+    let mut best_idx = 0;
+    let mut best_key = (0u8, 0u32, false, 0i64);
+    for (idx, c) in candidates.iter().enumerate() {
+        let key = (
+            candidate_tier_rank(c.quality_tier),
+            c.bitrate_kbps.unwrap_or(0),
+            c.is_strict_match,
+            (c.match_confidence * 1000.0).round() as i64,
+        );
+        if idx == 0 || key > best_key {
+            best_idx = idx;
+            best_key = key;
+        }
+    }
+    best_idx
+}
+
 /// Selects the matching candidate index along with its primary URL and fallback URLs. Pure.
 pub fn pick_candidate_entry_for_tier(
     candidates: &[crate::metadata::types::AudioCandidate],
@@ -71,6 +89,11 @@ pub fn pick_candidate_entry_for_tier(
                     .position(|c| c.source.platform_name().eq_ignore_ascii_case(&target_plat))
             })
             .unwrap_or(0)
+    } else if fmt.eq_ignore_ascii_case("lossless") {
+        candidates
+            .iter()
+            .position(|c| c.quality_tier == AudioQualityTier::Lossless)
+            .unwrap_or_else(|| best_candidate_index(candidates))
     } else if fmt.eq_ignore_ascii_case("standard") {
         candidates
             .iter()
@@ -242,6 +265,59 @@ mod tests {
             pick_candidate_entry_for_tier(&list, Some("source:torrent:lossless:rutracker-hash"), 0)
                 .unwrap();
         assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn pick_candidate_entry_for_tier_lossless_ignores_stale_youtube_selected_idx() {
+        use crate::metadata::types::{AudioCandidate, AudioQualityTier, AudioSource};
+
+        let youtube = AudioCandidate {
+            source: AudioSource::HttpStream {
+                platform: "youtube".into(),
+                url: "https://youtube.com/watch?v=1".into(),
+                direct_stream_url: None,
+                format_id: None,
+                expires_at: None,
+            },
+            quality_tier: AudioQualityTier::HighLossy,
+            codec: "OPUS".into(),
+            bitrate_kbps: Some(160),
+            sample_rate_hz: None,
+            duration_ms: 180_000,
+            match_confidence: 1.0,
+            is_strict_match: true,
+            display_label: "YOUTUBE".into(),
+            matched_title: None,
+            matched_artist: None,
+        };
+        let flac_torrent = AudioCandidate {
+            source: AudioSource::Torrent {
+                info_hash: "archive-hash".into(),
+                magnet_uri: "magnet:?xt=urn:btih:archive-hash".into(),
+                file_index: 0,
+                file_path: "01.flac".into(),
+                file_size: 1000,
+                seeders: 1,
+            },
+            quality_tier: AudioQualityTier::Lossless,
+            codec: "FLAC".into(),
+            bitrate_kbps: None,
+            sample_rate_hz: None,
+            duration_ms: 180_000,
+            match_confidence: 1.0,
+            is_strict_match: true,
+            display_label: "TORRENT".into(),
+            matched_title: None,
+            matched_artist: None,
+        };
+
+        // When lossless is requested, it picks Lossless even if selected_idx points to YouTube.
+        let list = vec![youtube, flac_torrent];
+        let (idx, primary, fallbacks) =
+            pick_candidate_entry_for_tier(&list, Some("lossless"), 0).unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(primary, "magnet:?xt=urn:btih:archive-hash");
+        assert_eq!(fallbacks, vec!["https://youtube.com/watch?v=1"]);
     }
 
 }

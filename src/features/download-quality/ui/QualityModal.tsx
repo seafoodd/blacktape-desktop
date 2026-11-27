@@ -292,19 +292,26 @@ const QualityModal = ({ params, onStarted, start, scopeTracks: selectedScope, di
     };
   }, [params.platform, params.url, params.trackUrls, album, isMultiSource, isDirectTrack, isResolveUpgrade, resolveSongIdsKey]);
 
+  const toTrackOverrides = (
+    tracks: readonly AlbumTrackInfo[],
+    format: string | undefined,
+    includeOriginalUrl = false,
+  ): NonNullable<DownloadOverrides["tracks"]> =>
+    tracks.map((t) => ({
+      index: t.index,
+      ...(includeOriginalUrl && !params.url.startsWith("canonical:") ? { original_url: t.url } : {}),
+      title: t.title,
+      candidates: t.candidates,
+      selected_candidate_idx: format === "best" ? 0 : (t.selected_candidate_idx ?? 0),
+    }));
+
   const download = () => {
     const format = picked ?? undefined;
     let overrides: DownloadOverrides | undefined = params.overrides;
     if (scopedTracks && !(isDirectTrack && formats?.some((option) => option.id === format))) {
       overrides = {
         ...params.overrides,
-        tracks: mergeTorrentResolutionsIntoTracks(scopedTracks, torrentResolutions).map((track) => ({
-          index: track.index,
-          original_url: params.url.startsWith("canonical:") ? undefined : track.url,
-          title: track.title,
-          candidates: track.candidates,
-          selected_candidate_idx: format === "best" ? 0 : track.selected_candidate_idx,
-        })),
+        tracks: toTrackOverrides(mergeTorrentResolutionsIntoTracks(scopedTracks, torrentResolutions), format, true),
       };
     }
     if (!scopedTracks && torrentResolutions.some((r) => r.matched_count > 0)) {
@@ -312,12 +319,7 @@ const QualityModal = ({ params, onStarted, start, scopeTracks: selectedScope, di
         const merged = mergeTorrentResolutionsIntoTracks(resolvedUpgradeTracks ?? [], torrentResolutions);
         overrides = {
           ...params.overrides,
-          tracks: merged.map((t) => ({
-            index: t.index,
-            title: t.title,
-            candidates: t.candidates,
-            selected_candidate_idx: t.selected_candidate_idx ?? 0,
-          })),
+          tracks: toTrackOverrides(merged, format),
         };
       } else if (previewState && previewState.url === params.url) {
         const merged = mergeTorrentResolutionsIntoTracks(previewState.tracks, torrentResolutions);
@@ -326,12 +328,7 @@ const QualityModal = ({ params, onStarted, start, scopeTracks: selectedScope, di
           title: previewState.title,
           artist: previewState.artist,
           year: previewState.year ?? null,
-          tracks: merged.map((t) => ({
-            index: t.index,
-            title: t.title,
-            candidates: t.candidates,
-            selected_candidate_idx: t.selected_candidate_idx ?? 0,
-          })),
+          tracks: toTrackOverrides(merged, format),
         };
       } else {
         const byIndex = new Map<number, NonNullable<DownloadOverrides["tracks"]>[number]>();

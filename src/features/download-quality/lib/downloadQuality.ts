@@ -312,6 +312,9 @@ export function mergeTorrentResolutionsIntoTracks(
     const selected = existing[track.selected_candidate_idx ?? 0];
     merged.sort(compareCandidates);
     const top = merged[0];
+    const shouldPromoteTop =
+      !selected ||
+      (track.selected_candidate_idx ?? 0) === 0;
     const nextUrl =
       track.url || (top?.source.kind === "http_stream" ? top.source.url : top?.source.kind === "torrent" ? top.source.magnet_uri : "");
     return {
@@ -319,7 +322,7 @@ export function mergeTorrentResolutionsIntoTracks(
       available: track.available || merged.length > 0,
       url: nextUrl,
       candidates: merged,
-      selected_candidate_idx: selected ? merged.indexOf(selected) : 0,
+      selected_candidate_idx: shouldPromoteTop ? 0 : merged.indexOf(selected),
     };
   });
 }

@@ -158,6 +158,87 @@ describe("formatDetails", () => {
 });
 
 describe("buildCanonicalQualityPlan", () => {
+  it("preserves a manually selected stream when a better torrent candidate arrives", () => {
+    const selectedUrl = "https://soundcloud.com/artist/track";
+    const selectedCandidate = {
+      source: { kind: "http_stream" as const, platform: "soundcloud", url: selectedUrl },
+      quality_tier: "standard_lossy" as const,
+      codec: "MP3",
+      bitrate_kbps: 128,
+      duration_ms: 180_000,
+      match_confidence: 0.95,
+      is_strict_match: true,
+      display_label: "SoundCloud · MP3 128 kbps",
+    };
+    const tracks: AlbumTrackInfo[] = [{
+      index: 0,
+      title: "Track One",
+      artists: ["Artist"],
+      track_number: 1,
+      url: selectedUrl,
+      available: true,
+      note: null,
+      selected_candidate_idx: 1,
+      candidates: [
+        {
+          source: { kind: "http_stream", platform: "youtube", url: "https://youtube.com/watch?v=one" },
+          quality_tier: "high_lossy",
+          codec: "Opus",
+          bitrate_kbps: 160,
+          duration_ms: 180_000,
+          match_confidence: 0.99,
+          is_strict_match: true,
+          display_label: "YouTube · Opus 160 kbps",
+        },
+        selectedCandidate,
+      ],
+    }];
+    const resolutions: TorrentTierResolution[] = [{
+      tier: "lossless",
+      info_hash: "lossless-hash",
+      magnet_uri: "magnet:?xt=urn:btih:lossless-hash",
+      release_title: "Artist - Album [FLAC]",
+      provider: "Archive.org",
+      seeders: 12,
+      codec: "FLAC",
+      bitrate_kbps: null,
+      display_label: "FLAC (Lossless)",
+      matched_count: 1,
+      total_expected: 1,
+      total_matched_bytes: 30_000_000,
+      missing_titles: [],
+      ambiguous_titles: [],
+      layout_warning: null,
+      tracks: [{
+        expected_index: 0,
+        candidate: {
+          source: {
+            kind: "torrent",
+            info_hash: "lossless-hash",
+            magnet_uri: "magnet:?xt=urn:btih:lossless-hash",
+            file_index: 0,
+            file_path: "01 Track One.flac",
+            file_size: 30_000_000,
+            seeders: 12,
+          },
+          quality_tier: "lossless",
+          codec: "FLAC",
+          duration_ms: 180_000,
+          match_confidence: 1,
+          is_strict_match: true,
+          display_label: "Torrent · FLAC",
+        },
+      }],
+    }];
+
+    const [merged] = mergeTorrentResolutionsIntoTracks(tracks, resolutions);
+
+    expect(merged.selected_candidate_idx).toBe(2);
+    expect(merged.candidates?.[merged.selected_candidate_idx ?? 0]).toBe(selectedCandidate);
+    expect(merged.candidates?.[merged.selected_candidate_idx ?? 0]?.source).toMatchObject({ url: selectedUrl });
+    expect(merged.url).toBe(selectedUrl);
+  });
+
   it("falls back to semantic tiers before candidates finish resolving", () => {
     const plan = buildCanonicalQualityPlan([]);
     expect(plan.hasDiscoveredCandidates).toBe(false);
@@ -484,6 +565,8 @@ describe("buildCanonicalQualityPlan", () => {
     ];
 
     const merged = mergeTorrentResolutionsIntoTracks(baseTracks, resolutions);
+    expect(merged[0]?.selected_candidate_idx).toBe(0);
+    expect(merged[0]?.candidates?.[0]?.source.kind).toBe("torrent");
     const plan = buildCanonicalQualityPlan(merged, undefined, resolutions);
 
     expect(plan.best.lossless).toBe(true);
