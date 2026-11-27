@@ -51,39 +51,40 @@ pub fn is_long_enough_for_musicbrainz(query: &str) -> bool {
     query.trim().chars().count() >= MUSICBRAINZ_MIN_QUERY_CHARS
 }
 
-/// Gathers the suggestions of all sources. When the slow one (MusicBrainz) is still running after the others
-/// have answered, their results are handed to `on_partial` first.
+/// Publishes accumulated suggestions as sources finish, including MusicBrainz when it answers first.
 pub async fn collect_suggestions(
     mut fast: JoinSet<SearchResult>,
     mut slow: JoinSet<Vec<SearchSuggestion>>,
-    on_partial: impl FnOnce(&[SearchSuggestion]),
+    mut on_partial: impl FnMut(&[SearchSuggestion]),
 ) -> Vec<SearchSuggestion> {
     let mut found = Vec::new();
-    while let Some(result) = fast.join_next().await {
-        match result {
-            Ok(Ok(results)) => found.extend(results),
-            Ok(Err(e)) => tracing::warn!("Platform search error: {e}"),
-            Err(e) => tracing::error!("Task join error in search suggestions: {e}"),
+    while !fast.is_empty() || !slow.is_empty() {
+        let before = found.len();
+        tokio::select! {
+            Some(result) = fast.join_next(), if !fast.is_empty() => {
+                match result {
+                    Ok(Ok(results)) => found.extend(results),
+                    Ok(Err(error)) => tracing::warn!("Platform search error: {error}"),
+                    Err(error) => tracing::error!("Search task join failed: {error}"),
+                }
+            }
+            Some(result) = slow.join_next(), if !slow.is_empty() => {
+                match result {
+                    Ok(results) => found.extend(results),
+                    Err(error) => tracing::error!("Search task join failed: {error}"),
+                }
+            }
+        }
+        if found.len() > before && (!fast.is_empty() || !slow.is_empty()) {
+            on_partial(&found);
         }
     }
-    let mut ready = slow.try_join_next();
-    if ready.is_none() && !slow.is_empty() && !found.is_empty() {
-        on_partial(&found);
-    }
-    loop {
-        let result = match ready.take() {
-            Some(result) => result,
-            None => match slow.join_next().await {
-                Some(result) => result,
-                None => return found,
-            },
-        };
-        match result {
-            Ok(results) => found.extend(results),
-            Err(e) => tracing::error!("Task join error in search suggestions: {e}"),
-        }
-    }
+    found
 }
+
+#[cfg(test)]
+#[path = "partial_tests.rs"]
+mod partial_tests;
 
 /// Fetches canonical album releases from MusicBrainz `release-group` API (under a strict timeout),
 /// preferring primary studio albums and high-edition canonical entries, deduplicating `(artist, title)`
@@ -528,6 +529,7 @@ mod collect_suggestions_tests {
     #[tokio::test]
     async fn partial_callback_runs_while_slow_source_is_pending() {
         let (release_slow, slow_waits) = oneshot::channel::<()>();
+        let mut release_slow = Some(release_slow);
         let mut fast: JoinSet<SearchResult> = JoinSet::new();
         fast.spawn(async { Ok(vec![suggestion(ItemType::Track, "Fast")]) });
         let mut slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
@@ -542,7 +544,7 @@ mod collect_suggestions_tests {
         let found = collect_suggestions(fast, slow, move |partial| {
             *partial_names_in_callback.lock().unwrap() =
                 partial.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
-            let _ = release_slow.send(());
+            let _ = release_slow.take().expect("callback should run once").send(());
         })
         .await;
 
@@ -570,12 +572,12 @@ mod collect_suggestions_tests {
     }
 
     #[tokio::test]
-    async fn partial_callback_not_called_when_fast_sources_found_nothing() {
+    async fn partial_callback_not_called_when_all_sources_return_nothing() {
         let mut fast: JoinSet<SearchResult> = JoinSet::new();
         fast.spawn(async { Ok(vec![]) });
         fast.spawn(async { Err("fast source down".into()) });
         let mut slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
-        slow.spawn(async { vec![suggestion(ItemType::Album, "Slow")] });
+        slow.spawn(async { Vec::new() });
         let called = Arc::new(AtomicBool::new(false));
         let called_in_callback = called.clone();
 
@@ -585,8 +587,7 @@ mod collect_suggestions_tests {
         .await;
 
         assert!(!called.load(Ordering::SeqCst));
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "Slow");
+        assert!(found.is_empty());
     }
 
     #[tokio::test]
