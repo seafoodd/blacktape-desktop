@@ -124,11 +124,11 @@ pub fn first_page_target(kind: SearchKind) -> usize {
 }
 
 /// Timeout of the Bandcamp search request (D18).
-const BANDCAMP_TIMEOUT: Duration = Duration::from_secs(4);
+const BANDCAMP_TIMEOUT: Duration = Duration::from_secs(6);
 /// Timeout of the artist profile request (D18).
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(6);
 /// Timeout of one SoundCloud search request.
-const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(5);
+const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What one platform contributed to a page. Built from a successful platform call.
 #[derive(Debug, Default, Clone)]
@@ -269,6 +269,7 @@ pub async fn search_full_with_cache(
                 8,
                 Duration::from_millis(6000),
             );
+            let request = progress::with_deadline(progress::page_deadline(Source::Musicbrainz), request);
             track(report, Source::Musicbrainz, request, Vec::len).await
         } else {
             Ok(Vec::new())
@@ -292,7 +293,8 @@ pub async fn search_full_with_cache(
 
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
 async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
-    youtube_full::fetch_first_page(query, kind, first_page_target(kind))
+    progress::with_deadline(progress::page_deadline(Source::Youtube),
+        youtube_full::fetch_first_page(query, kind, first_page_target(kind)))
         .await
         .map(|page| Fetched {
             items: page.items,
@@ -305,7 +307,8 @@ async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, St
 
 /// One YouTube continuation page ("Show more"), 20 raw items.
 async fn youtube_more(query: &str, kind: SearchKind, token: &str) -> Result<Fetched, String> {
-    youtube_full::fetch_page(query, kind, Some(token))
+    progress::with_deadline(progress::page_deadline(Source::Youtube),
+        youtube_full::fetch_page(query, kind, Some(token)))
         .await
         .map(|page| Fetched {
             items: page.items,

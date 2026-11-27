@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -14,6 +15,31 @@ pub enum Source {
     Soundcloud,
     Musicbrainz,
 }
+
+pub fn dropdown_deadline(source: Source) -> Duration {
+    Duration::from_secs(match source {
+        Source::Youtube => 9,
+        Source::Bandcamp | Source::Musicbrainz => 6,
+        Source::Soundcloud => 10,
+    })
+}
+
+pub fn page_deadline(source: Source) -> Duration {
+    if source == Source::Youtube { Duration::from_secs(12) } else { dropdown_deadline(source) }
+}
+
+pub async fn with_deadline<T, E: std::fmt::Display>(
+    limit: Duration,
+    request: impl Future<Output = Result<T, E>>,
+) -> Result<T, String> {
+    tokio::time::timeout(limit, request).await
+        .map_err(|_| "Source request timed out".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+#[path = "deadline_tests.rs"]
+mod deadline_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

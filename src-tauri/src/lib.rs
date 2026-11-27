@@ -181,17 +181,20 @@ async fn get_search_suggestions(
         let q = query.clone();
         let report = report.clone();
         tasks.spawn(async move {
-            use search::progress::{track, Source};
+            use search::progress::{track, with_deadline, dropdown_deadline, Source};
             match platform {
                 Platform::Bandcamp => {
-                    track(&report, Source::Bandcamp, search::bandcamp::search(&q), Vec::len).await
+                    let request = with_deadline(dropdown_deadline(Source::Bandcamp), search::bandcamp::search(&q));
+                    track(&report, Source::Bandcamp, request, Vec::len).await.map_err(Into::into)
                 }
                 Platform::Youtube => {
                     let request = search::search_youtube_with_fallback(&q);
-                    track(&report, Source::Youtube, request, Vec::len).await
+                    let request = with_deadline(dropdown_deadline(Source::Youtube), request);
+                    track(&report, Source::Youtube, request, Vec::len).await.map_err(Into::into)
                 }
                 Platform::Soundcloud => {
-                    track(&report, Source::Soundcloud, search::soundcloud::search(&q), Vec::len).await
+                    let request = with_deadline(dropdown_deadline(Source::Soundcloud), search::soundcloud::search(&q));
+                    track(&report, Source::Soundcloud, request, Vec::len).await.map_err(Into::into)
                 }
                 _ => Ok(Vec::new()),
             }
@@ -217,6 +220,8 @@ async fn get_search_suggestions(
                     6,
                     std::time::Duration::from_millis(6000),
                 );
+                let request = search::progress::with_deadline(
+                    search::progress::dropdown_deadline(search::progress::Source::Musicbrainz), request);
                 search::progress::track(&report, search::progress::Source::Musicbrainz, request, Vec::len)
                     .await
             } else {

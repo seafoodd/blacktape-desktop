@@ -54,7 +54,7 @@ const KNOWN_LABELS: [&str; 10] = [
 /// Per-request timeout of search requests (first page and continuations).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(4);
 /// Total time budget of the first-page continuation chain (D18).
-const FIRST_PAGE_BUDGET: Duration = Duration::from_secs(8);
+const FIRST_PAGE_BUDGET: Duration = Duration::from_secs(12);
 /// Timeout of the artist browse request.
 const BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// "Top songs" rows shown on the artist card.
