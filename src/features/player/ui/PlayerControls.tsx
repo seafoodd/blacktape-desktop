@@ -1,5 +1,5 @@
 import { useDownloadStore } from "@/shared/store/downloadStore.ts";
-import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { PlayerDownloadControl } from "@/features/player/ui/PlayerDownloadControl.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
@@ -397,7 +397,7 @@ export const PlayerControls = () => {
                 </button>
                 <button
                   type="button"
-                  className={clsx(styles.songAction, {
+                  className={clsx(styles.songAction, styles.favoriteButton, {
                     [styles.favoriteActive]: isCurrentFavorite,
                   })}
                   disabled={!currentSong}
@@ -423,10 +423,7 @@ export const PlayerControls = () => {
                 </button>
                 {streamTrack &&
                   (downloading && download ? (
-                    <div className={styles.downloadProgress}>
-                      <span className={styles.downloadPercent} role="status">{download.overallPercent}%</span>
-                      <CancelDownloadButton taskId={download.id} />
-                    </div>
+                    <PlayerDownloadControl taskId={download.id} percent={download.overallPercent} />
                   ) : downloaded || !downloadParams ? (
                     <button
                       type="button"

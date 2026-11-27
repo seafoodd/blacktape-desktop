@@ -193,6 +193,11 @@
     }
 }
 
+.songAction.favoriteButton svg {
+    width: 24px;
+    height: 24px;
+}
+
 .rightControls {
     display: flex;
     align-items: center;
@@ -298,5 +303,69 @@
     --split-pad-gear-left: 3.6px;
     --split-pad-gear-right: 6.5px;
 }
-.downloadProgress { display: inline-flex; align-items: center; gap: 4px; }
-.downloadPercent { color: var(--color-info); font-size: var(--font-sm); font-variant-numeric: tabular-nums; }
+.downloadProgress {
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+}
+
+.downloadSpinner {
+    grid-area: 1 / 1;
+    width: 18px;
+    height: 18px;
+    border: 2px solid color-mix(in srgb, var(--color-primaryLight) 25%, transparent);
+    border-top-color: var(--color-primaryLight);
+    border-radius: 50%;
+    animation: playerSpin 800ms linear infinite;
+    pointer-events: none;
+}
+
+.downloadStatus {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.downloadProgress > button {
+    grid-area: 1 / 1;
+    width: 32px;
+    height: 32px;
+    opacity: 0;
+}
+
+.downloadProgress:hover > button,
+.downloadProgress:focus-within > button,
+.downloadProgress > button:disabled {
+    opacity: 1;
+}
+
+.downloadProgress:hover > .downloadSpinner,
+.downloadProgress:focus-within > .downloadSpinner,
+.downloadProgress:has(> button:disabled) > .downloadSpinner {
+    opacity: 0;
+}
+
+.downloadProgress > button:hover:not(:disabled) {
+    color: var(--color-text);
+    border-color: transparent;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.downloadProgress > button:disabled {
+    color: var(--color-primaryLight);
+}
+
+@media (hover: none) {
+    .downloadProgress > button { opacity: 1; }
+    .downloadProgress > .downloadSpinner { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .downloadSpinner { animation-duration: 2s; }
+}
