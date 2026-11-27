@@ -882,39 +882,12 @@ pub async fn download_batch_streaming(
             let jitter = (index % 4) * 150 + 50;
             sleep(Duration::from_millis(jitter as u64)).await;
 
-            let mut downloaded_file = download_track_internal(&ctx, &track, track_num, total_tracks).await;
+            let downloaded = download_with_fallbacks(&track, |candidate| {
+                let ctx = Arc::clone(&ctx);
+                async move { download_track_internal(&ctx, &candidate, track_num, total_tracks).await }
+            }).await;
 
-            if downloaded_file.is_none() && !track.fallback_urls.is_empty() {
-                for fallback_url in &track.fallback_urls {
-                    if !fallback_url.starts_with("http://") && !fallback_url.starts_with("https://") {
-                        continue;
-                    }
-                    tracing::warn!(
-                        session = %ctx.session_id,
-                        track = track_num,
-                        title = %track.title,
-                        primary = %track.url,
-                        fallback = %fallback_url,
-                        "Primary track download failed; attempting fallback candidate"
-                    );
-                    let mut fallback_track = track.clone();
-                    fallback_track.url = fallback_url.clone();
-                    let res = download_track_internal(&ctx, &fallback_track, track_num, total_tracks).await;
-                    if res.is_some() {
-                        tracing::info!(
-                            session = %ctx.session_id,
-                            track = track_num,
-                            title = %track.title,
-                            fallback = %fallback_url,
-                            "Fallback candidate download succeeded!"
-                        );
-                        downloaded_file = res;
-                        break;
-                    }
-                }
-            }
-
-            if let Some(ref path) = downloaded_file {
+            if let Some((path, track)) = downloaded {
                 let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
                 let emit_index = track.source_track_index.unwrap_or(index);
                 tracing::info!(
@@ -968,7 +941,7 @@ pub async fn download_batch_streaming(
                     let _ = sender.send((path.clone(), track.clone(), emit_index)).await;
                 }
 
-                Some((path.clone(), track))
+                Some((path, track))
             } else {
                 tracing::error!(
                     session = %ctx.session_id,
@@ -1019,6 +992,31 @@ pub async fn download_batch_streaming(
 
     Ok(downloaded)
 }
+
+async fn download_with_fallbacks<F, Fut>(track: &TrackDownload, mut attempt: F) -> Option<(PathBuf, TrackDownload)>
+where
+    F: FnMut(TrackDownload) -> Fut,
+    Fut: std::future::Future<Output = Option<PathBuf>>,
+{
+    for (index, url) in std::iter::once(&track.url).chain(&track.fallback_urls).enumerate() {
+        if index > 0 && checked_url(url).is_err() {
+            continue;
+        }
+        let mut candidate = track.clone();
+        candidate.url = url.clone();
+        if index > 0 && candidate.url != track.url {
+            candidate.source_item_id = None;
+        }
+        if let Some(path) = attempt(candidate.clone()).await {
+            return Some((path, candidate));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+#[path = "ytdlp_fallback_tests.rs"]
+mod fallback_tests;
 
 async fn discard_failed_batch(temp_dir: &Path) {
     if let Err(error) = tokio::fs::remove_dir_all(temp_dir).await {
