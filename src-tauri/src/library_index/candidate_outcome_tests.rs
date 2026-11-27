@@ -1,5 +1,5 @@
 use super::collect_candidate_results;
-use crate::{search::bandcamp::ItemType, search::SearchSuggestion, types::Platform};
+use crate::{search::ItemType, search::SearchSuggestion, types::Platform};
 use tokio::task::JoinSet;
 
 fn suggestion(name: &str) -> SearchSuggestion {

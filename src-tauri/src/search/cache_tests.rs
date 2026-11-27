@@ -1,5 +1,5 @@
 use super::{cache::cached_source, progress::Source, SearchSuggestion, SourceResults};
-use crate::{search::bandcamp::ItemType, types::Platform, library_index::sources::TtlCache};
+use crate::{search::ItemType, types::Platform, library_index::sources::TtlCache};
 use std::{sync::Mutex, time::{Duration, Instant}};
 
 fn source_results(name: &str, complete: bool) -> SourceResults {

@@ -16,7 +16,7 @@
 #![allow(dead_code)]
 
 use crate::search::full::{ArtistProfile, SearchKind};
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use regex::Regex;

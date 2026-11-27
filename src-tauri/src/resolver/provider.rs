@@ -3,7 +3,7 @@ use crate::resolver::matcher::{
     evaluate_artist_match, evaluate_track_match, matches_album_listing,
     strip_leading_artist_from_title, ArtistMatch,
 };
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use tracing::{debug, warn};
 
 const MAX_FALLBACK_CANDIDATES_PER_PLATFORM: usize = 2;

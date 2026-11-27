@@ -2,7 +2,7 @@
 //! exact, album-intent, split, reversed, partial, stemmed/alias, niche, and hostile bootleg/remix inputs).
 //! Exercises both `rank_with_options` (search bar dropdown) and `rank_flat_with_options` (full search page).
 
-use super::bandcamp::ItemType;
+use super::ItemType;
 use super::full::{assemble_with_canonical, Fetched};
 use super::ranking::{normalize, rank_flat_with_options, rank_with_options, RankOptions};
 use super::youtube_fast::merge_album_results;

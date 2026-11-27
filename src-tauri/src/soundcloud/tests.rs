@@ -3,7 +3,7 @@
 //! envelopes wrap those objects in api-v2's `collection` page shape. Client ids are fake.
 
 use super::*;
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::soundcloud::{map_page, SearchKind};
 use crate::types::Platform;
 

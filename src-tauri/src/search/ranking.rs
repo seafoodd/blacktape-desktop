@@ -10,7 +10,7 @@
 
 #![allow(dead_code)]
 
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use std::collections::hash_map::Entry;

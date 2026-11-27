@@ -1,5 +1,5 @@
 use super::{collect_page_sources, Fetched, FullSearchPage};
-use crate::{search::{progress::Source, bandcamp::ItemType, SearchSuggestion}, types::Platform};
+use crate::{search::{progress::Source, ItemType, SearchSuggestion}, types::Platform};
 use std::time::Duration;
 use tokio::{sync::{mpsc, oneshot}, task::JoinSet, time::timeout};
 

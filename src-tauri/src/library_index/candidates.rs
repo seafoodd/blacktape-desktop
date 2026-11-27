@@ -2,7 +2,7 @@
 //! feature): search the platforms, rank the album results by how well they match, let the user pick one.
 //! The ranking is pure; the command only gathers the search results.
 
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use serde::Serialize;

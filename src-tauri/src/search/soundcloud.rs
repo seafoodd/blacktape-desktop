@@ -3,7 +3,7 @@
 //! Self-contained so it can feed both the dropdown (`search`) and a paged full-search
 //! page (`search_kind`).
 
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::full::ArtistProfile;
 use crate::search::SearchSuggestion;
 use crate::soundcloud::{

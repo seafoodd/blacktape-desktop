@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::full::{ArtistProfile, SearchKind};
 use crate::search::youtube_fast::{audience_from_segments, parse_count, parse_duration, CLIENT_VERSION};
 use crate::search::SearchSuggestion;

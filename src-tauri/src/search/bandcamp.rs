@@ -1,4 +1,4 @@
-use crate::search::SearchSuggestion;
+use crate::search::{ItemType, SearchSuggestion};
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -18,14 +18,6 @@ pub struct BandcampSearchResponse {
 #[derive(Debug, Deserialize)]
 pub struct AutoSection {
     pub results: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
-pub enum ItemType {
-    Album,
-    Artist,
-    Track,
-    Unknown,
 }
 
 #[derive(Debug, Deserialize)]

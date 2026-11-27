@@ -1,4 +1,4 @@
-use super::{collect_suggestions, bandcamp::ItemType, SearchSuggestion, SearchResult};
+use super::{collect_suggestions, ItemType, SearchSuggestion, SearchResult};
 use crate::types::Platform;
 use std::time::Duration;
 use tokio::{sync::{mpsc, oneshot}, task::JoinSet, time::timeout};

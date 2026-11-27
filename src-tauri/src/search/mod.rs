@@ -1,11 +1,18 @@
-use crate::search::bandcamp::ItemType;
 use crate::types::Platform;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::error::Error;
 use std::future::Future;
 use std::time::Duration;
 use tokio::task::JoinSet;
+
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
+pub enum ItemType {
+    Album,
+    Artist,
+    Track,
+    Unknown,
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchSuggestion {

@@ -32,7 +32,7 @@ use std::time::Duration;
 use tokio::time::error::Elapsed;
 
 /// Which kind of item a `search_full` request is for. Serialized as "Track" | "Album" | "Artist"
-/// (same strings as `bandcamp::ItemType`, so the frontend can reuse its `ItemType` enum).
+/// (same strings as `ItemType`, so the frontend can reuse its `ItemType` enum).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchKind {
     Track,
@@ -552,7 +552,7 @@ fn flatten_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::bandcamp::ItemType;
+    use crate::search::ItemType;
 
     #[test]
     fn first_page_targets() {

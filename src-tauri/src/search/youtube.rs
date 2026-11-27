@@ -1,4 +1,4 @@
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use rustypipe::client::RustyPipe;
