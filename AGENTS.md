@@ -29,6 +29,7 @@ Every bug that is fixed gets a test that fails without the fix. If the bug came 
 - Determine a platform from the parsed HTTP(S) hostname. Never infer it from a substring in a URL path, query, fragment or user information.
 - Requests for platform pages and covers must validate the URL and every redirect, have a timeout, check HTTP status and bound the response size. Custom Bandcamp domains remain supported.
 - Strip request URLs from network errors. SoundCloud client IDs may be sent only to the exact HTTPS api-v2.soundcloud.com origin, including redirects.
+- Cache platform search or release candidates only after all requested sources succeed. Incomplete results remain visible but must remain retryable.
 
 Take extra care, and review twice, in code that handles auth tokens, downloads, the updater, file paths and URLs:
 - never log or commit tokens, keys or secrets;

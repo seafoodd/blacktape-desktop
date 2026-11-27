@@ -181,20 +181,21 @@ async fn get_search_suggestions(
         let q = query.clone();
         let report = report.clone();
         tasks.spawn(async move {
-            use search::progress::{track, with_deadline, dropdown_deadline, Source};
+            use search::progress::{with_deadline, dropdown_deadline, Source};
+            use search::{cache::source_results, SourceResults};
             match platform {
                 Platform::Bandcamp => {
-                    let request = with_deadline(dropdown_deadline(Source::Bandcamp), search::bandcamp::search(&q));
-                    track(&report, Source::Bandcamp, request, Vec::len).await.map_err(Into::into)
+                    let request = async { with_deadline(dropdown_deadline(Source::Bandcamp), search::bandcamp::search(&q)).await.map(SourceResults::complete) };
+                    source_results(Source::Bandcamp, &q, &report, request).await.map_err(Into::into)
                 }
                 Platform::Youtube => {
                     let request = search::search_youtube_with_fallback(&q);
-                    let request = with_deadline(dropdown_deadline(Source::Youtube), request);
-                    track(&report, Source::Youtube, request, Vec::len).await.map_err(Into::into)
+                    let request = async { with_deadline(dropdown_deadline(Source::Youtube), request).await.map(SourceResults::complete) };
+                    source_results(Source::Youtube, &q, &report, request).await.map_err(Into::into)
                 }
                 Platform::Soundcloud => {
-                    let request = with_deadline(dropdown_deadline(Source::Soundcloud), search::soundcloud::search(&q));
-                    track(&report, Source::Soundcloud, request, Vec::len).await.map_err(Into::into)
+                    let request = with_deadline(dropdown_deadline(Source::Soundcloud), search::soundcloud::search_outcome(&q));
+                    source_results(Source::Soundcloud, &q, &report, request).await.map_err(Into::into)
                 }
                 _ => Ok(Vec::new()),
             }
@@ -222,8 +223,8 @@ async fn get_search_suggestions(
                 );
                 let request = search::progress::with_deadline(
                     search::progress::dropdown_deadline(search::progress::Source::Musicbrainz), request);
-                search::progress::track(&report, search::progress::Source::Musicbrainz, request, Vec::len)
-                    .await
+                let request = async { request.await.map(search::SourceResults::complete) };
+                search::cache::source_results(search::progress::Source::Musicbrainz, &q_mb, &report, request).await
             } else {
                 Err("The search was replaced by a newer one.".to_string())
             };

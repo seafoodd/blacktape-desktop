@@ -76,6 +76,7 @@ interface LibraryState {
   searchQuery: string;
   searchResults: SearchSuggestion[];
   searchCache: Record<string, any[]>;
+  searchCacheExpires: Record<string, number>;
   searchWarning: string | null;
   /** The query whose first results are shown while slower sources are still searching. */
   partialResultsFor: string | null;
@@ -117,6 +118,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
   searchCache: {},
+  searchCacheExpires: {},
   searchWarning: null,
   partialResultsFor: null,
   searchRun: null,
@@ -136,7 +138,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     set({ searchWarning: null, partialResultsFor: null });
-    const { searchCache } = get();
+    const { searchCache, searchCacheExpires } = get();
 
     const run: SearchRun = {
       query: query.trim(),
@@ -145,7 +147,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       cached: false,
       sources: [],
     };
-    if (!force && searchCache[trimmedQuery]) {
+    if (!force && searchCache[trimmedQuery] && searchCacheExpires[trimmedQuery] > Date.now()) {
       // The same query again, such as after a typed space, keeps the timings of its search.
       const previous = get().searchRun;
       const searchedJustNow =
@@ -176,10 +178,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         unlisten.push(await listen<{ requestId: number; progress: SourceProgressEvent }>(
           "search-progress",
           (ev) => {
-            if (finished || !searchGuard.isLatest(token)) return;
+            if (finished) return;
             if (ev.payload.requestId !== token) return;
             run.sources = applyProgress(run.sources, ev.payload.progress, Date.now());
-            set({ searchRun: { ...run } });
+            if (searchGuard.isLatest(token)) set({ searchRun: { ...run } });
           },
         ));
         unlisten.push(await listen<{ requestId: number; results: SearchSuggestion[] }>(
@@ -202,19 +204,30 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
       set((state) => {
         const nextCache = { ...state.searchCache };
-        // Don't poison cache if MusicBrainz was unavailable (503) so subsequent search retries cleanly.
-        if (!warning) {
+        const nextExpires = { ...state.searchCacheExpires };
+        const now = Date.now();
+        for (const key of Object.keys(nextCache)) {
+          if (!(nextExpires[key] > now)) {
+            delete nextCache[key];
+            delete nextExpires[key];
+          }
+        }
+        const complete = !warning && run.sources.every((source) => source.state === "done");
+        if (complete) {
           nextCache[trimmedQuery] = results;
+          nextExpires[trimmedQuery] = now + 5 * 60 * 1000;
         }
         return {
-          ...(isLatest ? { searchResults: results, searchWarning: warning } : {}),
+          ...(isLatest ? { searchResults: results, searchWarning: warning, partialResultsFor: null } : {}),
           searchCache: nextCache,
+          searchCacheExpires: nextExpires,
         };
       });
     } catch (error) {
       console.error("Search failed", error);
       captureFrontendError(error, "libraryStore.executeSearch");
     } finally {
+      finished = true;
       unlisten.forEach((stop) => stop());
       if (searchGuard.isLatest(token)) {
         set({ searchRun: { ...run, finishedAt: Date.now(), sources: closeProgress(run.sources) } });

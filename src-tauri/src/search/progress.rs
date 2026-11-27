@@ -80,12 +80,22 @@ pub async fn track<T, E>(
     request: impl Future<Output = Result<T, E>>,
     count: impl FnOnce(&T) -> usize,
 ) -> Result<T, E> {
+    track_checked(report, source, request, count, |_| true).await
+}
+
+pub async fn track_checked<T, E>(
+    report: &Report,
+    source: Source,
+    request: impl Future<Output = Result<T, E>>,
+    count: impl FnOnce(&T) -> usize,
+    complete: impl FnOnce(&T) -> bool,
+) -> Result<T, E> {
     report(SourceProgress { source, state: State::Running, elapsed_ms: None, count: None });
     let started = Instant::now();
     let result = request.await;
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (state, count) = match &result {
-        Ok(value) => (State::Done, Some(count(value))),
+        Ok(value) => (if complete(value) { State::Done } else { State::Failed }, Some(count(value))),
         Err(_) => (State::Failed, None),
     };
     report(SourceProgress { source, state, elapsed_ms: Some(elapsed_ms), count });

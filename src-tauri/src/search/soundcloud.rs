@@ -48,6 +48,10 @@ pub struct SearchPage {
 
 /// Dropdown search: tracks, sets and users in parallel. Fails only if all three fail.
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
+    search_outcome(query).await.map(|result| result.items)
+}
+
+pub async fn search_outcome(query: &str) -> Result<super::SourceResults, Box<dyn Error + Send + Sync>> {
     let (tracks, sets, users) = tokio::join!(
         search_kind(query, SearchKind::Tracks, DROPDOWN_TRACKS, 0),
         search_kind(query, SearchKind::Sets, DROPDOWN_SETS, 0),
@@ -65,10 +69,11 @@ pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error 
     if items.is_empty() && errors.len() == 3 {
         return Err(errors.remove(0).into());
     }
+    let complete = errors.is_empty();
     for e in errors {
         tracing::warn!("SoundCloud search partial failure: {e}");
     }
-    Ok(items)
+    Ok(super::SourceResults { items, complete })
 }
 
 /// One page of one result kind. `offset` comes from a previous page's `next_offset`.

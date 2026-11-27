@@ -27,6 +27,21 @@ pub struct SearchSuggestion {
     pub platform: Platform,
 }
 
+pub struct SourceResults {
+    pub items: Vec<SearchSuggestion>,
+    pub complete: bool,
+}
+
+impl SourceResults {
+    pub fn complete(items: Vec<SearchSuggestion>) -> Self {
+        Self { items, complete: true }
+    }
+}
+
+pub(crate) mod cache;
+#[cfg(test)]
+mod cache_tests;
+
 pub mod bandcamp;
 pub mod soundcloud;
 pub mod bandcamp_full;
