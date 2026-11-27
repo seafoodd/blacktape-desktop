@@ -303,13 +303,13 @@ describe("artistAlbumsDownloads", () => {
     });
 
     expect(extraDownloadingTracksForAlbum([{ title: "Saved Song" }], ["Missing Song"], [first, second]))
-      .toEqual([
+      .toMatchObject([
         {
-          taskId: "album-task", title: "New Song", trackNumber: 3, discNumber: 1,
+          taskId: "album-task", trackIndex: 2, title: "New Song", trackNumber: 3, discNumber: 1,
           percent: 40, status: "downloading",
         },
         {
-          taskId: "placement-task", title: "Placement Song", trackNumber: 4, discNumber: 1,
+          taskId: "placement-task", trackIndex: 0, title: "Placement Song", trackNumber: 4, discNumber: 1,
           percent: 65, status: "downloading",
         },
       ]);

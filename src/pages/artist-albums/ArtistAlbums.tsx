@@ -1,6 +1,6 @@
 import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
-import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
+import { DownloadingTrackRow } from "@/pages/artist-albums/DownloadingTrackRow.tsx";
 import { torrentStatusMessage } from "@/features/library/model/downloadStatusMessage.ts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
@@ -65,6 +65,7 @@ import {
   missingRemoteTrack,
   missingTrackPercent,
   missingTrackDownloading,
+  missingTrackIndex,
   findTrashItem,
   albumHasTrackGaps,
 } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
@@ -73,6 +74,7 @@ import {
   downloadingAlbumMetaLine,
   extraDownloadingTracksForAlbum,
   findMissingTrackDownload,
+  normalizeAlbumTitle,
   groupMissingSelection,
   isActiveLibraryDownload,
   matchDownloadToLibraryAlbum,
@@ -762,7 +764,7 @@ const ArtistAlbums = () => {
 
   /** Per-song upgrade state from running `resolve:` tasks, shown right inside the existing album rows. */
   const upgradingBySongId = useMemo(() => {
-    const map = new Map<number, { percent: number; done: boolean; taskId: string }>();
+    const map = new Map<number, { percent: number; done: boolean; taskId: string; trackIndex: number }>();
     for (const d of Object.values(activeDownloads)) {
       const running =
         d.status === "downloading" || d.status === "idle" || d.status === "processing";
@@ -773,6 +775,7 @@ const ArtistAlbums = () => {
         if (tr?.status !== "cancelled") {
           map.set(d.replaceSongId, {
             taskId: d.id,
+            trackIndex: 0,
             percent: tr?.percent ?? d.overallPercent ?? 0,
             done: tr?.status === "completed" || d.overallPercent >= 100,
           });
@@ -787,6 +790,7 @@ const ArtistAlbums = () => {
           if (tr?.status === "cancelled") return;
           map.set(songId, {
             taskId: d.id,
+            trackIndex: idx,
             percent: tr?.percent ?? 0,
             done: tr?.status === "completed",
           });
@@ -796,16 +800,32 @@ const ArtistAlbums = () => {
     return map;
   }, [activeDownloads]);
 
+  const [expandedErrorAlbums, setExpandedErrorAlbums] = useState<Record<string, boolean>>({});
+
   const failedArtistDownloads = useMemo(() => {
     if (!selectedTab) return [];
     const normArtist = selectedTab.trim().toLowerCase();
-    const latestByUrl = new Map<string, (typeof activeDownloads)[string]>();
-    for (const d of Object.values(activeDownloads)) {
-      if (d.artistName.trim().toLowerCase() !== normArtist) continue;
-      latestByUrl.set(d.url, d);
-    }
-    return [...latestByUrl.values()].filter((d) => d.status === "failed");
+    return Object.values(activeDownloads).filter(
+      (d) => d.artistName.trim().toLowerCase() === normArtist && d.status === "failed",
+    );
   }, [activeDownloads, selectedTab]);
+
+  const { failedByAlbum, unmatchedFailedDownloads } = useMemo(() => {
+    const albumKeys = new Set(albums.map((a) => normalizeAlbumTitle(a.title)));
+    const byAlbum = new Map<string, (typeof failedArtistDownloads)>();
+    const unmatched: typeof failedArtistDownloads = [];
+    for (const failed of failedArtistDownloads) {
+      const key = normalizeAlbumTitle(failed.albumTitle);
+      if (key && albumKeys.has(key)) {
+        const list = byAlbum.get(key) ?? [];
+        list.push(failed);
+        byAlbum.set(key, list);
+      } else {
+        unmatched.push(failed);
+      }
+    }
+    return { failedByAlbum: byAlbum, unmatchedFailedDownloads: unmatched };
+  }, [albums, failedArtistDownloads]);
 
   // A running download of a linked album shows its songs inside the library album: open that album's rows.
   useEffect(() => {
@@ -908,7 +928,7 @@ const ArtistAlbums = () => {
       }}
     >
       <h1 className={clsx(styles.artistName, "truncate")}>{selectedTab}</h1>
-      {failedArtistDownloads.map((failed) => (
+      {unmatchedFailedDownloads.map((failed) => (
         <div key={failed.id} className={styles.downloadErrorBanner} role="alert">
           <span>
             <strong>{decodeHtmlEntities(failed.albumTitle || "Download")}:</strong>{" "}
@@ -996,6 +1016,7 @@ const ArtistAlbums = () => {
                       const disc = track.discNumber ?? 1;
                       const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
                       if (showDiscHeader) lastDisc = disc;
+                      const trackUrl = track.url ?? download.trackUrls?.[trackIdx];
                       return (
                         <React.Fragment key={`dl-track-${trackIdx}-${track.title}`}>
                           {showDiscHeader && (
@@ -1003,21 +1024,20 @@ const ArtistAlbums = () => {
                               <span className={styles.discHeaderTitle}>DISC {disc}</span>
                             </li>
                           )}
-                          <li className={clsx(styles.song, styles.downloadingSong)} data-song-row tabIndex={0}>
-                            <div className={styles.songLeft}>
-                              <div className={styles.songTrackNumber}>
-                                {String(track.trackNumber || trackIdx + 1).padStart(2, "0")}
-                              </div>
-                              <div className={clsx(styles.songTitle, "truncate")}>
-                                {decodeHtmlEntities(track.title)}
-                              </div>
-                            </div>
-                            <div className={styles.songRight}>
-                              <div className={styles.trackPercentage}>
-                                <TrackDownloadProgress taskId={download.id} trackIndex={trackIdx} percent={track.percent} finished={track.status === "completed" || track.status === "failed" || track.status === "cancelled"} />
-                              </div>
-                            </div>
-                          </li>
+                          <DownloadingTrackRow
+                            taskId={download.id}
+                            trackIndex={trackIdx}
+                            title={track.title}
+                            trackNumber={track.trackNumber || trackIdx + 1}
+                            percent={track.percent}
+                            status={track.status}
+                            platform={download.platform}
+                            albumUrl={download.url}
+                            artistName={download.artistName}
+                            albumTitle={download.albumTitle}
+                            coverUrl={download.coverUrl}
+                            playUrl={trackUrl}
+                          />
                         </React.Fragment>
                       );
                     })
@@ -1145,6 +1165,24 @@ const ArtistAlbums = () => {
                 ]} />
                 </span>
                 {(() => {
+                  const albumErrors = failedByAlbum.get(normalizeAlbumTitle(album.title)) ?? [];
+                  if (albumErrors.length === 0) return null;
+                  const errKey = normalizeAlbumTitle(album.title);
+                  const expanded = Boolean(expandedErrorAlbums[errKey]);
+                  return (
+                    <button
+                      type="button"
+                      className={styles.albumErrorPill}
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setExpandedErrorAlbums((prev) => ({ ...prev, [errKey]: !prev[errKey] }))
+                      }
+                    >
+                      ! {albumErrors.length} {albumErrors.length === 1 ? "error" : "errors"} · {expanded ? "Hide ▴" : "Details ▾"}
+                    </button>
+                  );
+                })()}
+                {(() => {
                   const source = sourceOf(album.title);
                   if (source) {
                     // songs with no stream are not counted, but they are still listed: the button stays for them
@@ -1188,6 +1226,28 @@ const ArtistAlbums = () => {
                   );
                 })()}
               </div>
+              {(() => {
+                const errKey = normalizeAlbumTitle(album.title);
+                const albumErrors = failedByAlbum.get(errKey) ?? [];
+                if (albumErrors.length === 0 || !expandedErrorAlbums[errKey]) return null;
+                return (
+                  <div className={styles.albumErrorList} role="alert">
+                    {albumErrors.map((failed) => (
+                      <div key={failed.id} className={styles.albumErrorItem}>
+                        <span className="truncate">{failed.message || "Download failed."}</span>
+                        <button
+                          type="button"
+                          className={styles.downloadErrorDismiss}
+                          onClick={() => dismissDownload(failed.id)}
+                          aria-label="Dismiss error"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <ul className={styles.songs}>
                 {(() => {
                   const { missing, rows } = albumViews[index];
@@ -1255,6 +1315,7 @@ const ArtistAlbums = () => {
                                   percent={missingTrackPercent(download, row.track)}
                                   downloading={missingTrackDownloading(download, row.track)}
                                   downloadTaskId={cancelTarget?.id}
+                                  downloadTrackIndex={missingTrackIndex(cancelTarget, row.track)}
                                   ghost={row.track.url === ""}
                                   unavailable={unavailable.has(row.track.url)}
                                   failure={missingFailures[row.track.url]}
@@ -1289,21 +1350,20 @@ const ArtistAlbums = () => {
                                   <span className={styles.discHeaderTitle}>DISC {tr.discNumber}</span>
                                 </li>
                               )}
-                              <li className={clsx(styles.song, styles.downloadingSong)} data-song-row tabIndex={0}>
-                                <div className={styles.songLeft}>
-                                  <div className={styles.songTrackNumber}>
-                                    {String(tr.trackNumber).padStart(2, "0")}
-                                  </div>
-                                  <div className={clsx(styles.songTitle, "truncate")}>
-                                    {decodeHtmlEntities(tr.title)}
-                                  </div>
-                                </div>
-                                <div className={styles.songRight}>
-                                  <div className={styles.trackPercentage}>
-                                    <TrackDownloadProgress taskId={tr.taskId} percent={tr.percent} finished={tr.status === "completed" || tr.status === "failed"} />
-                                  </div>
-                                </div>
-                              </li>
+                              <DownloadingTrackRow
+                                taskId={tr.taskId}
+                                trackIndex={tr.trackIndex}
+                                title={tr.title}
+                                trackNumber={tr.trackNumber}
+                                percent={tr.percent}
+                                status={tr.status}
+                                platform={tr.platform}
+                                albumUrl={tr.albumUrl}
+                                artistName={tr.artistName}
+                                albumTitle={tr.albumTitle}
+                                coverUrl={tr.coverUrl}
+                                playUrl={tr.url}
+                              />
                             </React.Fragment>
                           );
                         });

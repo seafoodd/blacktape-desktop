@@ -25,7 +25,7 @@ export type DownloadEvent =
     artist: string;
     cover_url?: string;
     release_year?: number;
-    tracks: { title: string; track_number?: number; disc_number?: number }[];
+    tracks: { title: string; track_number?: number; disc_number?: number; url?: string }[];
   }
   | { type: "track-progress"; task_id: string; track_index: number; track_title: string; percent: number }
   | { type: "saved"; task_id: string; track_index: number; song: Song }
@@ -63,6 +63,7 @@ export function reduceDownloadEvent(
           title: track.title,
           trackNumber: track.track_number ?? index + 1,
           discNumber: track.disc_number,
+          url: track.url ?? task.tracks[index]?.url,
           percent: task.tracks[index]?.percent ?? 0,
           status: task.tracks[index]?.status ?? "pending",
         })),

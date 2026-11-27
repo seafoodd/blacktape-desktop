@@ -891,10 +891,17 @@ pub async fn process_album_url(
             tracks: tracks
                 .iter()
                 .enumerate()
-                .map(|(idx, t)| TrackMetaItem {
-                    title: t.title.clone(),
-                    track_number: t.track_number.or(Some((idx + 1) as i32)),
-                    disc_number: t.disc_number,
+                .map(|(idx, t)| {
+                    let preview_url = std::iter::once(&t.url)
+                        .chain(&t.fallback_urls)
+                        .find(|u| u.starts_with("http://") || u.starts_with("https://"))
+                        .cloned();
+                    TrackMetaItem {
+                        title: t.title.clone(),
+                        track_number: t.track_number.or(Some((idx + 1) as i32)),
+                        disc_number: t.disc_number,
+                        url: preview_url,
+                    }
                 })
                 .collect(),
         },
@@ -935,6 +942,20 @@ pub async fn process_album_url(
                 tracks
                     .iter()
                     .map(|t| (t.title.clone(), t.track_number, t.disc_number))
+                    .collect(),
+            )
+            .await;
+        registry
+            .set_track_urls(
+                task_id,
+                tracks
+                    .iter()
+                    .map(|t| {
+                        std::iter::once(&t.url)
+                            .chain(&t.fallback_urls)
+                            .find(|u| u.starts_with("http://") || u.starts_with("https://"))
+                            .cloned()
+                    })
                     .collect(),
             )
             .await;

@@ -23,6 +23,7 @@ export interface TrackDownloadProgress {
   status: "pending" | "downloading" | "completed" | "failed" | "cancelled";
   trackNumber?: number;
   discNumber?: number;
+  url?: string;
 }
 
 interface DownloadOutcomeEvent {
@@ -304,6 +305,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
                 title: string;
                 track_number?: number;
                 disc_number?: number;
+                url?: string;
                 percent: number;
                 status: string;
               }[];

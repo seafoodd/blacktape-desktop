@@ -21,6 +21,8 @@ pub struct TrackMetaItem {
     pub title: String,
     pub track_number: Option<i32>,
     pub disc_number: Option<i32>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

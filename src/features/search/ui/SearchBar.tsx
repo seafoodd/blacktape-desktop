@@ -212,7 +212,14 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
           onFocus={(e) => e.currentTarget.select()}
         />
 
-        {pulseRun && <SearchPulse run={pulseRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />}
+        {pulseRun && (
+          <div
+            className={styles.pulseIndicators}
+            data-searching={isSearching || pulseRun.finishedAt === null}
+          >
+            <SearchPulse run={pulseRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />
+          </div>
+        )}
 
         <button
           type="button"

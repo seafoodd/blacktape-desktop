@@ -186,10 +186,28 @@ export function missingTrackPercent(
   return found.status === "completed" ? 100 : Math.max(0, Math.min(100, Math.round(found.percent)));
 }
 
+export function missingTrackIndex(
+  download: Pick<DownloadProgress, "tracks" | "placement" | "trackUrls"> | undefined,
+  track: Pick<AlbumTrackInfo, "title" | "track_number" | "index"> & { url?: string },
+): number | undefined {
+  if (!download) return undefined;
+  if (download.placement) return isPlacedTrack(download.placement, track) ? 0 : undefined;
+  if (download.trackUrls && download.trackUrls.length > 0 && track.url !== undefined) {
+    const urlIdx = download.trackUrls.findIndex((url) => sameUrl(url, track.url!));
+    if (urlIdx >= 0) return urlIdx;
+  }
+  const title = normalizeTitle(track.title);
+  const byTitle = download.tracks.findIndex((t) => normalizeTitle(t.title) === title);
+  if (byTitle >= 0) return byTitle;
+  const number = track.track_number ?? track.index + 1;
+  const byNum = download.tracks.findIndex((t) => t.trackNumber === number);
+  return byNum >= 0 ? byNum : undefined;
+}
+
 /**
  * True when the running download will fetch this track: it was started for some tracks and this is one of them (by
  * page url), or it lists the track (by title, then by number), or it does not list its tracks yet and downloads
- * the whole album.
+ * the whole album. Returns false if that specific track was cancelled.
  */
 export function missingTrackDownloading(
   download: Pick<DownloadProgress, "tracks" | "status" | "placement" | "trackUrls"> | undefined,
@@ -199,15 +217,20 @@ export function missingTrackDownloading(
   if (download.status !== "downloading" && download.status !== "idle" && download.status !== "processing") {
     return false;
   }
-  if (download.placement) return isPlacedTrack(download.placement, track);
+  if (download.placement) {
+    return isPlacedTrack(download.placement, track) && download.tracks[0]?.status !== "cancelled";
+  }
   // a download of some tracks: the other missing songs of the album are not on their way
   if (download.trackUrls && download.trackUrls.length > 0) {
-    return track.url !== undefined && download.trackUrls.some((url) => sameUrl(url, track.url!));
+    if (track.url === undefined) return false;
+    const urlIdx = download.trackUrls.findIndex((url) => sameUrl(url, track.url!));
+    if (urlIdx < 0) return false;
+    return download.tracks[urlIdx]?.status !== "cancelled";
   }
   if (download.tracks.length === 0) return true;
-  const title = normalizeTitle(track.title);
-  const number = track.track_number ?? track.index + 1;
-  return download.tracks.some((t) => normalizeTitle(t.title) === title || t.trackNumber === number);
+  const idx = missingTrackIndex(download, track);
+  if (idx === undefined) return false;
+  return download.tracks[idx]?.status !== "cancelled";
 }
 
 /** Marks a track that is only a placeholder of a song that was just removed from the library (no url, no actions). */

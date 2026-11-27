@@ -743,6 +743,7 @@ async fn download(
                 title: initial_title,
                 track_number: Some(1),
                 disc_number: None,
+                url: (url.starts_with("http://") || url.starts_with("https://")).then(|| url.clone()),
                 percent: 0,
                 status: "downloading".to_string(),
             }]

@@ -94,9 +94,12 @@
 /* Inside the search field, left of the filter button. */
 .pulse {
     position: absolute;
+    top: 0;
+    bottom: 0;
     right: 40px;
     display: flex;
     align-items: center;
+    pointer-events: auto;
 }
 
 .counter {
@@ -139,17 +142,18 @@
 
 .line {
     position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: -1px;
-    height: 2px;
+    inset: -1px;
+    border-radius: inherit;
+    overflow: hidden;
     display: flex;
+    align-items: flex-end;
     gap: 2px;
     pointer-events: none;
 }
 
 .segment {
     flex: 1;
+    height: 2px;
     background-color: var(--color-muted);
 }
 

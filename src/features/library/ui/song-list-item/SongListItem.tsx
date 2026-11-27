@@ -36,7 +36,7 @@ interface SongListItemProps {
   dragIds: number[];
   index?: number;
   /** Active upgrade progress for this song (percent 0..100, done flag), if being re-downloaded. */
-  upgradeProgress?: { percent: number; done: boolean; taskId?: string };
+  upgradeProgress?: { percent: number; done: boolean; taskId?: string; trackIndex?: number };
 }
 
 const SongListItem = ({
@@ -243,7 +243,7 @@ const SongListItem = ({
           </span>
         )}
         {upgradeProgress && !upgradeProgress.done && (
-          <TrackDownloadProgress taskId={upgradeProgress.taskId} percent={upgradeProgress.percent} />
+          <TrackDownloadProgress taskId={upgradeProgress.taskId} trackIndex={upgradeProgress.trackIndex} percent={upgradeProgress.percent} />
         )}
         <QualityBadge song={song} className={styles.qualityBadge} />
         {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}

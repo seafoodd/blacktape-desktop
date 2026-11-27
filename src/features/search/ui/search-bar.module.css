@@ -48,6 +48,29 @@
     padding-right: 150px;
 }
 
+.pulseIndicators {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 180ms ease, visibility 0s linear 180ms;
+}
+
+.searchFieldWrapper:focus-within .pulseIndicators,
+.pulseIndicators[data-searching="true"] {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pulseIndicators {
+        transition: none;
+    }
+}
+
 .filterToggleBtn {
     position: absolute;
     right: 6px;

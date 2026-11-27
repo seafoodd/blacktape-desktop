@@ -37,8 +37,9 @@ interface MissingTrackRowProps {
   percent?: number;
   /** A running download (started elsewhere, e.g. from the search) fetches this song. */
   downloading?: boolean;
-  /** The owning download task; cancellation currently stops this whole task. */
+  /** The owning download task; cancellation stops the specific track when `downloadTrackIndex` is set. */
   downloadTaskId?: string;
+  downloadTrackIndex?: number;
   /** A song that was just removed: shown dimmed in its place, no actions. */
   ghost?: boolean;
   /** The platform has no stream for this song: no download or preview, but "Find another source". */
@@ -70,6 +71,7 @@ const MissingTrackRow = ({
   percent = 0,
   downloading = false,
   downloadTaskId,
+  downloadTrackIndex,
   ghost = false,
   unavailable = false,
   failure,
@@ -201,7 +203,7 @@ const MissingTrackRow = ({
           </button>
         ) : busy ? (
           <span className={styles.percent}>
-            <TrackDownloadProgress taskId={downloadTaskId} percent={percent} />
+            <TrackDownloadProgress taskId={downloadTaskId} trackIndex={downloadTrackIndex} percent={percent} />
           </span>
         ) : (
           <span className={styles.downloadButton} onDoubleClick={(e) => e.stopPropagation()}>

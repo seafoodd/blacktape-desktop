@@ -113,11 +113,18 @@ export function matchDownloadToLibraryAlbum(
 
 export interface IntegratedDownloadingTrack {
   taskId: string;
+  trackIndex: number;
   title: string;
   trackNumber: number;
   discNumber: number;
   percent: number;
   status: "pending" | "idle" | "downloading" | "completed" | "failed" | "cancelled";
+  url?: string;
+  platform: DownloadProgress["platform"];
+  albumUrl: string;
+  artistName: string;
+  albumTitle: string;
+  coverUrl?: string;
 }
 
 export function unifiedAlbumKey(artist: string, albumTitle: string): string {
@@ -157,11 +164,18 @@ export function extraDownloadingTracksForAlbum(
         seenDownloading.add(key);
         out.push({
           taskId: d.id,
+          trackIndex: idx,
           title: tr.title,
           trackNumber: tr.trackNumber ?? idx + 1,
           discNumber: tr.discNumber ?? 1,
           percent: tr.percent ?? 0,
           status: tr.status,
+          url: tr.url ?? d.trackUrls?.[idx],
+          platform: d.platform,
+          albumUrl: d.url,
+          artistName: d.artistName,
+          albumTitle: d.albumTitle,
+          coverUrl: d.coverUrl,
         });
       });
     } else if (d.placement?.title) {
@@ -170,11 +184,18 @@ export function extraDownloadingTracksForAlbum(
         seenDownloading.add(key);
         out.push({
           taskId: d.id,
+          trackIndex: 0,
           title: d.placement.title,
           trackNumber: d.placement.track_number ?? albumSongs.length + 1,
           discNumber: 1,
           percent: d.overallPercent ?? 0,
           status: d.status === "completed" ? "completed" : "downloading",
+          url: d.tracks?.[0]?.url ?? d.trackUrls?.[0],
+          platform: d.platform,
+          albumUrl: d.url,
+          artistName: d.artistName,
+          albumTitle: d.albumTitle,
+          coverUrl: d.coverUrl,
         });
       }
     }

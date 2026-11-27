@@ -14,6 +14,8 @@ pub struct TrackProgressState {
     pub track_number: Option<i32>,
     #[serde(default)]
     pub disc_number: Option<i32>,
+    #[serde(default)]
+    pub url: Option<String>,
     pub percent: i32,
     pub status: String,
 }
@@ -556,11 +558,23 @@ impl TaskRegistry {
                             title: t_title,
                             track_number: t_num.or(Some((idx + 1) as i32)),
                             disc_number: d_num,
+                            url: None,
                             percent: if status == "completed" { 100 } else { 0 },
                             status: status.to_string(),
                         }
                     })
                     .collect();
+            }
+        }
+    }
+
+    pub async fn set_track_urls(&self, task_id: &str, urls: Vec<Option<String>>) {
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            for (idx, url) in urls.into_iter().enumerate() {
+                if let Some(track) = info.state.tracks.get_mut(idx) {
+                    track.url = url;
+                }
             }
         }
     }
@@ -583,6 +597,7 @@ impl TaskRegistry {
                     title: format!("Track {}", idx + 1),
                     track_number: Some((idx + 1) as i32),
                     disc_number: None,
+                    url: None,
                     percent: 0,
                     status: "pending".to_string(),
                 });
