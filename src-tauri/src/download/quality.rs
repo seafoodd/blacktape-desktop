@@ -251,7 +251,9 @@ pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, Stri
     let url = crate::download::ytdlp::checked_url(url)?;
     let mut args: Vec<String> =
         ["-J", "--skip-download", "--no-playlist", "--no-warnings"].iter().map(|s| s.to_string()).collect();
-    args.extend(cookie_args.iter().cloned());
+    if super::ytdlp::download_site(url) == super::ytdlp::DownloadSite::Youtube {
+        args.extend(cookie_args.iter().cloned());
+    }
     args.push("--".to_string());
     args.push(url.to_string());
     Ok(args)
@@ -301,9 +303,9 @@ pub async fn probe_audio_formats(
         None => url,
     };
     // the same session the downloads use, so a signed-in account shows the formats it unlocks
-    let cookies = match platform {
-        Platform::Soundcloud => crate::download::cookies::CookieSource::None,
-        _ => crate::download::cookies::find(&crate::auth::youtube::profile_dir(&app)?),
+    let cookies = match super::ytdlp::download_site(&track) {
+        super::ytdlp::DownloadSite::Youtube => crate::download::cookies::find(&crate::auth::youtube::profile_dir(&app)?),
+        _ => crate::download::cookies::CookieSource::None,
     };
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -323,6 +325,10 @@ pub async fn probe_audio_formats(
     }
     Ok(formats)
 }
+
+#[cfg(test)]
+#[path = "quality_cookie_tests.rs"]
+mod cookie_tests;
 
 #[cfg(test)]
 mod tests {
