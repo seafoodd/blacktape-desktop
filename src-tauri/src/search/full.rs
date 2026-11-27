@@ -360,8 +360,7 @@ mod cursor_tests;
 
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
 pub(crate) async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
-    progress::with_deadline(progress::page_deadline(Source::Youtube),
-        youtube_full::fetch_first_page(query, kind, first_page_target(kind)))
+    youtube_full::fetch_first_page(query, kind, first_page_target(kind))
         .await
         .map(|page| Fetched {
             items: page.items,

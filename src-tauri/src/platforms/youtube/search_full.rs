@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::future::Future;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// `params` of a type-filtered search (verified): songs / albums / artists.
 pub const SONGS_PARAMS: &str = "EgWKAQIIAWoKEAkQBRAKEAMQBA==";
@@ -213,20 +213,41 @@ pub async fn fetch_first_page(
     kind: SearchKind,
     target: usize,
 ) -> Result<ParsedPage, Box<dyn Error + Send + Sync>> {
-    let first = fetch_page(query, kind, None).await?;
-    let deadline = Instant::now() + FIRST_PAGE_BUDGET;
-    let page = collect_chain(first, target, MAX_CHAIN_REQUESTS, |token: String| async move {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("first page time budget exhausted".to_string());
-        }
-        fetch_page_within(query, kind, Some(&token), remaining.min(REQUEST_TIMEOUT))
+    let first = async { fetch_page(query, kind, None).await.map_err(|error| error.to_string()) };
+    first_page_with_deadline(FIRST_PAGE_BUDGET, first, target, |token, remaining| async move {
+        fetch_page_within(query, kind, Some(&token), remaining)
             .await
             .map_err(|e| e.to_string())
-    })
-    .await;
-    Ok(page)
+    }).await.map_err(Into::into)
 }
+
+async fn first_page_with_deadline<F, Fut>(
+    budget: Duration,
+    first: impl Future<Output = Result<ParsedPage, String>>,
+    target: usize,
+    mut fetch_next: F,
+) -> Result<ParsedPage, String>
+where
+    F: FnMut(String, Duration) -> Fut,
+    Fut: Future<Output = Result<ParsedPage, String>>,
+{
+    let deadline = tokio::time::Instant::now() + budget;
+    let first = tokio::time::timeout_at(deadline, first).await
+        .map_err(|_| "first page request timed out (time budget exhausted)".to_string())??;
+    Ok(collect_chain(first, target, MAX_CHAIN_REQUESTS, |token| {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let request = (!remaining.is_zero()).then(|| fetch_next(token, remaining.min(REQUEST_TIMEOUT)));
+        async move {
+            let request = request.ok_or_else(|| "first page request timed out (time budget exhausted)".to_string())?;
+            tokio::time::timeout_at(deadline, request).await
+                .map_err(|_| "first page request timed out (time budget exhausted)".to_string())?
+        }
+    }).await)
+}
+
+#[cfg(test)]
+#[path = "chain_deadline_tests.rs"]
+mod chain_deadline_tests;
 
 /// Follows continuation tokens after `first` until `items >= target`, no token, or `max_requests` requests in total
 /// (the first request counts). `fetch_next` is called with the token to follow. On a failing request the collected
