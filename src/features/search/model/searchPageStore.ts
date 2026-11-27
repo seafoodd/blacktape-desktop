@@ -199,22 +199,36 @@ let lastProgressRequest = 0;
 async function searchWithProgress(
   args: SearchFullArgs,
   onProgress: (sources: SourceProgress[]) => void,
+  onPartial?: (page: FullSearchPage) => void,
 ): Promise<FullSearchPage> {
   if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return searchFull(args);
   const requestId = ++lastProgressRequest;
   let sources: SourceProgress[] = [];
+  let finished = false;
   onProgress(sources);
-  let stop: () => void;
+  let stop: (() => void) | undefined;
+  let stopPartial: (() => void) | undefined;
   try {
     stop = await listen<{ requestId: number; progress: SourceProgressEvent }>(
       "search-full-progress",
       (ev) => {
-        if (ev.payload.requestId !== requestId) return;
+        if (finished || ev.payload.requestId !== requestId) return;
         sources = applyProgress(sources, ev.payload.progress, Date.now());
         onProgress(sources);
       },
     );
+    if (onPartial) {
+      stopPartial = await listen<{ requestId: number; kind: SearchKind; page: FullSearchPage }>(
+        "search-full-partial",
+        ({ payload }) => {
+          if (!finished && payload.requestId === requestId && payload.kind === args.kind) onPartial(payload.page);
+        },
+      );
+    }
   } catch (err) {
+    finished = true;
+    stop?.();
+    stopPartial?.();
     // The search matters more than its progress.
     console.error("Failed to listen for search progress:", err);
     return searchFull(args);
@@ -222,7 +236,9 @@ async function searchWithProgress(
   try {
     return await searchFull({ ...args, requestId });
   } finally {
-    stop();
+    finished = true;
+    stop?.();
+    stopPartial?.();
     onProgress(closeProgress(sources));
   }
 }
@@ -280,6 +296,13 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         (progress) => {
           if (searchGuard.isLatest(token)) setSection(kind, { progress });
         },
+        (page) => {
+          if (!searchGuard.isLatest(token)) return;
+          setSection(kind, {
+            items: page.items ?? [], copies: page.copies ?? [],
+            warnings: (page.warnings ?? []).map((warning) => warning.message),
+          });
+        },
       );
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, readySection(page));
@@ -288,8 +311,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
     } catch (err) {
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, {
-        ...emptySection(),
-        status: "error",
+        status: get().sections[kind].items.length ? "ready" : "error",
         error: errorMessage(err),
         progress: get().sections[kind].progress,
       });

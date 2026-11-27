@@ -179,6 +179,18 @@ pub async fn search_full_with_cache(
     cache_dir: Option<std::path::PathBuf>,
     report: &Report,
 ) -> Result<FullSearchPage, String> {
+    search_full_with_partial(query, kind, platforms, cursor, cache_dir, report, &|_| {}).await
+}
+
+pub async fn search_full_with_partial(
+    query: &str,
+    kind: SearchKind,
+    platforms: &[Platform],
+    cursor: Option<SearchCursor>,
+    cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+) -> Result<FullSearchPage, String> {
     let query = query.trim();
     let want_youtube = platforms.contains(&Platform::Youtube);
     let want_bandcamp = platforms.contains(&Platform::Bandcamp);
@@ -235,61 +247,74 @@ pub async fn search_full_with_cache(
     };
 
     let want_canonical = kind == SearchKind::Album && (want_youtube || platforms.len() > 1);
-    let youtube = async {
-        if want_youtube {
-            let request = youtube_first_page(upstream_query, kind);
-            Some(track(report, Source::Youtube, request, Fetched::len).await)
-        } else {
-            None
-        }
-    };
-    let bandcamp = async {
-        if want_bandcamp {
-            let request = bandcamp_page(upstream_query, kind);
-            Some(track(report, Source::Bandcamp, request, Fetched::len).await)
-        } else {
-            None
-        }
-    };
-    let soundcloud = async {
-        if want_soundcloud {
-            let request = soundcloud_page(upstream_query, kind, 0);
-            Some(track(report, Source::Soundcloud, request, Fetched::len).await)
-        } else {
-            None
-        }
-    };
-    let musicbrainz = async {
-        if want_canonical {
+    let mut jobs = tokio::task::JoinSet::new();
+    for (source, wanted) in [(Source::Youtube, want_youtube), (Source::Bandcamp, want_bandcamp), (Source::Soundcloud, want_soundcloud)] {
+        if !wanted { continue; }
+        let query = upstream_query.to_owned();
+        let report = report.clone();
+        jobs.spawn(async move {
+            let request = async {
+                match source {
+                    Source::Youtube => youtube_first_page(&query, kind).await,
+                    Source::Bandcamp => bandcamp_page(&query, kind).await,
+                    Source::Soundcloud => soundcloud_page(&query, kind, 0).await,
+                    Source::Musicbrainz => unreachable!(),
+                }
+            };
+            let outcome = progress::track_checked(&report, source, request, Fetched::len, |page| page.warning.is_none()).await;
+            (source, outcome)
+        });
+    }
+    if want_canonical {
+        let query = query.to_owned();
+        let report = report.clone();
+        jobs.spawn(async move {
             let client = crate::metadata::MusicBrainzClient::new(cache_dir);
             let request = super::fetch_canonical_album_suggestions_result(
                 &client,
-                query,
+                &query,
                 Platform::Youtube,
                 8,
                 Duration::from_millis(6000),
             );
             let request = progress::with_deadline(progress::page_deadline(Source::Musicbrainz), request);
-            track(report, Source::Musicbrainz, request, Vec::len).await
-        } else {
-            Ok(Vec::new())
-        }
-    };
-    let (youtube, bandcamp, soundcloud, canonical_outcome) =
-        tokio::join!(youtube, bandcamp, soundcloud, musicbrainz);
-    let (canonical_items, canonical_warning) = match canonical_outcome {
-        Ok(items) => (items, None),
-        Err(msg) => (Vec::new(), Some(msg)),
-    };
-    let mut page = assemble_with_canonical(query, youtube, bandcamp, soundcloud, canonical_items)?;
-    if let Some(message) = canonical_warning {
-        page.warnings.push(PlatformWarning {
-            platform: Platform::Youtube,
-            message,
+            let outcome = track(&report, Source::Musicbrainz, request, Vec::len).await
+                .map(|items| Fetched { items, ..Fetched::default() });
+            (Source::Musicbrainz, outcome)
         });
+    }
+    collect_page_sources(query, jobs, partial).await
+}
+
+async fn collect_page_sources(
+    query: &str,
+    mut jobs: tokio::task::JoinSet<(Source, Result<Fetched, String>)>,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+) -> Result<FullSearchPage, String> {
+    let mut outcomes = Vec::new();
+    while let Some(result) = jobs.join_next().await {
+        outcomes.push(result.map_err(|_| "Search source task failed".to_string())?);
+        if !jobs.is_empty() {
+            if let Ok(page) = assemble_sources(query, &outcomes) { partial(page); }
+        }
+    }
+    assemble_sources(query, &outcomes)
+}
+
+fn assemble_sources(query: &str, outcomes: &[(Source, Result<Fetched, String>)]) -> Result<FullSearchPage, String> {
+    let outcome = |source| outcomes.iter().find(|(s, _)| *s == source).map(|(_, result)| result.clone());
+    let canonical = outcome(Source::Musicbrainz);
+    let items = canonical.as_ref().and_then(|r| r.as_ref().ok()).map(|p| p.items.clone()).unwrap_or_default();
+    let mut page = assemble_with_canonical(query, outcome(Source::Youtube), outcome(Source::Bandcamp), outcome(Source::Soundcloud), items)?;
+    if let Some(Err(message)) = canonical {
+        page.warnings.push(PlatformWarning { platform: Platform::Youtube, message: format!("MusicBrainz: {message}") });
     }
     Ok(page)
 }
+
+#[cfg(test)]
+#[path = "full_partial_tests.rs"]
+mod partial_tests;
 
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
 async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
@@ -396,9 +421,6 @@ pub(crate) fn assemble_with_canonical(
     .into_iter()
     .filter_map(|(platform, outcome)| outcome.map(|outcome| (platform, outcome)))
     .collect();
-    if requested.is_empty() {
-        return Ok(FullSearchPage::default());
-    }
     let total = requested.len();
 
     let mut items = canonical_items;
@@ -425,7 +447,7 @@ pub(crate) fn assemble_with_canonical(
             }
         }
     }
-    if failures.len() == total {
+    if total > 0 && failures.len() == total && items.is_empty() {
         return Err(failures.join("; "));
     }
 

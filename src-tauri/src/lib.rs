@@ -277,10 +277,17 @@ async fn search_full(
 ) -> Result<FullSearchPage, String> {
     let cache_dir = app.path().app_cache_dir().ok();
     let report = match request_id {
-        Some(id) => search_progress_events(app, "search-full-progress", id),
+        Some(id) => search_progress_events(app.clone(), "search-full-progress", id),
         None => search::progress::ignore(),
     };
-    search::full::search_full_with_cache(&query, kind, &platforms, cursor, cache_dir, &report).await
+    let partial = |page: FullSearchPage| {
+        if let Some(request_id) = request_id {
+            let _ = app.emit("search-full-partial", serde_json::json!({
+                "requestId": request_id, "kind": kind, "page": page,
+            }));
+        }
+    };
+    search::full::search_full_with_partial(&query, kind, &platforms, cursor, cache_dir, &report, &partial).await
 }
 
 #[command]
