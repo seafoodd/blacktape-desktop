@@ -9,10 +9,14 @@ use std::sync::OnceLock;
 use tokio::try_join;
 
 /// Process-wide RustyPipe client (D7). Built on first use and shared by all searches.
-static RUSTYPIPE: OnceLock<RustyPipe> = OnceLock::new();
+static RUSTYPIPE: OnceLock<Result<RustyPipe, String>> = OnceLock::new();
 
-fn rustypipe() -> &'static RustyPipe {
-    RUSTYPIPE.get_or_init(RustyPipe::new)
+fn rustypipe() -> Result<&'static RustyPipe, Box<dyn Error + Send + Sync>> {
+    RUSTYPIPE.get_or_init(|| RustyPipe::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .n_http_retries(1)
+        .build().map_err(|error| error.to_string()))
+        .as_ref().map_err(|error| error.clone().into())
 }
 
 impl From<MusicItem> for SearchSuggestion {
@@ -93,7 +97,7 @@ impl From<MusicItem> for SearchSuggestion {
 }
 
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
-    let rp = rustypipe();
+    let rp = rustypipe()?;
 
     let track_query = rp.query();
     let album_query = rp.query();

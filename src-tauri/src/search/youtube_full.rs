@@ -171,17 +171,32 @@ async fn fetch_page_within(
             .post(build_continuation_url(token))
             .json(&build_continuation_body()),
     };
-    let response = request
-        .header("Origin", ORIGIN)
-        .header("User-Agent", USER_AGENT)
-        .header("Cookie", CONSENT_COOKIE)
-        .timeout(timeout)
-        .send()
-        .await?
-        .error_for_status()?;
-    let json: Value = response.json().await?;
+    let json = request_json(request, timeout).await?;
     Ok(parse_page(&json, kind))
 }
+
+async fn request_json(request: reqwest::RequestBuilder, budget: Duration) -> Result<Value, String> {
+    use crate::platforms::http::{backoff, retrying_for, Failure};
+    retrying_for(budget, 2, backoff, || {
+        let request = request.try_clone();
+        async move {
+            let response = request.ok_or_else(|| Failure::fatal("YouTube request cannot be retried"))?
+                .header("Origin", ORIGIN)
+                .header("User-Agent", USER_AGENT)
+                .header("Cookie", CONSENT_COOKIE)
+                .timeout(budget)
+                .send().await?;
+            if !response.status().is_success() {
+                return Err(Failure::from_response(&response));
+            }
+            response.json().await.map_err(Failure::from)
+        }
+    }).await
+}
+
+#[cfg(test)]
+#[path = "youtube_request_tests.rs"]
+mod request_tests;
 
 /// First-page chain (D5): `fetch_page(.., None)`, then follow `next_token` sequentially until `items.len() >= target`
 /// or no token or `MAX_CHAIN_REQUESTS`. If the FIRST request fails -> Err; if a later one fails -> keep what was
@@ -278,17 +293,10 @@ pub fn browse_id_from_url(url: &str) -> Option<String> {
 /// Timeout 5 s. Parses with `parse_artist_profile`. Err when the url is not a YouTube artist url or the page has no name.
 pub async fn artist_profile(url: &str) -> Result<ArtistProfile, Box<dyn Error + Send + Sync>> {
     let browse_id = browse_id_from_url(url).ok_or("not a YouTube artist url")?;
-    let response = http_client()
+    let request = http_client()
         .post(BROWSE_URL)
-        .header("Origin", ORIGIN)
-        .header("User-Agent", USER_AGENT)
-        .header("Cookie", CONSENT_COOKIE)
-        .json(&build_browse_body(&browse_id))
-        .timeout(BROWSE_TIMEOUT)
-        .send()
-        .await?
-        .error_for_status()?;
-    let json: Value = response.json().await?;
+        .json(&build_browse_body(&browse_id));
+    let json = request_json(request, BROWSE_TIMEOUT).await?;
     let profile = parse_artist_profile(&json, &browse_id);
     if profile.name.is_empty() {
         return Err("YouTube artist page had no name".into());
