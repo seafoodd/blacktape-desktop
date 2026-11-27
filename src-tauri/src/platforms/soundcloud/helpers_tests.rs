@@ -4,7 +4,7 @@ use super::*;
 
 macro_rules! fixture {
     ($name:literal) => {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/soundcloud/", $name))
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/platforms/soundcloud/fixtures/", $name))
     };
 }
 

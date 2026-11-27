@@ -745,7 +745,7 @@ async fn live_search_smoke_test_against_real_providers() {
         let (yt, bc, sc, mb) = tokio::join!(
             super::search_youtube_with_fallback(q),
             super::bandcamp::search(q),
-            super::soundcloud::search(q),
+            crate::platforms::soundcloud::search::search(q),
             super::fetch_canonical_album_suggestions(q, None, Platform::Youtube, 6, Duration::from_secs(4)),
         );
         let mut all = Vec::new();

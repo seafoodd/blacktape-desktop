@@ -4,12 +4,12 @@
 
 use super::*;
 use crate::search::ItemType;
-use crate::search::soundcloud::{map_page, SearchKind};
+use crate::platforms::soundcloud::search::{map_page, SearchKind};
 use crate::types::Platform;
 
 macro_rules! fixture {
     ($name:literal) => {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/soundcloud/", $name))
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/platforms/soundcloud/fixtures/", $name))
     };
 }
 

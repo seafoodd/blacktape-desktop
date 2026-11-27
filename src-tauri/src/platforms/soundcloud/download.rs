@@ -6,7 +6,7 @@
 //! in it can be downloaded.
 
 use crate::download::{AlbumDownload, TrackDownload};
-use crate::soundcloud::{
+use crate::platforms::soundcloud::{
     self, artist_and_title, availability, playlist_artwork, track_artwork, track_download_url,
     year_from_dates, ScPlaylist, ScResource, ScTrack,
 };
@@ -224,11 +224,11 @@ mod tests {
 
     const PLAYLIST: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/fixtures/soundcloud/playlist_royal_concept_ep.json"
+        "/src/platforms/soundcloud/fixtures/playlist_royal_concept_ep.json"
     ));
     const TRACK: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/fixtures/soundcloud/track_flickermood.json"
+        "/src/platforms/soundcloud/fixtures/track_flickermood.json"
     ));
 
     fn playlist() -> ScPlaylist {

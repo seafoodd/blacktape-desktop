@@ -1,4 +1,5 @@
-use super::{bandcamp, soundcloud, youtube};
+use super::{bandcamp, youtube};
+use crate::platforms::soundcloud::download as soundcloud;
 use crate::download::album::download_album_cover;
 use crate::download::types::{AlbumMetaEvent, DownloadResult, ProgressEvent, TrackDownload, TrackMetaItem};
 use crate::download::ytdlp;

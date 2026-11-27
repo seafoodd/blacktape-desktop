@@ -9,7 +9,7 @@
 //! same track wait for one lookup instead of running it twice.
 
 use crate::preview::segmented_source::{parse_hls_playlist, HlsPlaylist};
-use crate::soundcloud::{self, availability, Availability, ScResource, ScTrack, ScTranscoding};
+use crate::platforms::soundcloud::{self, availability, Availability, ScResource, ScTrack, ScTranscoding};
 use crate::types::Platform;
 use serde::Deserialize;
 use std::collections::HashMap;

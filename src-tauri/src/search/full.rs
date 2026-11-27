@@ -24,7 +24,8 @@
 #![allow(dead_code)]
 
 use crate::search::progress::{self, track, Report, Source};
-use crate::search::{bandcamp_full, ranking, soundcloud, youtube_full, SearchSuggestion};
+use crate::search::{bandcamp_full, ranking, youtube_full, SearchSuggestion};
+use crate::platforms::soundcloud::search as soundcloud;
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 use std::error::Error;

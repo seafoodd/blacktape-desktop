@@ -1,7 +1,8 @@
 use super::source_selection::{candidate_improves_local, pick_candidate_entry_for_tier};
-use super::{soundcloud, ytdlp};
+use super::ytdlp;
+use crate::platforms::soundcloud::download as soundcloud;
 use crate::db::db::Database;
-use crate::download::soundcloud::SkippedTrack;
+use crate::platforms::soundcloud::download::SkippedTrack;
 use crate::download::types::{
     AlbumDownload, AlbumMetaEvent, DownloadResult, ProgressEvent, TrackDownload, TrackMetaItem,
 };

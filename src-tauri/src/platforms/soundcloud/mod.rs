@@ -5,11 +5,13 @@
 //! `a-v2.sndcdn.com/assets/*.js` bundles). The id is cached for the life of the process and
 //! fetched again once when the API rejects it (401/403).
 //!
-//! Search lives in `crate::search::soundcloud` and download metadata in
-//! `crate::download::soundcloud`. The audio itself is downloaded by yt-dlp, like every
+//! Search lives in `crate::platforms::soundcloud::search` and download metadata in
+//! `crate::platforms::soundcloud::download`. The audio itself is downloaded by yt-dlp, like every
 //! other platform.
 
 use regex::Regex;
+pub mod search;
+pub mod download;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;

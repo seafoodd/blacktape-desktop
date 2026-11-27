@@ -466,7 +466,7 @@ impl DownloadContext {
 
 /// yt-dlp format arguments for SoundCloud: progressive MP3 when SoundCloud still offers
 /// it, else the best HLS stream (usually AAC 160k). Go+ previews are filtered out in
-/// `download::soundcloud` before a track gets here.
+/// `crate::platforms::soundcloud::download` before a track gets here.
 pub fn soundcloud_format_args() -> Vec<String> {
     [
         "-f",

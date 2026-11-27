@@ -50,7 +50,6 @@ pub(crate) mod cache;
 mod cache_tests;
 
 pub mod bandcamp;
-pub mod soundcloud;
 pub mod bandcamp_full;
 pub mod full;
 pub mod progress;

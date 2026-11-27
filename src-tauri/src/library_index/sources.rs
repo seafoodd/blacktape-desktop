@@ -3,7 +3,7 @@
 
 use crate::db::album_sources::{AlbumSourceRow, NewAlbumSource, SongSourceRef};
 use crate::download::album_preview::{build_preview, AlbumPreview, AlbumTrackInfo};
-use crate::download::soundcloud::SkippedTrack;
+use crate::platforms::soundcloud::download::SkippedTrack;
 use crate::download::AlbumDownload;
 use crate::library_index::normalize::normalize_url_key;
 use crate::library_index::status::{platform_from_str, platform_to_str, LibraryIndex};

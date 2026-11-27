@@ -2,7 +2,7 @@
 //! downloading. Built on the same parsers the download uses (`parse_album`), so what is listed is what gets
 //! downloaded (`process_album_url` can download a subset of these tracks by url).
 
-use super::soundcloud::SkippedTrack;
+use crate::platforms::soundcloud::download::SkippedTrack;
 use super::AlbumDownload;
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};

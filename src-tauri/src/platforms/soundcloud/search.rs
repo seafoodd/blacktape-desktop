@@ -6,7 +6,7 @@
 use crate::search::ItemType;
 use crate::search::full::ArtistProfile;
 use crate::search::SearchSuggestion;
-use crate::soundcloud::{
+use crate::platforms::soundcloud::{
     self, availability, next_offset_from_href, playlist_artwork, track_artwork, year_from_dates,
     Availability, ScCollection, ScPlaylist, ScTrack, ScUser,
 };
@@ -51,7 +51,7 @@ pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error 
     search_outcome(query).await.map(|result| result.items)
 }
 
-pub async fn search_outcome(query: &str) -> Result<super::SourceResults, Box<dyn Error + Send + Sync>> {
+pub async fn search_outcome(query: &str) -> Result<crate::search::SourceResults, Box<dyn Error + Send + Sync>> {
     let (tracks, sets, users) = tokio::join!(
         search_kind(query, SearchKind::Tracks, DROPDOWN_TRACKS, 0),
         search_kind(query, SearchKind::Sets, DROPDOWN_SETS, 0),
@@ -73,7 +73,7 @@ pub async fn search_outcome(query: &str) -> Result<super::SourceResults, Box<dyn
     for e in errors {
         tracing::warn!("SoundCloud search partial failure: {e}");
     }
-    Ok(super::SourceResults { items, complete })
+    Ok(crate::search::SourceResults { items, complete })
 }
 
 /// One page of one result kind. `offset` comes from a previous page's `next_offset`.
@@ -361,13 +361,13 @@ mod tests {
     use super::*;
 
     fn user() -> ScUser {
-        serde_json::from_str(include_str!("../../fixtures/soundcloud/user_forss.json")).unwrap()
+        serde_json::from_str(include_str!("fixtures/user_forss.json")).unwrap()
     }
 
     /// The fixture track is fully downloadable; clones get their own play count and url.
     fn track_with_plays(i: usize, plays: u64) -> ScTrack {
         let mut track: ScTrack =
-            serde_json::from_str(include_str!("../../fixtures/soundcloud/track_flickermood.json"))
+            serde_json::from_str(include_str!("fixtures/track_flickermood.json"))
                 .unwrap();
         track.id += i as u64;
         track.playback_count = Some(plays);

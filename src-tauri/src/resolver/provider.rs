@@ -211,7 +211,7 @@ pub async fn resolve_soundcloud_candidates(
     duration_ms: u64,
 ) -> Result<Vec<AudioCandidate>, String> {
     let query = format!("{} {}", artist, title);
-    let search_res = crate::search::soundcloud::search_kind(&query, crate::search::soundcloud::SearchKind::Tracks, 50, 0).await.map(|page| page.items);
+    let search_res = crate::platforms::soundcloud::search::search_kind(&query, crate::platforms::soundcloud::search::SearchKind::Tracks, 50, 0).await.map(|page| page.items);
 
     let suggestions = match search_res {
         Ok(s) => s,
@@ -349,7 +349,7 @@ pub async fn resolve_soundcloud_album_tracks(
     album_title: &str,
 ) -> Result<Vec<crate::download::TrackDownload>, String> {
     let query = format!("{} {}", artist, album_title);
-    let search_res = crate::search::soundcloud::search_kind(&query, crate::search::soundcloud::SearchKind::Sets, 50, 0).await.map(|page| page.items);
+    let search_res = crate::platforms::soundcloud::search::search_kind(&query, crate::platforms::soundcloud::search::SearchKind::Sets, 50, 0).await.map(|page| page.items);
     let suggestions = match search_res {
         Ok(s) => s,
         Err(error) => return Err(error.to_string()),
@@ -361,7 +361,7 @@ pub async fn resolve_soundcloud_album_tracks(
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
             {
-                let (album_download, _) = crate::download::soundcloud::parse_album_with_skipped(&item.item_url_path).await.map_err(|error| error.to_string())?;
+                let (album_download, _) = crate::platforms::soundcloud::download::parse_album_with_skipped(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from SoundCloud album '{}'",
                     album_download.tracks.len(),
@@ -390,7 +390,7 @@ pub async fn find_platform_album_editions(
 
     let yt_fut = tokio::time::timeout(timeout, crate::search::youtube_fast::search(&query));
     let bc_fut = tokio::time::timeout(timeout, crate::search::bandcamp::search(&query));
-    let sc_fut = tokio::time::timeout(timeout, crate::search::soundcloud::search(&query));
+    let sc_fut = tokio::time::timeout(timeout, crate::platforms::soundcloud::search::search(&query));
 
     let (yt_res, bc_res, sc_res) = tokio::join!(yt_fut, bc_fut, sc_fut);
 
