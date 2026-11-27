@@ -13,7 +13,7 @@ use regex::Regex;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 pub const API_BASE: &str = "https://api-v2.soundcloud.com";
@@ -23,7 +23,7 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 /// `/tracks?ids=` accepts at most 50 ids per request.
 const TRACK_IDS_CHUNK: usize = 50;
 
-static CLIENT_ID: RwLock<Option<String>> = RwLock::new(None);
+static CLIENT_ID: LazyLock<tokio::sync::Mutex<Option<String>>> = LazyLock::new(|| tokio::sync::Mutex::new(None));
 
 #[cfg(test)]
 mod security_tests;
@@ -488,17 +488,15 @@ fn http() -> Result<&'static Client, String> {
 }
 
 async fn fetch_text(url: &str) -> Result<String, String> {
-    let resp = http()?
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("SoundCloud request failed: {}", e.without_url()))?;
-    if !resp.status().is_success() {
-        return Err(format!("SoundCloud returned {}", resp.status()));
-    }
-    resp.text()
-        .await
-        .map_err(|e| format!("SoundCloud response could not be read: {}", e.without_url()))
+    use crate::platforms::http::{backoff, retrying_for, Failure};
+    let url = crate::platforms::http::checked_public_url(url)?;
+    retrying_for(Duration::from_secs(10), 2, backoff, || async {
+        let response = http().map_err(Failure::fatal)?.get(url.clone()).send().await?;
+        if !response.status().is_success() {
+            return Err(Failure::from_response(&response));
+        }
+        response.text().await.map_err(Failure::from)
+    }).await
 }
 
 /// Reads a fresh `client_id` from soundcloud.com: hydration block first, then the app
@@ -518,18 +516,29 @@ async fn fetch_client_id() -> Result<String, String> {
     Err("Could not obtain a SoundCloud client id (the web app layout may have changed).".into())
 }
 
-async fn client_id(force_refresh: bool) -> Result<String, String> {
-    if !force_refresh {
-        if let Some(id) = CLIENT_ID.read().ok().and_then(|g| g.clone()) {
-            return Ok(id);
+async fn shared_client_id<F, Fut>(
+    cache: &tokio::sync::Mutex<Option<String>>,
+    rejected: Option<&str>,
+    fetch: F,
+) -> Result<String, String>
+where F: FnOnce() -> Fut, Fut: std::future::Future<Output = Result<String, String>> {
+    let mut guard = cache.lock().await;
+    if let Some(id) = guard.as_ref() {
+        if rejected != Some(id.as_str()) {
+            return Ok(id.clone());
         }
     }
-    let id = fetch_client_id().await?;
-    if let Ok(mut guard) = CLIENT_ID.write() {
-        *guard = Some(id.clone());
-    }
+    let id = fetch().await?;
+    *guard = Some(id.clone());
     Ok(id)
 }
+
+async fn client_id(rejected: Option<&str>) -> Result<String, String> {
+    shared_client_id(&CLIENT_ID, rejected, fetch_client_id).await
+}
+
+#[cfg(test)]
+mod client_id_tests;
 
 /// GET an api-v2 endpoint (`path` may be relative to [`API_BASE`] or a full api-v2 URL,
 /// e.g. a `next_href`). Retries once with a fresh client id on 401/403.
@@ -541,32 +550,38 @@ pub async fn api_get<T: DeserializeOwned>(path: &str, params: &[(&str, String)])
     };
     checked_api_url(&base)?;
 
-    let mut refreshed = false;
-    loop {
-        let id = client_id(refreshed).await?;
-        let url = build_api_url(&base, params, &id)?;
-        let resp = http()?
-            .get(url)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("SoundCloud request failed: {}", e.without_url()))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            let body = resp
-                .text()
-                .await
-                .map_err(|e| format!("SoundCloud response could not be read: {}", e.without_url()))?;
-            return serde_json::from_str(&body)
-                .map_err(|_| "Unexpected SoundCloud response".into());
+    use crate::platforms::http::{backoff, retrying_for, Failure};
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut id = client_id(None).await?;
+        let mut refreshed = false;
+        loop {
+            let (status, value) = retrying_for(Duration::from_secs(10), 2, backoff, || async {
+                let url = build_api_url(&base, params, &id).map_err(Failure::fatal)?;
+                let response = http().map_err(Failure::fatal)?.get(url)
+                    .header("Accept", "application/json").send().await?;
+                let status = response.status();
+                if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                    return Ok((status, None));
+                }
+                if !status.is_success() {
+                    let mut failure = Failure::from_response(&response);
+                    failure.message = describe_status(status);
+                    return Err(failure);
+                }
+                let body = response.text().await?;
+                let value = serde_json::from_str::<T>(&body)
+                    .map_err(|_| Failure::fatal("Unexpected SoundCloud response"))?;
+                Ok((status, Some(value)))
+            }).await?;
+            if let Some(value) = value { return Ok(value); }
+            if !refreshed {
+                id = client_id(Some(&id)).await?;
+                refreshed = true;
+            } else {
+                return Err(describe_status(status));
+            }
         }
-        if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) && !refreshed {
-            refreshed = true;
-            continue;
-        }
-        return Err(describe_status(status));
-    }
+    }).await.map_err(|_| "SoundCloud request timed out".to_string())?
 }
 
 /// Adds `params` and `client_id` to `base`. Parameters already in `base` (a `next_href`
