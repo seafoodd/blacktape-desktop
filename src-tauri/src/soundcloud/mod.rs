@@ -25,6 +25,9 @@ const TRACK_IDS_CHUNK: usize = 50;
 
 static CLIENT_ID: RwLock<Option<String>> = RwLock::new(None);
 
+#[cfg(test)]
+mod security_tests;
+
 // ---------------------------------------------------------------------------------------
 // API models (only the fields we use; everything is optional because api-v2 omits fields
 // freely, and set track lists contain "stub" tracks that carry only an id).
@@ -459,29 +462,43 @@ pub fn extract_client_id_from_bundle(js: &str) -> Option<String> {
 // Network
 // ---------------------------------------------------------------------------------------
 
-fn http() -> &'static Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
+fn http() -> Result<&'static Client, String> {
+    static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
     CLIENT.get_or_init(|| {
         Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                let from_api = attempt.previous().first()
+                    .is_some_and(|url| url.host_str() == Some("api-v2.soundcloud.com"));
+                let permitted = if from_api {
+                    checked_api_url(attempt.url().as_str()).is_ok()
+                } else {
+                    crate::platforms::http::checked_public_url(attempt.url().as_str()).is_ok()
+                };
+                if permitted && attempt.previous().len() < 5 {
+                    attempt.follow()
+                } else {
+                    attempt.error("SoundCloud redirect is not allowed")
+                }
+            }))
             .build()
-            .unwrap_or_default()
-    })
+            .map_err(|error| error.without_url().to_string())
+    }).as_ref().map_err(Clone::clone)
 }
 
 async fn fetch_text(url: &str) -> Result<String, String> {
-    let resp = http()
+    let resp = http()?
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("SoundCloud request failed: {e}"))?;
+        .map_err(|e| format!("SoundCloud request failed: {}", e.without_url()))?;
     if !resp.status().is_success() {
-        return Err(format!("SoundCloud returned {} for {url}", resp.status()));
+        return Err(format!("SoundCloud returned {}", resp.status()));
     }
     resp.text()
         .await
-        .map_err(|e| format!("SoundCloud response could not be read: {e}"))
+        .map_err(|e| format!("SoundCloud response could not be read: {}", e.without_url()))
 }
 
 /// Reads a fresh `client_id` from soundcloud.com: hydration block first, then the app
@@ -517,31 +534,32 @@ async fn client_id(force_refresh: bool) -> Result<String, String> {
 /// GET an api-v2 endpoint (`path` may be relative to [`API_BASE`] or a full api-v2 URL,
 /// e.g. a `next_href`). Retries once with a fresh client id on 401/403.
 pub async fn api_get<T: DeserializeOwned>(path: &str, params: &[(&str, String)]) -> Result<T, String> {
-    let base = if path.starts_with("http") {
-        path.to_string()
-    } else {
+    let base = if path.starts_with('/') {
         format!("{API_BASE}{path}")
+    } else {
+        path.to_string()
     };
+    checked_api_url(&base)?;
 
     let mut refreshed = false;
     loop {
         let id = client_id(refreshed).await?;
         let url = build_api_url(&base, params, &id)?;
-        let resp = http()
+        let resp = http()?
             .get(url)
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| format!("SoundCloud request failed: {e}"))?;
+            .map_err(|e| format!("SoundCloud request failed: {}", e.without_url()))?;
 
         let status = resp.status();
         if status.is_success() {
             let body = resp
                 .text()
                 .await
-                .map_err(|e| format!("SoundCloud response could not be read: {e}"))?;
+                .map_err(|e| format!("SoundCloud response could not be read: {}", e.without_url()))?;
             return serde_json::from_str(&body)
-                .map_err(|e| format!("Unexpected SoundCloud response ({e})"));
+                .map_err(|_| "Unexpected SoundCloud response".into());
         }
         if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) && !refreshed {
             refreshed = true;
@@ -553,8 +571,17 @@ pub async fn api_get<T: DeserializeOwned>(path: &str, params: &[(&str, String)])
 
 /// Adds `params` and `client_id` to `base`. Parameters already in `base` (a `next_href`
 /// carries `q`, `offset`, …) are replaced, and any stale `client_id` is dropped.
+fn checked_api_url(raw: &str) -> Result<url::Url, String> {
+    let url = url::Url::parse(raw).map_err(|_| "Invalid SoundCloud API URL".to_string())?;
+    if url.scheme() != "https" || url.host_str() != Some("api-v2.soundcloud.com")
+        || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return Err("SoundCloud API URL is not allowed".into());
+    }
+    Ok(url)
+}
+
 pub fn build_api_url(base: &str, params: &[(&str, String)], client_id: &str) -> Result<url::Url, String> {
-    let mut url = url::Url::parse(base).map_err(|e| format!("Bad SoundCloud URL {base}: {e}"))?;
+    let mut url = checked_api_url(base)?;
     let kept: Vec<(String, String)> = url
         .query_pairs()
         .filter(|(k, _)| k != "client_id" && !params.iter().any(|(p, _)| p == k))

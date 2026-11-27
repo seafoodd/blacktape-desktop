@@ -195,12 +195,12 @@ pub(crate) async fn resolve_soundcloud(url: &str) -> Result<StreamInfo, String> 
         .get(&location.url)
         .send()
         .await
-        .map_err(|e| format!("SoundCloud playlist request failed: {e}"))?
+        .map_err(|e| format!("SoundCloud playlist request failed: {}", e.without_url()))?
         .error_for_status()
-        .map_err(|e| format!("SoundCloud playlist request failed: {e}"))?
+        .map_err(|e| format!("SoundCloud playlist request failed: {}", e.without_url()))?
         .text()
         .await
-        .map_err(|e| format!("SoundCloud playlist could not be read: {e}"))?;
+        .map_err(|e| format!("SoundCloud playlist could not be read: {}", e.without_url()))?;
     let playlist = parse_hls_playlist(&text, &location.url)?;
     if playlist.encrypted {
         return Err("this SoundCloud stream is encrypted".to_string());
