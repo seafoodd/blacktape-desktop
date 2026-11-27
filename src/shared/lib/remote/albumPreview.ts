@@ -12,6 +12,7 @@ import { formatTotalDuration, formatTrackDuration } from "@/shared/lib/library/t
 import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import type { Platform } from "@/shared/types.ts";
+import { platformForUrl } from "@/shared/lib/remote/platforms.ts";
 import type { AudioCandidate, ReleaseEditionOption } from "@/shared/types/canonical.ts";
 
 export interface AlbumTrackInfo {
@@ -125,14 +126,8 @@ export function estimatedPlatformQuality(
   preview: Pick<AlbumPreview, "platform" | "metadata_source" | "is_free_download">,
   trackUrl: string,
 ): EstimatedTrackQuality {
-  const urlLower = trackUrl.toLowerCase();
-  let plat = String(preview.platform).toLowerCase();
-  if (urlLower.includes("bandcamp.com")) plat = "bandcamp";
-  else if (urlLower.includes("soundcloud.com")) plat = "soundcloud";
-  else if (urlLower.includes("youtube.com") || urlLower.includes("youtu.be")) plat = "youtube";
-  else if ((preview.metadata_source ?? "").toLowerCase() === "musicbrainz") {
-    plat = "youtube";
-  }
+  const fallback = (preview.metadata_source ?? "").toLowerCase() === "musicbrainz" ? "youtube" : preview.platform;
+  const plat = platformForUrl(trackUrl, fallback);
 
   if (plat === "bandcamp") {
     return preview.is_free_download
@@ -310,10 +305,8 @@ export function platformForTrackUrl(
   fallback: Platform,
   track?: Pick<AlbumTrackInfo, "candidates" | "selected_candidate_idx">,
 ): Platform {
-  const lower = url.toLowerCase();
-  if (lower.includes("bandcamp.com")) return "bandcamp";
-  if (lower.includes("soundcloud.com")) return "soundcloud";
-  if (lower.includes("youtube.com") || lower.includes("youtu.be")) return "youtube";
+  const detected = platformForUrl(url, "local");
+  if (detected !== "local") return detected;
   if (track) {
     const selected = selectedTrackCandidate(track);
     if (selected?.source.kind === "http_stream") {
