@@ -1,13 +1,13 @@
 //! What each search source is doing, reported while a search runs so the UI can show it.
 //! Mirrored in `src/shared/lib/search/searchProgress.ts`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Youtube,

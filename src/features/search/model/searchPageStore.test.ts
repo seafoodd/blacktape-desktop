@@ -479,7 +479,7 @@ describe("loadMore", () => {
     });
     store().open("daft punk");
     await flush();
-    expect(section(ItemType.Track).warnings).toEqual(["A"]);
+    expect(section(ItemType.Track).warnings).toEqual(["Bandcamp: A"]);
 
     searchFullMock.mockResolvedValueOnce(
       page([item({ name: "t2" })], {
@@ -491,7 +491,7 @@ describe("loadMore", () => {
     );
     await store().loadMore(ItemType.Track);
 
-    expect(section(ItemType.Track).warnings).toEqual(["A", "B"]);
+    expect(section(ItemType.Track).warnings).toEqual(["Bandcamp: A", "B"]);
     expect(section(ItemType.Track).items).toHaveLength(2);
   });
 

@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ItemType, SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import type { Platform } from "@/shared/types.ts";
+import type { SearchSource } from "@/shared/lib/search/searchProgress.ts";
 
 /** Kind of a `search_full` request. Same strings as the Rust `SearchKind` / `ItemType` enum values. */
 export type SearchKind = ItemType.Track | ItemType.Album | ItemType.Artist;
@@ -19,6 +20,7 @@ export interface SearchCursor {
 
 export interface PlatformWarning {
   platform: Platform;
+  source?: SearchSource;
   message: string;
 }
 

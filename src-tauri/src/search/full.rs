@@ -57,6 +57,8 @@ pub struct SearchCursor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlatformWarning {
     pub platform: Platform,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     pub message: String,
 }
 
@@ -203,6 +205,7 @@ pub async fn search_full_with_partial(
         // "Show more": one continuation request per platform that has a cursor. Bandcamp has no paging (D9).
         let token = cursor
             .youtube
+            .clone()
             .filter(|token| want_youtube && !token.is_empty());
         let offset = cursor.soundcloud.filter(|_| want_soundcloud);
         if token.is_none() && offset.is_none() {
@@ -227,7 +230,9 @@ pub async fn search_full_with_partial(
             }
         };
         let (youtube, soundcloud) = tokio::join!(youtube, soundcloud);
-        return assemble_platforms(query, youtube, None, soundcloud);
+        let mut page = assemble_platforms(query, youtube, None, soundcloud)?;
+        retain_failed_cursors(&mut page, &cursor);
+        return Ok(page);
     }
 
     let clean_q_tokens: Vec<String> = {
@@ -307,7 +312,7 @@ fn assemble_sources(query: &str, outcomes: &[(Source, Result<Fetched, String>)])
     let items = canonical.as_ref().and_then(|r| r.as_ref().ok()).map(|p| p.items.clone()).unwrap_or_default();
     let mut page = assemble_with_canonical(query, outcome(Source::Youtube), outcome(Source::Bandcamp), outcome(Source::Soundcloud), items)?;
     if let Some(Err(message)) = canonical {
-        page.warnings.push(PlatformWarning { platform: Platform::Youtube, message: format!("MusicBrainz: {message}") });
+        page.warnings.push(PlatformWarning { platform: Platform::Youtube, source: Some(Source::Musicbrainz), message: format!("MusicBrainz: {message}") });
     }
     Ok(page)
 }
@@ -315,6 +320,23 @@ fn assemble_sources(query: &str, outcomes: &[(Source, Result<Fetched, String>)])
 #[cfg(test)]
 #[path = "full_partial_tests.rs"]
 mod partial_tests;
+
+fn retain_failed_cursors(page: &mut FullSearchPage, previous: &SearchCursor) {
+    let mut cursor = page.next_cursor.clone().unwrap_or_default();
+    for warning in &page.warnings {
+        match warning.platform {
+            Platform::Youtube if warning.source != Some(Source::Musicbrainz) => cursor.youtube = previous.youtube.clone(),
+            Platform::Soundcloud => cursor.soundcloud = previous.soundcloud,
+            _ => {}
+        }
+    }
+    page.has_more = cursor.youtube.is_some() || cursor.soundcloud.is_some();
+    page.next_cursor = page.has_more.then_some(cursor);
+}
+
+#[cfg(test)]
+#[path = "full_cursor_tests.rs"]
+mod cursor_tests;
 
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
 async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
@@ -438,12 +460,12 @@ pub(crate) fn assemble_with_canonical(
                     _ => {}
                 }
                 if let Some(message) = fetched.warning {
-                    warnings.push(PlatformWarning { platform, message });
+                    warnings.push(PlatformWarning { platform, source: None, message });
                 }
             }
             Err(message) => {
                 failures.push(format!("{}: {message}", platform_name(platform)));
-                warnings.push(PlatformWarning { platform, message });
+                warnings.push(PlatformWarning { platform, source: None, message });
             }
         }
     }

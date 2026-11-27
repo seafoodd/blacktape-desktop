@@ -158,7 +158,11 @@ const idleProfile = (): ProfileState => ({
   data: null,
 });
 
-function formatSearchError(raw: string): string {
+function formatSearchError(raw: string, source?: string): string {
+  if (source && source !== "youtube") {
+    const label = source === "musicbrainz" ? "MusicBrainz" : source === "soundcloud" ? "SoundCloud" : "Bandcamp";
+    return raw.startsWith(label) ? raw : `${label}: ${raw}`;
+  }
   const lower = raw.toLowerCase();
   if (
     lower.includes("rate limit") ||
@@ -253,7 +257,7 @@ const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
     error: null,
     nextCursor,
     hasMore: Boolean(page.has_more) && nextCursor !== null,
-    warnings: (page.warnings ?? []).map((w) => formatSearchError(w.message)),
+    warnings: (page.warnings ?? []).map((w) => formatSearchError(w.message, w.source ?? w.platform)),
   };
 };
 
@@ -300,7 +304,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
           if (!searchGuard.isLatest(token)) return;
           setSection(kind, {
             items: page.items ?? [], copies: page.copies ?? [],
-            warnings: (page.warnings ?? []).map((warning) => warning.message),
+            warnings: (page.warnings ?? []).map((warning) => formatSearchError(warning.message, warning.source ?? warning.platform)),
           });
         },
       );
