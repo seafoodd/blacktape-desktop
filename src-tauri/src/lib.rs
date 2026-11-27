@@ -190,24 +190,9 @@ async fn get_search_suggestions(
         let q = query.clone();
         let report = report.clone();
         tasks.spawn(async move {
-            use search::progress::{with_deadline, dropdown_deadline, Source};
-            use search::{cache::source_results, SourceResults};
-            match platform {
-                Platform::Bandcamp => {
-                    let request = async { with_deadline(dropdown_deadline(Source::Bandcamp), search::bandcamp::search(&q)).await.map(SourceResults::complete) };
-                    source_results(Source::Bandcamp, &q, &report, request).await.map_err(Into::into)
-                }
-                Platform::Youtube => {
-                    let request = search::search_youtube_with_fallback(&q);
-                    let request = async { with_deadline(dropdown_deadline(Source::Youtube), request).await.map(SourceResults::complete) };
-                    source_results(Source::Youtube, &q, &report, request).await.map_err(Into::into)
-                }
-                Platform::Soundcloud => {
-                    let request = with_deadline(dropdown_deadline(Source::Soundcloud), search::soundcloud::search_outcome(&q));
-                    source_results(Source::Soundcloud, &q, &report, request).await.map_err(Into::into)
-                }
-                _ => Ok(Vec::new()),
-            }
+            use search::progress::{with_deadline, dropdown_deadline};
+            let request = with_deadline(dropdown_deadline(source), crate::platforms::search_dropdown(platform, &q));
+            search::cache::source_results(source, &q, &report, request).await.map_err(Into::into)
         });
     }
 

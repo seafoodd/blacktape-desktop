@@ -1,6 +1,5 @@
 use super::source_selection::{candidate_improves_local, pick_candidate_entry_for_tier};
-use super::youtube;
-use super::{bandcamp, soundcloud, ytdlp};
+use super::{soundcloud, ytdlp};
 use crate::db::db::Database;
 use crate::download::soundcloud::SkippedTrack;
 use crate::download::types::{
@@ -797,21 +796,12 @@ pub async fn process_album_url(
             external_cover_url: canonical.cover_url,
         }
     } else {
-        match platform {
-            Platform::Bandcamp => bandcamp::parse_album(url).await?,
-            Platform::Youtube => youtube::parse_album(url).await?,
-            Platform::Soundcloud => {
-                let (album, skipped) = soundcloud::parse_album_with_skipped(url).await?;
-                if !skipped.is_empty() {
-                    skipped_note = Some(soundcloud::describe_skipped(&skipped));
-                }
-                skipped_tracks = skipped;
-                album
-            }
-            Platform::Local => {
-                return Err("Local files cannot be processed via remote URL pipelines.".into());
-            }
+        let (album, skipped, _) = crate::platforms::album_metadata(platform, url).await?;
+        if !skipped.is_empty() {
+            skipped_note = Some(soundcloud::describe_skipped(&skipped));
         }
+        skipped_tracks = skipped;
+        album
     };
 
     let selected_positions = (!is_upgrade).then(|| selected.map(|urls|

@@ -88,12 +88,7 @@ pub async fn resolve(app: &AppHandle, platform: Platform, url: &str) -> Result<S
             return Ok(info.clone());
         }
     }
-    let info = match platform {
-        Platform::Soundcloud => resolve_soundcloud(url).await?,
-        Platform::Bandcamp => resolve_bandcamp(url).await?,
-        Platform::Youtube => resolve_youtube(app, url).await?,
-        Platform::Local => return Err("local files are already playable".to_string()),
-    };
+    let info = crate::platforms::stream(app, platform, url).await?;
     *guard = Some((info.clone(), Instant::now()));
     Ok(info)
 }
@@ -373,7 +368,7 @@ pub fn wait_before_open(info: &StreamInfo, now_unix: f64) -> Duration {
     }
 }
 
-async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
+pub(crate) async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
     // Only a web address reaches yt-dlp (also through the pre-started process's stdin).
     let url = crate::download::ytdlp::checked_url(url)?;
     // 1. Fast path: the pre-started yt-dlp process (interpreter already loaded) with the fast client.

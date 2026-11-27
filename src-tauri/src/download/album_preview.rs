@@ -3,7 +3,7 @@
 //! downloaded (`process_album_url` can download a subset of these tracks by url).
 
 use super::soundcloud::SkippedTrack;
-use super::{bandcamp, soundcloud, youtube, AlbumDownload};
+use super::AlbumDownload;
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 
@@ -141,30 +141,14 @@ pub fn total_duration(rows: &[AlbumTrackInfo]) -> Option<u64> {
 
 /// Fetches the preview of the album/set at `url`.
 pub async fn album_preview(platform: Platform, url: &str) -> Result<AlbumPreview, String> {
-    let (album, skipped, is_free_download) = match platform {
-        Platform::Bandcamp => match bandcamp::parse_album_with_free_flag(url).await {
-            Ok((res, is_free)) => (res, Vec::new(), is_free),
-            Err(e) => {
-                crate::telemetry::report_parser_failure("bandcamp", "album_preview", &e);
-                return Err(e);
-            }
-        },
-        Platform::Youtube => match youtube::parse_album(url).await {
-            Ok(res) => (res, Vec::new(), false),
-            Err(e) => {
-                crate::telemetry::report_parser_failure("youtube", "album_preview", &e);
-                return Err(e);
-            }
-        },
-        Platform::Soundcloud => match soundcloud::parse_album_with_skipped(url).await {
-            Ok((res, skipped)) => (res, skipped, false),
-            Err(e) => {
-                crate::telemetry::report_parser_failure("soundcloud", "album_preview", &e);
-                return Err(e);
-            }
-        },
-        Platform::Local => return Err("Local albums have no preview.".to_string()),
-    };
+    let (album, skipped, is_free_download) = crate::platforms::album_metadata(platform, url).await.map_err(|error| {
+        let source = match platform {
+            Platform::Bandcamp => "bandcamp", Platform::Youtube => "youtube",
+            Platform::Soundcloud => "soundcloud", Platform::Local => "local",
+        };
+        crate::telemetry::report_parser_failure(source, "album_preview", &error);
+        error
+    })?;
     let mut preview = build_preview(platform, url, album, &skipped);
     preview.is_free_download = is_free_download;
     Ok(preview)

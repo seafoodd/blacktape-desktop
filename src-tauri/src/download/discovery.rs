@@ -32,19 +32,18 @@ async fn stream_matches(
     tracks: &[ExpectedTrackInput],
     mut publish: impl FnMut(StreamMatch),
 ) {
-    use resolver::provider::*;
-
     let mut tasks = JoinSet::new();
     for platform in [Platform::Youtube, Platform::Bandcamp, Platform::Soundcloud] {
         if tracks.len() > 3 && !album.is_empty() {
             let (artist, album, tracks) = (artist.to_owned(), album.to_owned(), tracks.to_vec());
             tasks.spawn(async move {
                 let mut sources = AlbumPlatformTracks { complete: false, yt: vec![], bc: vec![], bc_free: false, sc: vec![] };
+                let (resolved, free) = crate::platforms::album_tracks(platform, &artist, &album).await.unwrap_or_default();
                 match platform {
-                    Platform::Youtube => sources.yt = resolve_youtube_album_tracks(&artist, &album).await.unwrap_or_default(),
-                    Platform::Bandcamp => (sources.bc, sources.bc_free) = resolve_bandcamp_album_tracks(&artist, &album).await.unwrap_or_default(),
-                    Platform::Soundcloud => sources.sc = resolve_soundcloud_album_tracks(&artist, &album).await.unwrap_or_default(),
-                    Platform::Local => unreachable!(),
+                    Platform::Youtube => sources.yt = resolved,
+                    Platform::Bandcamp => { sources.bc = resolved; sources.bc_free = free; }
+                    Platform::Soundcloud => sources.sc = resolved,
+                    Platform::Local => return Vec::new(),
                 }
                 tracks.into_iter().map(|track| {
                     let candidates = resolver::match_album_platform_candidates(
@@ -61,12 +60,7 @@ async fn stream_matches(
             let track = track.clone();
             tasks.spawn(async move {
                 let length = track.duration_ms.unwrap_or(0);
-                let candidates = match platform {
-                    Platform::Youtube => resolve_youtube_candidates(&artist, &track.title, length).await,
-                    Platform::Bandcamp => resolve_bandcamp_candidates(&artist, &track.title, length).await,
-                    Platform::Soundcloud => resolve_soundcloud_candidates(&artist, &track.title, length).await,
-                    Platform::Local => unreachable!(),
-                }.unwrap_or_default();
+                let candidates = crate::platforms::track_candidates(platform, &artist, &track.title, length).await.unwrap_or_default();
                 vec![StreamMatch { index: track.index, candidates }]
             });
         }
