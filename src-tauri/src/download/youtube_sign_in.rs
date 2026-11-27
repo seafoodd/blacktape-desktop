@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, EventId, Listener, Manager, WebviewWindow};
 const REQUEST: &str = "download-youtube-sign-in-required";
 const RESPONSE: &str = "download-youtube-sign-in-response";
 const CLOSED: &str = "download-youtube-sign-in-dismissed";
-const PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
+const PROMPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub(super) const CANCELLED: &str = "YouTube sign-in was cancelled.";
 const SKIPPED_SUFFIX: &str = "not in the torrent and not downloaded. Sign in to YouTube in Settings to get such tracks from there.";
 

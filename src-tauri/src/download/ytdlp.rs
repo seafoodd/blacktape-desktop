@@ -494,14 +494,17 @@ async fn download_track_internal(
     track_num: usize,
     total_tracks: usize,
 ) -> Option<PathBuf> {
-    if let Err(error) = sign_in_for_url(
+    let _permit = match acquire_download_slot(sign_in_for_url(
         &track.url,
         &ctx.youtube_sign_in,
         super::youtube_sign_in::ensure_session(&ctx.app, &ctx.task_id),
-    ).await {
-        ctx.record_failure(error);
-        return None;
-    }
+    ), http_download_semaphore()).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            ctx.record_failure(error);
+            return None;
+        }
+    };
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
     // `_cookie_copy` deletes this run's cookie file copy when the track is done
     let copy_path = ctx.cookie_copies.join(format!("{}_{}.txt", ctx.session_id, track_num));
@@ -820,7 +823,6 @@ pub async fn download_batch_streaming(
 
     let total_tracks = tracks.len();
     let completed_counter = Arc::new(AtomicUsize::new(0));
-    let semaphore = http_download_semaphore();
 
     struct AbortOnDropSet<T: 'static> {
         inner: tokio::task::JoinSet<T>,
@@ -856,7 +858,6 @@ pub async fn download_batch_streaming(
     let mut join_set = AbortOnDropSet::new();
 
     for (index, track) in tracks.iter().enumerate() {
-        let sem = Arc::clone(&semaphore);
         let completed = Arc::clone(&completed_counter);
         let track = track.clone();
         let app_handle = app.clone();
@@ -870,10 +871,6 @@ pub async fn download_batch_streaming(
                     return None;
                 }
             }
-            let _permit = match sem.acquire().await {
-                Ok(p) => p,
-                Err(_) => return None,
-            };
             if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
                 if registry.is_cancelled(&task_id).await {
                     return None;
@@ -1024,6 +1021,18 @@ where
 #[cfg(test)]
 #[path = "ytdlp_fallback_tests.rs"]
 mod fallback_tests;
+
+async fn acquire_download_slot(
+    sign_in: impl std::future::Future<Output = Result<(), String>>,
+    semaphore: Arc<Semaphore>,
+) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+    sign_in.await?;
+    semaphore.acquire_owned().await.map_err(|_| "Download queue is closed".into())
+}
+
+#[cfg(test)]
+#[path = "ytdlp_slot_tests.rs"]
+mod slot_tests;
 
 fn empty_batch_error(cancelled: bool, reasons: &[String]) -> String {
     if cancelled {
