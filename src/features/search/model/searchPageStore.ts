@@ -40,6 +40,8 @@ import {
   closeProgress,
   type SourceProgress,
   type SourceProgressEvent,
+  type SearchSource,
+  SOURCE_NAMES,
 } from "@/shared/lib/search/searchProgress.ts";
 import {
   createLatestGuard,
@@ -98,6 +100,7 @@ export interface SearchPageState {
   open: (query: string) => void;
   /** Re-run the whole search for the current query (e.g. after an error). */
   retry: () => void;
+  retrySource: (kind: SearchKind, source: SearchSource) => Promise<void>;
   /** "Show more" for one section; no-op unless status is "ready" and hasMore. */
   loadMore: (kind: SearchKind) => Promise<void>;
   setFilters: (patch: Partial<SearchPageFilters>) => void;
@@ -356,6 +359,43 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       const { query } = get();
       if (query.trim() === "") return;
       runSearch(query);
+    },
+
+    retrySource: async (kind, source) => {
+      const state = get();
+      const section = state.sections[kind];
+      if (section.status === "loading" || section.status === "loadingMore" || !section.progress.some((s) => s.source === source && (s.state === "failed" || s.state === "unknown"))) return;
+      const guard = loadMoreGuards[kind];
+      const token = guard.begin();
+      const initialProgress = section.progress.map((s) => s.source === source ? { ...s, state: "waiting" as const, elapsedMs: null, count: null, startedAt: null } : s);
+      setSection(kind, { status: "loadingMore", error: null, progress: initialProgress });
+      try {
+        const page = await searchWithProgress(
+          { query: state.query, kind, platforms: SEARCH_PLATFORMS, sources: [source] },
+          (updates) => {
+            if (!guard.isLatest(token)) return;
+            setSection(kind, { progress: initialProgress.map((entry) => updates.find((u) => u.source === entry.source) ?? entry) });
+          },
+        );
+        if (!guard.isLatest(token)) return;
+        const next = readySection(page);
+        const cursor = { ...section.nextCursor };
+        if (source === "youtube") cursor.youtube = next.nextCursor?.youtube ?? null;
+        if (source === "soundcloud") cursor.soundcloud = next.nextCursor?.soundcloud ?? null;
+        const hasMore = Boolean(cursor.youtube || cursor.soundcloud != null);
+        setSection(kind, {
+          ...next,
+          items: mergePages(section.items, next.items),
+          copies: [...section.copies, ...next.copies],
+          warnings: [...section.warnings.filter((warning) => !warning.includes(SOURCE_NAMES[source])), ...next.warnings],
+          progress: closeProgress(get().sections[kind].progress),
+          nextCursor: hasMore ? cursor : null, hasMore,
+        });
+        if (kind === ItemType.Artist && !state.profile.artist) startProfile(state.query, page.items ?? []);
+      } catch (err) {
+        if (!guard.isLatest(token)) return;
+        setSection(kind, { status: section.items.length ? "ready" : "error", error: errorMessage(err) });
+      }
     },
 
     loadMore: async (kind) => {

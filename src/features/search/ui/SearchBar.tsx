@@ -212,7 +212,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
           onFocus={(e) => e.currentTarget.select()}
         />
 
-        {pulseRun && <SearchPulse run={pulseRun} />}
+        {pulseRun && <SearchPulse run={pulseRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />}
 
         <button
           type="button"
@@ -304,7 +304,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
 
       {showDropdown && !modalOpen && (
         <div className={styles.suggestions}>
-          {progressStyle === "dashboard" && searchRun && <SearchProgress run={searchRun} />}
+          {progressStyle === "dashboard" && searchRun && <SearchProgress run={searchRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />}
           {!showingSkeleton && searchWarning && (
             <div className={styles.warningBanner}>
               <span>{searchWarning}</span>

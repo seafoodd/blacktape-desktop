@@ -5,6 +5,7 @@ import {
   SOURCE_NAMES,
   type SearchRun,
   type SourceProgress,
+  type SearchSource,
 } from "@/shared/lib/search/searchProgress.ts";
 import styles from "./search-progress.module.css";
 
@@ -42,7 +43,7 @@ function describe(source: SourceProgress, now: number): string {
 const keepFocus = (e: MouseEvent) => e.preventDefault();
 
 /** One chip per source: what is being asked, how long it takes and what it found. */
-export const SourceChips = ({ sources }: { sources: SourceProgress[] }) => {
+export const SourceChips = ({ sources, onRetry }: { sources: SourceProgress[]; onRetry?: (source: SearchSource) => void }) => {
   const now = useNow(sources.some((s) => s.state === "running"));
   if (sources.length === 0) return null;
   return (
@@ -52,6 +53,11 @@ export const SourceChips = ({ sources }: { sources: SourceProgress[] }) => {
           <span className={styles.dot} aria-hidden="true" />
           <span className={styles.name}>{SOURCE_NAMES[source.source]}</span>
           <span>{describe(source, now)}</span>
+          {onRetry && (source.state === "failed" || source.state === "unknown") && (
+            <button type="button" className={styles.retry} disabled={sources.some((s) => s.state === "running" || s.state === "waiting")}
+              aria-label={`Retry ${SOURCE_NAMES[source.source]}`} onMouseDown={keepFocus}
+              onClick={() => onRetry(source.source)}>Retry</button>
+          )}
         </li>
       ))}
     </ul>
@@ -62,7 +68,7 @@ export const SourceChips = ({ sources }: { sources: SourceProgress[] }) => {
  * The progress inside the search field: a counter of the sources that have answered, a line with one segment
  * per source under the field, and the timing of each source while the counter is pointed at or focused.
  */
-export const SearchPulse = ({ run }: { run: SearchRun }) => {
+export const SearchPulse = ({ run, onRetry }: { run: SearchRun; onRetry?: (source: SearchSource) => void }) => {
   const now = useNow(run.finishedAt === null);
   const total = formatElapsed((run.finishedAt ?? now) - run.startedAt);
   const answered = run.sources.filter((s) => s.state !== "waiting" && s.state !== "running").length;
@@ -88,7 +94,7 @@ export const SearchPulse = ({ run }: { run: SearchRun }) => {
           <p className={styles.summary}>
             {run.cached ? "Saved results, nothing was requested" : `“${run.query}”`}
           </p>
-          <SourceChips sources={run.sources} />
+          <SourceChips sources={run.sources} onRetry={onRetry} />
         </div>
       </div>
       <div className={styles.line} aria-hidden="true">
@@ -101,7 +107,7 @@ export const SearchPulse = ({ run }: { run: SearchRun }) => {
 };
 
 /** What is being searched for, for how long, and the sources behind it. */
-export const SearchProgress = ({ run }: { run: SearchRun }) => {
+export const SearchProgress = ({ run, onRetry }: { run: SearchRun; onRetry?: (source: SearchSource) => void }) => {
   const now = useNow(run.finishedAt === null);
   const total = formatElapsed((run.finishedAt ?? now) - run.startedAt);
   return (
@@ -113,7 +119,7 @@ export const SearchProgress = ({ run }: { run: SearchRun }) => {
             ? `Searching “${run.query}”… ${total}`
             : `Searched “${run.query}” in ${total}`}
       </p>
-      <SourceChips sources={run.sources} />
+      <SourceChips sources={run.sources} onRetry={onRetry} />
     </div>
   );
 };

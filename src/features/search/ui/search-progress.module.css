@@ -38,6 +38,24 @@
     color: var(--color-text);
 }
 
+.retry {
+    padding: 2px 5px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.retry:hover, .retry:focus-visible {
+    background: var(--color-border);
+}
+
+.retry:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 .dot {
     width: 6px;
     height: 6px;

@@ -65,6 +65,7 @@ export interface ArtistProfile {
 }
 
 export interface SearchFullArgs {
+  sources?: SearchSource[];
   query: string;
   kind: SearchKind;
   platforms: Platform[];
@@ -81,8 +82,9 @@ export const searchFull = ({
   platforms,
   cursor = null,
   requestId,
+  sources,
 }: SearchFullArgs): Promise<FullSearchPage> =>
-  invoke<FullSearchPage>("search_full", { query, kind, platforms, cursor, requestId });
+  invoke<FullSearchPage>("search_full", { query, kind, platforms, cursor, requestId, ...(sources ? { sources } : {}) });
 
 /** Profile of an artist item (`item_url_path` of an Artist `SearchSuggestion`). Rejects when unavailable. */
 export const getArtistProfile = (

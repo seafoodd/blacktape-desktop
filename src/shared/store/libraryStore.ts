@@ -7,6 +7,7 @@ import {
   applyProgress,
   closeProgress,
   type SearchRun,
+  type SearchSource,
   type SourceProgressEvent,
 } from "@/shared/lib/search/searchProgress.ts";
 import { listen } from "@tauri-apps/api/event";
@@ -83,7 +84,8 @@ interface LibraryState {
   /** What the current or last dropdown search asked for and how its sources did. */
   searchRun: SearchRun | null;
   setSearchQuery: (query: string) => void;
-  executeSearch: (query: string, force?: boolean) => Promise<void>;
+  executeSearch: (query: string, force?: boolean, sources?: SearchSource[]) => Promise<void>;
+  retrySearchSource: (source: SearchSource) => Promise<void>;
 
   // Global Filters
   activeCategory: CategoryFilter;
@@ -129,7 +131,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setActivePlatform: (plat) => set({ activePlatform: plat }),
 
   setSearchQuery: (query) => set({ searchQuery: query }),
-  executeSearch: async (query, force = false) => {
+  retrySearchSource: async (source) => {
+    const run = get().searchRun;
+    if (!run || run.finishedAt === null || !run.sources.some((s) => s.source === source && (s.state === "failed" || s.state === "unknown"))) return;
+    await get().executeSearch(run.query, true, [source]);
+  },
+  executeSearch: async (query, force = false, sources) => {
+    const previousRun = get().searchRun;
+    const previousResults = sources ? get().searchResults : [];
+    const mergeResults = (items: SearchSuggestion[]) => sources
+      ? [...new Map([...previousResults, ...items].map((item) => [item.item_url_path, item])).values()]
+      : items;
     const token = searchGuard.begin();
     const trimmedQuery = query.trim().toLowerCase();
     if (!trimmedQuery) {
@@ -145,7 +157,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       startedAt: Date.now(),
       finishedAt: null,
       cached: false,
-      sources: [],
+      sources: sources ? (previousRun?.sources ?? []).map((entry) => sources.includes(entry.source) ? { ...entry, state: "waiting", elapsedMs: null, count: null, startedAt: null } : entry) : [],
     };
     if (!force && searchCache[trimmedQuery] && searchCacheExpires[trimmedQuery] > Date.now()) {
       // The same query again, such as after a typed space, keeps the timings of its search.
@@ -190,15 +202,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             // An event that arrives late must not replace the complete results.
             if (finished || !searchGuard.isLatest(token)) return;
             if (ev.payload.requestId !== token) return;
-            set({ searchResults: ev.payload.results, partialResultsFor: trimmedQuery });
+            set({ searchResults: mergeResults(ev.payload.results), partialResultsFor: trimmedQuery });
           },
         ));
       }
-      const results: SearchSuggestion[] = await searchPlatforms(
+      const found: SearchSuggestion[] = await searchPlatforms(
         trimmedQuery,
         SEARCH_PLATFORMS,
         token,
+        ...(sources ? [sources] as [SearchSource[]] : []),
       );
+      const results = mergeResults(found);
       finished = true;
       const isLatest = searchGuard.isLatest(token);
 

@@ -168,16 +168,25 @@ async fn get_search_suggestions(
     platforms: Vec<Platform>,
     // Marks the events of this call: two calls may search for the same text.
     request_id: u64,
+    sources: Option<Vec<search::progress::Source>>,
 ) -> Vec<SearchSuggestion> {
     use std::sync::atomic::Ordering;
     let seq = LATEST_SUGGESTION_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let mut tasks: JoinSet<Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>>> =
         JoinSet::new();
 
-    let want_canonical = (platforms.contains(&Platform::Youtube) || platforms.len() > 1)
+    let enabled = |source| sources.as_ref().is_none_or(|sources| sources.contains(&source));
+    let want_canonical = enabled(search::progress::Source::Musicbrainz) && (platforms.contains(&Platform::Youtube) || platforms.len() > 1)
         && search::is_long_enough_for_musicbrainz(&query);
     let report = search_progress_events(app.clone(), "search-progress", request_id);
     for platform in platforms {
+        let source = match platform {
+            Platform::Youtube => search::progress::Source::Youtube,
+            Platform::Bandcamp => search::progress::Source::Bandcamp,
+            Platform::Soundcloud => search::progress::Source::Soundcloud,
+            Platform::Local => continue,
+        };
+        if !enabled(source) { continue; }
         let q = query.clone();
         let report = report.clone();
         tasks.spawn(async move {
@@ -274,6 +283,7 @@ async fn search_full(
     cursor: Option<SearchCursor>,
     // Marks the progress events of this call; without it none are sent.
     request_id: Option<u64>,
+    sources: Option<Vec<search::progress::Source>>,
 ) -> Result<FullSearchPage, String> {
     let cache_dir = app.path().app_cache_dir().ok();
     let report = match request_id {
@@ -287,7 +297,7 @@ async fn search_full(
             }));
         }
     };
-    search::full::search_full_with_partial(&query, kind, &platforms, cursor, cache_dir, &report, &partial).await
+    search::full::search_full_scoped(&query, kind, &platforms, cursor, cache_dir, &report, &partial, sources.as_deref()).await
 }
 
 #[command]

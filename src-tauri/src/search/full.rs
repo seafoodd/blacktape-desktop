@@ -193,11 +193,26 @@ pub async fn search_full_with_partial(
     report: &Report,
     partial: &(dyn Fn(FullSearchPage) + Send + Sync),
 ) -> Result<FullSearchPage, String> {
+    search_full_scoped(query, kind, platforms, cursor, cache_dir, report, partial, None).await
+}
+
+pub async fn search_full_scoped(
+    query: &str,
+    kind: SearchKind,
+    platforms: &[Platform],
+    cursor: Option<SearchCursor>,
+    cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+    sources: Option<&[Source]>,
+) -> Result<FullSearchPage, String> {
     let query = query.trim();
-    let want_youtube = platforms.contains(&Platform::Youtube);
-    let want_bandcamp = platforms.contains(&Platform::Bandcamp);
-    let want_soundcloud = platforms.contains(&Platform::Soundcloud);
-    if query.is_empty() || !(want_youtube || want_bandcamp || want_soundcloud) {
+    let enabled = |source| sources.is_none_or(|sources| sources.contains(&source));
+    let want_youtube = platforms.contains(&Platform::Youtube) && enabled(Source::Youtube);
+    let want_bandcamp = platforms.contains(&Platform::Bandcamp) && enabled(Source::Bandcamp);
+    let want_soundcloud = platforms.contains(&Platform::Soundcloud) && enabled(Source::Soundcloud);
+    let want_canonical = kind == SearchKind::Album && (platforms.contains(&Platform::Youtube) || platforms.len() > 1) && enabled(Source::Musicbrainz);
+    if query.is_empty() || !(want_youtube || want_bandcamp || want_soundcloud || want_canonical) {
         return Ok(FullSearchPage::default());
     }
 
@@ -251,7 +266,6 @@ pub async fn search_full_with_partial(
         platform_query_owned.as_str()
     };
 
-    let want_canonical = kind == SearchKind::Album && (want_youtube || platforms.len() > 1);
     let mut jobs = tokio::task::JoinSet::new();
     for (source, wanted) in [(Source::Youtube, want_youtube), (Source::Bandcamp, want_bandcamp), (Source::Soundcloud, want_soundcloud)] {
         if !wanted { continue; }
