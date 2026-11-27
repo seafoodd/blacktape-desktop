@@ -146,7 +146,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     let process_start = Instant::now();
     let mut cmd = Command::new(binary_path);
     prepare_command(&mut cmd, app);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
 
     #[cfg(target_os = "windows")]
     {
@@ -154,7 +154,8 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
         cmd.creation_flags(FLAGS);
     }
 
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let child = cmd.spawn().map_err(|error| error.to_string())?;
+    let output = wait_with_deadline(child, None, Duration::from_secs(60)).await?;
 
     let duration = process_start.elapsed().as_secs_f32();
     tracing::debug!(duration_s = duration, status = %output.status, "yt-dlp process terminated");
@@ -267,6 +268,11 @@ fn linux_ca_bundle(user_set: bool, exists: impl Fn(&Path) -> bool) -> Option<&'s
 /// What every yt-dlp process needs besides its own arguments: the app's JavaScript runtime for YouTube, ffmpeg for
 /// `--extract-audio`, and on Linux the system certificates.
 pub fn prepare_command(cmd: &mut Command, app: &AppHandle) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.as_std_mut().process_group(0);
+    }
     cmd.args(crate::download::deno::runtime_args(app));
     cmd.args(crate::download::ffmpeg::location_args(app));
     if cfg!(target_os = "linux") {
@@ -871,11 +877,6 @@ pub async fn download_batch_streaming(
                     return None;
                 }
             }
-            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
-                if registry.is_cancelled(&task_id).await {
-                    return None;
-                }
-            }
 
             let track_num = index + 1;
             let jitter = (index % 4) * 150 + 50;
@@ -996,6 +997,61 @@ pub async fn download_batch_streaming(
 
     Ok(downloaded)
 }
+
+struct OwnedPreviewProcess(tokio::process::Child);
+
+impl Drop for OwnedPreviewProcess {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            if let Some(pid) = self.0.id() {
+                #[cfg(target_os = "windows")]
+                crate::download::TaskRegistry::kill_pid(pid);
+                #[cfg(unix)]
+                {
+                    // prepare_command gives this child a group of its own.
+                    let _ = std::process::Command::new("kill")
+                        .args(["-KILL", "--", &format!("-{pid}")]).output();
+                }
+                let _ = self.0.start_kill();
+            }
+        }
+    }
+}
+
+async fn read_process_pipe<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        pipe.read_to_end(&mut bytes).await?;
+    }
+    Ok(bytes)
+}
+
+/// One deadline includes stdin and both output pipes. Dropping it stops only the owned process tree.
+pub(crate) async fn wait_with_deadline(
+    child: tokio::process::Child,
+    input: Option<Vec<u8>>,
+    limit: Duration,
+) -> Result<std::process::Output, String> {
+    use tokio::io::AsyncWriteExt;
+    let mut process = OwnedPreviewProcess(child);
+    tokio::time::timeout(limit, async {
+        if let Some(input) = input {
+            let mut stdin = process.0.stdin.take().ok_or("yt-dlp stdin unavailable")?;
+            stdin.write_all(&input).await.map_err(|error| error.to_string())?;
+        }
+        let stdout = process.0.stdout.take();
+        let stderr = process.0.stderr.take();
+        let (status, stdout, stderr) = tokio::try_join!(
+            process.0.wait(), read_process_pipe(stdout), read_process_pipe(stderr)
+        ).map_err(|error| error.to_string())?;
+        Ok(std::process::Output { status, stdout, stderr })
+    }).await.map_err(|_| "yt-dlp timed out after its preview deadline".to_string())?
+}
+
+#[cfg(test)]
+#[path = "ytdlp_deadline_tests.rs"]
+mod deadline_tests;
 
 async fn download_with_fallbacks<F, Fut>(track: &TrackDownload, mut attempt: F) -> Option<(PathBuf, TrackDownload)>
 where

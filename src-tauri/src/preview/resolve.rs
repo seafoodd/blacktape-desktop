@@ -464,7 +464,6 @@ mod spare {
     use std::process::Stdio;
     use std::sync::OnceLock;
     use tauri::AppHandle;
-    use tokio::io::AsyncWriteExt;
     use tokio::process::{Child, Command};
 
     fn slot() -> &'static tokio::sync::Mutex<Option<Child>> {
@@ -531,15 +530,12 @@ mod spare {
     }
 
     /// Hands `url` to a waiting process and returns its stdout.
-    pub async fn feed(mut child: Child, url: &str) -> Result<String, String> {
-        let mut stdin = child.stdin.take().ok_or("yt-dlp stdin unavailable")?;
-        stdin
-            .write_all(format!("{url}
-").as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        drop(stdin); // EOF: yt-dlp starts working
-        let output = child.wait_with_output().await.map_err(|e| e.to_string())?;
+    pub async fn feed(child: Child, url: &str) -> Result<String, String> {
+        let output = crate::download::ytdlp::wait_with_deadline(
+            child,
+            Some(format!("{url}\n").into_bytes()),
+            std::time::Duration::from_secs(60),
+        ).await?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
