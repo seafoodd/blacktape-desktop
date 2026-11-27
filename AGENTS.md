@@ -17,6 +17,11 @@ For larger changes, have a separate reviewer (a subagent or `superpowers:request
 
 ## Bugs
 
+- Keep a download visible and retryable when its cancellation command fails. Prefer a running task over completed history when matching a download control to a URL.
+
+- A transfer reaching 100% is complete only after its library save succeeds. Derive task success from confirmed saves and preserve individual failures in the frontend.
+- Subscribe to download events before loading the active-task snapshot. Buffer events during recovery and replay them after the snapshot so final outcomes cannot be missed.
+
 Every bug that is fixed gets a test that fails without the fix. If the bug came from a missing rule, add the rule here.
 
 ## Security

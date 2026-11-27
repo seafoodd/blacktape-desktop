@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useMemo, useState } from "react";
 import styles from "@/layouts/left-sidebar.module.css";
 import { AiOutlineSearch } from "react-icons/ai";
@@ -26,7 +27,8 @@ interface DownloadingArtistGroup {
 }
 
 export const Library = ({ className }: LibraryProps) => {
-  const { tabs, selectedTab, setSelectedTab, activeDownloads, cancelDownload } =
+  const { activeDownloads, cancelDownload } = useDownloadStore();
+  const { tabs, selectedTab, setSelectedTab } =
     useLibraryStore();
   const { unselectPlaylist } = usePlaylistStore();
   const { openModal } = useModalStore();
@@ -116,10 +118,9 @@ export const Library = ({ className }: LibraryProps) => {
       <CancelDownloadModal
         title={title}
         artist={artistGroup.artistName}
-        onConfirm={() => {
-          for (const d of artistGroup.downloads) {
-            cancelDownload(d.id);
-          }
+        taskCount={artistGroup.downloads.length}
+        onConfirm={async () => {
+          await Promise.all(artistGroup.downloads.map((download) => cancelDownload(download.id)));
         }}
       />,
     );

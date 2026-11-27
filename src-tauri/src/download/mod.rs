@@ -11,6 +11,7 @@ pub mod post_processor;
 pub mod quality;
 pub mod queue;
 pub mod soundcloud;
+pub(crate) mod source_selection;
 pub mod tools;
 pub mod track;
 pub mod types;

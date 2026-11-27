@@ -1,3 +1,5 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import { torrentStatusMessage } from "@/features/library/model/downloadStatusMessage.ts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
@@ -77,7 +79,8 @@ import {
 } from "./artistAlbumsDownloads.ts";
 
 const ArtistAlbums = () => {
-  const { selectedTab, tabs, albums, activeDownloads, cancelDownload, dismissDownload, scrollToAlbum, setScrollToAlbum } =
+  const { activeDownloads, cancelDownload, dismissDownload } = useDownloadStore();
+  const { selectedTab, tabs, albums, scrollToAlbum, setScrollToAlbum } =
     useLibraryStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const { startPlayback } = useAudioStore();
@@ -311,7 +314,7 @@ const ArtistAlbums = () => {
             },
             {
               start: (format, overrides) => {
-                void useLibraryStore.getState().startDownload({
+                void useDownloadStore.getState().startDownload({
                   platform: "youtube",
                   downloadType: songs.length === 1 ? ItemType.Track : ItemType.Album,
                   url: upgradeUrl,
@@ -532,7 +535,7 @@ const ArtistAlbums = () => {
               },
               {
                 start: (format, overrides) => {
-                  void useLibraryStore.getState().startDownload({
+                  void useDownloadStore.getState().startDownload({
                     platform: "youtube",
                     downloadType: songs.length === 1 ? ItemType.Track : ItemType.Album,
                     url: upgradeUrl,
@@ -637,7 +640,7 @@ const ArtistAlbums = () => {
                   },
                   {
                     start: (format, overrides) => {
-                      void useLibraryStore.getState().startDownload({
+                      void useDownloadStore.getState().startDownload({
                         platform: "youtube",
                         downloadType: ItemType.Album,
                         url: albumUrl,
@@ -703,7 +706,7 @@ const ArtistAlbums = () => {
               beforeDelete={() => prepareAlbumDeletion(
                 album,
                 selectedTab ?? album.songs[0]?.album_artist ?? "",
-                Object.values(useLibraryStore.getState().activeDownloads),
+                Object.values(useDownloadStore.getState().activeDownloads),
                 missingSources[album.title]?.source_url,
                 (taskId) => invoke("cancel_download", { taskId }),
                 getArtistAlbums,
@@ -757,7 +760,7 @@ const ArtistAlbums = () => {
 
   /** Per-song upgrade state from running `resolve:` tasks, shown right inside the existing album rows. */
   const upgradingBySongId = useMemo(() => {
-    const map = new Map<number, { percent: number; done: boolean }>();
+    const map = new Map<number, { percent: number; done: boolean; taskId: string }>();
     for (const d of Object.values(activeDownloads)) {
       const running =
         d.status === "downloading" || d.status === "idle" || d.status === "processing";
@@ -766,6 +769,7 @@ const ArtistAlbums = () => {
       if (d.replaceSongId !== undefined) {
         const tr = d.tracks[0];
         map.set(d.replaceSongId, {
+          taskId: d.id,
           percent: tr?.percent ?? d.overallPercent ?? 0,
           done: tr?.status === "completed" || d.overallPercent >= 100,
         });
@@ -777,6 +781,7 @@ const ArtistAlbums = () => {
           const songId = Number(match[1]);
           const tr = d.tracks[idx];
           map.set(songId, {
+            taskId: d.id,
             percent: tr?.percent ?? 0,
             done: tr?.status === "completed",
           });
@@ -937,11 +942,7 @@ const ArtistAlbums = () => {
                         <CancelDownloadModal
                           title={decodeHtmlEntities(download.albumTitle)}
                           artist={download.artistName}
-                          onConfirm={() => {
-                            cancelDownload(download.id).catch((e) =>
-                              console.error("cancelDownload error: ", e),
-                            );
-                          }}
+                          onConfirm={() => cancelDownload(download.id)}
                         />,
                       ),
                   },
@@ -980,6 +981,7 @@ const ArtistAlbums = () => {
                     <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
                     <span role="status">{torrentStatusMessage(download.message) ?? `Downloading ${download.overallPercent}%`}</span>
                   </span>
+                  <CancelDownloadButton taskId={download.id} />
                 </div>
                 <ul className={styles.songs}>
                   {tracks.length > 0 ? (
@@ -1106,7 +1108,7 @@ const ArtistAlbums = () => {
                   }
                   const activeSongs = album.songs
                     .map((s) => upgradingBySongId.get(s.id))
-                    .filter((v): v is { percent: number; done: boolean } => !!v);
+                    .filter((v) => v !== undefined);
                   if (activeSongs.length > 0) {
                     const pct = Math.round(
                       activeSongs.reduce((acc, s) => acc + s.percent, 0) / activeSongs.length,
@@ -1132,6 +1134,13 @@ const ArtistAlbums = () => {
                   }
                   return null;
                 })()}
+                <CancelDownloadButton taskIds={[
+                  ...(downloadsByExistingAlbum.get(album.title) ?? []).map((task) => task.id),
+                  ...album.songs.flatMap((song) => {
+                    const upgrade = upgradingBySongId.get(song.id);
+                    return upgrade ? [upgrade.taskId] : [];
+                  }),
+                ]} />
                 {(() => {
                   const source = sourceOf(album.title);
                   if (source) {

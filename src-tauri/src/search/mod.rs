@@ -209,6 +209,33 @@ pub async fn search_youtube_with_fallback(query: &str) -> SearchResult {
         FAST_PATH_TIMEOUT,
     )
     .await
+    .map_err(|e| friendly_youtube_search_error(e.as_ref()).into())
+}
+
+/// Converts raw transport/rate-limit errors from YouTube search into user-facing messages
+/// without leaking internal InnerTube endpoint URLs.
+fn friendly_youtube_search_error(err: &(dyn Error + Send + Sync + 'static)) -> String {
+    if err.downcast_ref::<youtube_fast::RateLimitedError>().is_some() {
+        return err.to_string();
+    }
+    let msg = err.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("403")
+        || lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+    {
+        return "YouTube Music temporarily blocked search requests from this IP (rate limit). Try again later or switch VPN/network.".to_string();
+    }
+    if lower.contains("error sending request for url")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection")
+        || lower.contains("dns")
+    {
+        return "Couldn't reach YouTube Music (connection timed out or blocked). Try again or check your VPN/network.".to_string();
+    }
+    msg
 }
 
 /// Runs `fast` under `timeout`. Its result is returned as-is unless it is an error, a timeout, or
@@ -229,11 +256,12 @@ where
     slow.await
 }
 
-/// True when the fast path result is unusable: an error, or no item that is a Track, Album or Artist
-/// (an empty list, or only `Unknown` items). Non-empty partial results are NOT a fallback case.
+/// True when the fast path result is unusable: an error (other than an IP rate limit), or no item
+/// that is a Track, Album or Artist (an empty list, or only `Unknown` items). Non-empty partial
+/// results and rate-limit blocks are NOT fallback cases.
 fn should_fallback(result: &SearchResult) -> bool {
     match result {
-        Err(_) => true,
+        Err(e) => e.downcast_ref::<youtube_fast::RateLimitedError>().is_none(),
         Ok(items) => !items.iter().any(|item| {
             matches!(
                 item.item_type,
@@ -430,6 +458,36 @@ mod fallback_tests {
             Duration::from_secs(1),
         ));
         assert!(result.expect("ok").is_empty());
+    }
+
+    #[test]
+    fn rate_limited_error_does_not_poll_fallback() {
+        let rt = runtime();
+        let slow_polled = Arc::new(AtomicBool::new(false));
+        let flag = slow_polled.clone();
+        let result = rt.block_on(with_fallback(
+            async { Err(Box::new(youtube_fast::RateLimitedError) as Box<dyn Error + Send + Sync>) },
+            async move {
+                flag.store(true, Ordering::SeqCst);
+                ok_items(vec![suggestion(ItemType::Track, "Slow")])
+            },
+            Duration::from_secs(1),
+        ));
+        assert!(!slow_polled.load(Ordering::SeqCst));
+        let msg = result.err().expect("rate limit error").to_string();
+        assert!(msg.contains("rate limit"));
+    }
+
+    #[test]
+    fn friendly_youtube_search_error_hides_raw_innertube_url() {
+        let raw: Box<dyn Error + Send + Sync> =
+            "error sending request for url (https://music.youtube.com/youtubei/v1/search?prettyPrint=false)".into();
+        let friendly = friendly_youtube_search_error(raw.as_ref());
+        assert!(!friendly.contains("youtubei"));
+        assert!(friendly.contains("Couldn't reach YouTube Music"));
+
+        let forbidden: Box<dyn Error + Send + Sync> = "HTTP status client error (403 Forbidden)".into();
+        assert!(friendly_youtube_search_error(forbidden.as_ref()).contains("rate limit"));
     }
 }
 

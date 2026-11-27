@@ -92,6 +92,7 @@
 /* Album title with the year and genres to the right of it, on one line. */
 .albumTitleRow {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 12px;
     min-width: 0;

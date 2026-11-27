@@ -558,6 +558,34 @@ describe("filters and sort", () => {
     store().setSort(DEFAULT_SORT);
     expect(store().sort).toEqual(DEFAULT_SORT);
   });
+
+  it("formats raw YouTube Music InnerTube errors into friendly messages", async () => {
+    searchFullMock.mockRejectedValue(
+      new Error("error sending request for url (https://music.youtube.com/youtubei/v1/search?prettyPrint=false)"),
+    );
+    store().open("pink floyd");
+    await flush();
+    const err = store().sections.Track.error ?? "";
+    expect(err).not.toContain("youtubei");
+    expect(err).toContain("Couldn't reach YouTube Music");
+  });
+
+  it("formats raw YouTube Music InnerTube warnings into friendly messages", async () => {
+    searchFullMock.mockResolvedValue({
+      ...page([]),
+      warnings: [
+        {
+          platform: "youtube",
+          message: "error sending request for url (https://music.youtube.com/youtubei/v1/search?ctoken=abc)",
+        },
+      ],
+    });
+    store().open("pink floyd");
+    await flush();
+    expect(store().sections.Track.warnings).toEqual([
+      "Couldn't reach YouTube Music (rate-limited or connection timed out). Try again in a moment or switch VPN/network.",
+    ]);
+  });
 });
 
 describe("resumeIncomplete", () => {

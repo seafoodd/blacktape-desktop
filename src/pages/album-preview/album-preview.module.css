@@ -284,13 +284,14 @@
 }
 
 .rowAction {
+    gap: 6px;
     display: flex;
     flex-shrink: 0;
     align-items: center;
     justify-content: flex-end;
     /* as wide as the 30px download button minus its negative right margin (.rowSplit), whatever the row shows,
        so the durations line up */
-    width: 40.5px;
+    width: 76px;
     margin-left: 4px;
 }
 

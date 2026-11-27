@@ -158,16 +158,37 @@ const idleProfile = (): ProfileState => ({
   data: null,
 });
 
+function formatSearchError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("403") ||
+    lower.includes("429") ||
+    lower.includes("too many requests")
+  ) {
+    return "YouTube Music temporarily blocked search requests from this IP (rate limit). Try again later or switch VPN/network.";
+  }
+  if (
+    lower.includes("music.youtube.com/youtubei") ||
+    lower.includes("error sending request for url") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout")
+  ) {
+    return "Couldn't reach YouTube Music (rate-limited or connection timed out). Try again in a moment or switch VPN/network.";
+  }
+  return raw;
+}
+
 function errorMessage(err: unknown): string {
-  if (typeof err === "string" && err.trim() !== "") return err;
-  if (err instanceof Error && err.message !== "") return err.message;
+  if (typeof err === "string" && err.trim() !== "") return formatSearchError(err);
+  if (err instanceof Error && err.message !== "") return formatSearchError(err.message);
   if (
     typeof err === "object" &&
     err !== null &&
     typeof (err as { message?: unknown }).message === "string" &&
     (err as { message: string }).message !== ""
   ) {
-    return (err as { message: string }).message;
+    return formatSearchError((err as { message: string }).message);
   }
   return "Search failed";
 }
@@ -216,7 +237,7 @@ const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
     error: null,
     nextCursor,
     hasMore: Boolean(page.has_more) && nextCursor !== null,
-    warnings: (page.warnings ?? []).map((w) => w.message),
+    warnings: (page.warnings ?? []).map((w) => formatSearchError(w.message)),
   };
 };
 

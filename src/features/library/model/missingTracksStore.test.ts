@@ -49,13 +49,16 @@ vi.mock("@/shared/store/libraryIndexStore.ts", () => ({
 }));
 vi.mock("@/shared/store/libraryStore.ts", () => ({
   ItemType: { Track: "Track", Album: "Album", Artist: "Artist" },
-  useLibraryStore: {
+}));
+
+vi.mock("@/shared/store/downloadStore.ts", () => ({
+  useDownloadStore: {
     getState: () => ({ startDownload: startDownloadMock }),
     subscribe: subscribeMock,
   },
 }));
 
-/** The store's subscription to the library downloads (registered once, when the store module loads). */
+/** The store's subscription to downloads (registered once, when the store module loads). */
 const onLibraryChange = subscribeMock.mock.calls[0][0] as (state: {
   activeDownloads: Record<string, { url: string; status: string }>;
 }) => void;

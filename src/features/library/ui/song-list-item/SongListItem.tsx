@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
@@ -35,7 +36,7 @@ interface SongListItemProps {
   dragIds: number[];
   index?: number;
   /** Active upgrade progress for this song (percent 0..100, done flag), if being re-downloaded. */
-  upgradeProgress?: { percent: number; done: boolean };
+  upgradeProgress?: { percent: number; done: boolean; taskId?: string };
 }
 
 const SongListItem = ({
@@ -247,6 +248,9 @@ const SongListItem = ({
                   : "Upgrading"}
             </span>
           </span>
+        )}
+        {upgradeProgress && !upgradeProgress.done && upgradeProgress.taskId && (
+          <CancelDownloadButton taskId={upgradeProgress.taskId} />
         )}
         <QualityBadge song={song} className={styles.qualityBadge} />
         {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}

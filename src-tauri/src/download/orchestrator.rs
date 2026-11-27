@@ -83,11 +83,15 @@ pub async fn save_downloaded_track<R: tauri::Runtime>(
     if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() {
         let db = db_state.lock().await;
         tracing::debug!(song = %song.title, "Inserting song to DB");
-        if let Err(e) = db.insert_songs(vec![song.clone()]).await {
-            tracing::error!(error = %e, "DB insertion error");
-        }
+        db.insert_songs(vec![song.clone()]).await
+            .map_err(|e| format!("Failed to save track to library: {e}"))?;
+    } else {
+        return Err("Library database is unavailable".into());
     }
 
+    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+        registry.record_saved_track(task_id, track_index, &song.title).await;
+    }
     let _ = app_handle.emit(
         "download-track-saved",
         serde_json::json!({
@@ -231,6 +235,9 @@ async fn replace_upgraded_track<R: tauri::Runtime>(
 
     if trashed.is_some() {
         let _ = app_handle.emit(crate::trash::TRASH_CHANGED_EVENT, ());
+    }
+    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+        registry.record_saved_track(task_id, track_index, &song.title).await;
     }
     let _ = app_handle.emit(
         "download-track-saved",
@@ -426,12 +433,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                     None,
                 );
             }
-            emit_event(
-                &app_handle,
-                "download-task-failed",
-                &task_id,
-                &format!("Download failed: {e}"),
-            );
+            let _ = finish_task(&app_handle, &task_id, Some(&e)).await;
             flash_taskbar(&app_handle);
             return Err(e);
         }
@@ -522,13 +524,21 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
 
     cleanup_staging_dir(&downloaded_files);
 
-    emit_event(
-        &app_handle,
-        "download-task-completed",
-        &task_id,
-        "Pipeline complete",
-    );
-    Ok(())
+    finish_task(&app_handle, &task_id, None).await
+}
+
+async fn finish_task(app: &AppHandle, task_id: &str, error: Option<&str>) -> Result<(), String> {
+    let registry = app.state::<crate::download::TaskRegistry>();
+    let state = registry.finish_download(task_id, error).await
+        .ok_or_else(|| "Download task is no longer active".to_string())?;
+    let success = state.status == "completed";
+    let event = if success { "download-task-completed" } else { "download-task-failed" };
+    let _ = app.emit(event, serde_json::json!({
+        "task_id": task_id,
+        "message": state.message,
+        "tracks": state.tracks,
+    }));
+    if success { Ok(()) } else { Err(state.message) }
 }
 
 /// A failed download needs the user's decision, so a window that is in the background (or minimized) asks for

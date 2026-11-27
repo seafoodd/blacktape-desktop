@@ -32,14 +32,17 @@ vi.mock("@/shared/store/libraryStore.ts", () => ({
   useLibraryStore: {
     getState: () => ({
       setActiveView: setActiveViewMock,
-      startDownload: startDownloadMock,
-      activeDownloads: activeDownloadsMock,
     }),
     subscribe: vi.fn(() => () => {}),
   },
 }));
 
 const initialState = useAlbumPreviewStore.getState();
+vi.mock("@/shared/store/downloadStore.ts", () => ({
+  useDownloadStore: {
+    getState: () => ({ startDownload: startDownloadMock, activeDownloads: activeDownloadsMock }),
+  },
+}));
 
 const ALBUM_URL = "https://example.test/album";
 const COVER_URL = "https://example.test/cover.jpg";

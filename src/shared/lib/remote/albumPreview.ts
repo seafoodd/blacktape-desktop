@@ -365,7 +365,7 @@ export function albumLibraryState(
 }
 
 /** Progress of a download task that serves some rows of this page. */
-export type TrackTaskState = { phase: "running"; percent: number } | { phase: "done" };
+export type TrackTaskState = { phase: "running"; percent: number; taskId?: string } | { phase: "done" };
 
 /** Download task statuses that still do work (the library keeps other tasks only as history). */
 const RUNNING_STATUSES: ReadonlySet<string> = new Set(["idle", "downloading", "processing"]);
@@ -431,20 +431,20 @@ export function trackTaskStates(
             task.tracks.find((t) => t.trackNumber === num);
           if (found) {
             if (found.status === "completed" || found.percent >= 100) {
-              out[url] = { phase: "running", percent: 100 };
+              out[url] = { phase: "running", taskId, percent: 100 };
             } else {
-              out[url] = { phase: "running", percent: clampPercent(found.percent) };
+              out[url] = { phase: "running", taskId, percent: clampPercent(found.percent) };
             }
             continue;
           } else {
             // Track belongs to the download but hasn't started yet
-            out[url] = { phase: "running", percent: 0 };
+            out[url] = { phase: "running", taskId, percent: 0 };
             continue;
           }
         }
       }
 
-      out[url] = { phase: "running", percent: clampPercent(task.overallPercent) };
+      out[url] = { phase: "running", taskId, percent: clampPercent(task.overallPercent) };
     }
   }
 

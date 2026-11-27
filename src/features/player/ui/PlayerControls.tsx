@@ -1,3 +1,5 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
@@ -183,7 +185,7 @@ export const PlayerControls = () => {
     [streamTrack],
   );
   // The download of this song started from anywhere (here, a menu, the album page), if any.
-  const download = useLibraryStore((s) => {
+  const download = useDownloadStore((s) => {
     if (!downloadParams || !streamTrack) return undefined;
     const direct = findDownload(s.activeDownloads, downloadParams);
     if (direct) return direct;
@@ -420,24 +422,21 @@ export const PlayerControls = () => {
                   {isCurrentFavorite ? <MdFavorite /> : <MdFavoriteBorder />}
                 </button>
                 {streamTrack &&
-                  (downloading || downloaded || !downloadParams ? (
+                  (downloading && download ? (
+                    <div className={styles.downloadProgress}>
+                      <span className={styles.downloadPercent} role="status">{download.overallPercent}%</span>
+                      <CancelDownloadButton taskId={download.id} />
+                    </div>
+                  ) : downloaded || !downloadParams ? (
                     <button
                       type="button"
                       className={styles.songAction}
                       disabled
                       title={
-                        downloaded ? "Already in your library" : "Downloading…"
+                        downloaded ? "Already in your library" : "Download unavailable"
                       }
                     >
-                      {downloading ? (
-                        <span
-                          className={styles.actionSpinner}
-                          role="status"
-                          aria-label="Downloading"
-                        />
-                      ) : (
-                        <MdCheck />
-                      )}
+                      <MdCheck />
                     </button>
                   ) : (
                     <DownloadSplitButton
@@ -447,7 +446,7 @@ export const PlayerControls = () => {
                       icon={<MdFileDownload />}
                       title="Download this song"
                       onDownload={() =>
-                        void useLibraryStore
+                        void useDownloadStore
                           .getState()
                           .startDownload(downloadParams)
                       }

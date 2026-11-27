@@ -55,6 +55,7 @@ pub struct ActiveTaskInfo {
     /// Per-track replacement song IDs when upgrading multiple tracks / an album in one batch task.
     pub replace_song_ids: HashMap<usize, i64>,
     pub state: ActiveDownloadState,
+    saved_tracks: HashSet<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -173,6 +174,7 @@ impl TaskRegistry {
                 replace_song_id: None,
                 replace_song_ids: HashMap::new(),
                 state,
+                saved_tracks: HashSet::new(),
             },
         );
     }
@@ -367,7 +369,7 @@ impl TaskRegistry {
             if !track_title.is_empty() {
                 info.state.tracks[track_index].title = track_title.to_string();
             }
-            info.state.tracks[track_index].status = if percent >= 100 {
+            info.state.tracks[track_index].status = if info.saved_tracks.contains(&track_index) {
                 "completed".to_string()
             } else {
                 "downloading".to_string()
@@ -405,6 +407,35 @@ impl TaskRegistry {
     pub async fn remove_task(&self, task_id: &str) -> Option<ActiveTaskInfo> {
         let mut tasks = self.tasks.lock().await;
         tasks.remove(task_id)
+    }
+
+    pub async fn record_saved_track(&self, task_id: &str, index: usize, title: &str) {
+        self.update_track_progress(task_id, index, title, 100).await;
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            info.saved_tracks.insert(index);
+            info.state.tracks[index].status = "completed".into();
+        }
+    }
+
+    /// Only committed library tracks count as successful, including streaming saves.
+    pub async fn finish_download(&self, task_id: &str, error: Option<&str>) -> Option<ActiveDownloadState> {
+        let mut tasks = self.tasks.lock().await;
+        let info = tasks.get_mut(task_id)?;
+        let total = info.state.total.max(info.state.tracks.len());
+        let saved = info.saved_tracks.len();
+        let success = error.is_none() && saved >= total;
+        info.state.status = if success { "completed" } else { "failed" }.into();
+        info.state.current = saved;
+        info.state.message = if success {
+            "Pipeline complete".into()
+        } else {
+            format!("Saved {saved} of {total} tracks. {}", error.unwrap_or("Some tracks could not be downloaded or saved."))
+        };
+        for (index, track) in info.state.tracks.iter_mut().enumerate() {
+            track.status = if info.saved_tracks.contains(&index) { "completed" } else { "failed" }.into();
+        }
+        Some(info.state.clone())
     }
 
     pub(super) async fn set_task_message(&self, task_id: &str, message: &str) -> Option<(usize, usize)> {
@@ -493,6 +524,34 @@ mod tests {
             overall_percent: 0,
             message: String::new(),
             tracks: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_requires_committed_tracks_across_progress_and_save_orderings() {
+        for saved_indices in [vec![], vec![0], vec![0, 1]] {
+            let registry = TaskRegistry::default();
+            registry.register_task(make_state("outcome")).await;
+            registry.update_metadata("outcome", "Album", "Artist", None, None,
+                vec![("First".into(), Some(1), None), ("Second".into(), Some(2), None)]).await;
+            for index in 0..2 {
+                registry.update_track_progress("outcome", index, "", 100).await;
+            }
+            for &index in &saved_indices {
+                registry.record_saved_track("outcome", index, "Saved").await;
+                // Duplicate saves and delayed transfer progress must preserve the outcome.
+                registry.record_saved_track("outcome", index, "Saved").await;
+                registry.update_track_progress("outcome", index, "", 100).await;
+            }
+            let state = registry.finish_download("outcome", None).await.unwrap();
+            assert_eq!(state.current, saved_indices.len());
+            assert_eq!(state.status, if saved_indices.len() == 2 { "completed" } else { "failed" });
+            for (index, track) in state.tracks.iter().enumerate() {
+                assert_eq!(track.status, if saved_indices.contains(&index) { "completed" } else { "failed" });
+            }
+            if saved_indices.len() < 2 {
+                assert!(state.message.contains(&format!("Saved {} of 2", saved_indices.len())));
+            }
         }
     }
 

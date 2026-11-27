@@ -1,3 +1,6 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import { coverSrc } from "@/shared/lib/remote/cover";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./search-bar.module.css";
@@ -29,7 +32,7 @@ import { useSearchPageStore } from "../model/searchPageStore.ts";
 import { SearchProgress, SearchPulse } from "./SearchProgress.tsx";
 import { useSearchProgressStyle } from "../model/searchProgressStyle.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
-import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
+import { buildDownloadMap, searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
@@ -105,10 +108,9 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
     activePlatform,
     setActiveCategory,
     setActivePlatform,
-    startDownload,
-    activeDownloads,
-    initDownloadListeners,
   } = useLibraryStore();
+  const { startDownload, activeDownloads, initDownloadListeners } = useDownloadStore();
+  const downloadMap = useMemo(() => buildDownloadMap(Object.values(activeDownloads)), [activeDownloads]);
   const modalOpen = useModalStore((s) => s.isOpen);
   const progressStyle = useSearchProgressStyle();
   const pulseRun = progressStyle === "pulse" && query.trim() !== "" ? searchRun : null;
@@ -346,9 +348,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
               </div>
             ) : (
               filteredResults.slice(0, 20).map((suggestion, index) => {
-                const activeDownload = Object.values(activeDownloads).find(
-                  (d) => d.url === suggestion.item_url_path,
-                );
+                const activeDownload = downloadMap.get(suggestion.item_url_path);
 
                 const target = previewTarget(suggestion);
 
@@ -481,6 +481,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
                                   %
                                 </span>
                               )}
+                              {isRunning(activeDownload) && <CancelDownloadButton taskId={activeDownload.id} />}
                             </div>
                           )}
                                 </>

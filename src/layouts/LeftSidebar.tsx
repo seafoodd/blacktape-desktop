@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useCallback, useEffect, useState } from "react";
 import styles from "./left-sidebar.module.css";
 import { useLibraryStore } from "@/shared/store/libraryStore.ts";
@@ -12,7 +13,8 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 export const LeftSidebar = () => {
-  const { fetchTabs, initDownloadListeners, setSelectedTab } =
+  const { initDownloadListeners } = useDownloadStore();
+  const { fetchTabs, setSelectedTab } =
     useLibraryStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizing, setIsResizing] = useState(false);

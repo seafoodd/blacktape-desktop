@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { create } from "zustand";
 import { isNoStreamFailure } from "./downloadFailure.ts";
 import {
@@ -14,7 +15,6 @@ import type { Platform } from "@/shared/types.ts";
 import { useLibraryIndexStore } from "@/shared/store/libraryIndexStore.ts";
 import {
   ItemType,
-  useLibraryStore,
   type DownloadOverrides,
   type DownloadProgress,
   type StartDownloadParams,
@@ -302,7 +302,7 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
       for (const url of trackUrls) delete failures[url];
       return { pendingUrls, failures };
     });
-    await useLibraryStore.getState().startDownload({ ...missingDownloadParams(missing, trackUrls), format, overrides });
+    await useDownloadStore.getState().startDownload({ ...missingDownloadParams(missing, trackUrls), format, overrides });
   };
 
   return {
@@ -419,7 +419,7 @@ export const useMissingTracksStore = create<MissingTracksState>((set, get) => {
 // A pending song is released when its album has no busy download any more (completed, failed or cancelled).
 const handledFailures = new Set<string>();
 
-useLibraryStore.subscribe((state) => {
+useDownloadStore.subscribe((state) => {
   const { pendingUrls, unavailable, failures } = useMissingTracksStore.getState();
   if (pendingUrls.size === 0) return;
   const { songs, handledIds } = failedSongs(pendingUrls, state.activeDownloads, handledFailures);

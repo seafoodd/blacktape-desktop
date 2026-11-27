@@ -10,6 +10,7 @@ import {
 import type { Platform } from "@/shared/types.ts";
 import type { SearchPageFilters } from "@/features/search/model/searchPageFilters.ts";
 import { formatCompactNumber } from "@/shared/lib/search/number.ts";
+import { isRunning } from "@/shared/lib/library/downloadMatch.ts";
 
 /** Download progress keyed by the item url (`item_url_path`), first/active download wins. */
 export type DownloadMap = ReadonlyMap<string, DownloadProgress>;
@@ -131,7 +132,7 @@ export function buildDownloadMap(
   const map = new Map<string, DownloadProgress>();
   for (const download of list) {
     const existing = map.get(download.url);
-    if (!existing || (!isDownloadBusy(existing) && isDownloadBusy(download))) {
+    if (!existing || (!isRunning(existing) && isRunning(download)) || (!isDownloadBusy(existing) && isDownloadBusy(download))) {
       map.set(download.url, download);
     }
   }

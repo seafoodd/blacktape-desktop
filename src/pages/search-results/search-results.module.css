@@ -745,8 +745,11 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    width: 56px;
+    width: 76px;
 }
+
+.activeDownload { display: inline-flex; align-items: center; gap: 4px; }
+.activeDownloadOverlay { padding: 2px 4px 2px 8px; border-radius: var(--radius-full); background: rgba(0, 0, 0, 0.8); }
 
 /* the gear of a row ends where the check of a song in the library ends (see .rowDownloadCell): cancel the
    button's right padding (--split-gear-pad) and half of the 1px margin inside the gear glyph */

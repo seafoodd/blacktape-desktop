@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 /**
  * Renders the one remote-track context menu from `useRemoteTrackMenuStore` (mounted once in App.tsx). The items
  * come from the pure `buildRemoteTrackMenu`; this file only wires the actions to the stores and the platform.
@@ -7,7 +8,6 @@ import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { ContextMenu } from "@/shared/ui/context-menu";
 import { useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { remoteTrackToStreamItem, type RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
-import { useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {
   buildRemoteTrackMenu,
@@ -21,7 +21,7 @@ import {
 
 const actions: RemoteTrackMenuActions = {
   download: (track) => {
-    useLibraryStore
+    useDownloadStore
       .getState()
       .startDownload(remoteTrackDownloadParams(track))
       .catch((e) => console.error("Download failed", e));

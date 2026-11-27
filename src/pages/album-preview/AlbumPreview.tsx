@@ -1,3 +1,5 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import { torrentStatusMessage } from "@/features/library/model/downloadStatusMessage.ts";
 import { coverSrc } from "@/shared/lib/remote/cover";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -87,8 +89,8 @@ const AlbumPreview = () => {
     downloadUrls,
     downloadTrack,
   } = useAlbumPreviewStore.getState();
-  const activeDownloads = useLibraryStore((s) => s.activeDownloads);
-  const dismissDownload = useLibraryStore((s) => s.dismissDownload);
+  const activeDownloads = useDownloadStore((s) => s.activeDownloads);
+  const dismissDownload = useDownloadStore((s) => s.dismissDownload);
   const albums = useLibraryStore((s) => s.albums);
   const playStream = useStreamStore((s) => s.play);
   const { openMenu } = useRemoteTrackMenu();
@@ -240,7 +242,7 @@ const AlbumPreview = () => {
       ? `resolve:song:${items[0].local.id}`
       : `resolve:batch:${items.map((u) => u.local.id).join(",")}`;
     setActiveUpgradeUrl(targetUrl);
-    void useLibraryStore.getState().startDownload({
+    void useDownloadStore.getState().startDownload({
       platform: preview.platform,
       downloadType: isSingle ? ItemType.Track : ItemType.Album,
       url: targetUrl,
@@ -772,6 +774,7 @@ const AlbumPreview = () => {
                     </button>
                   )}
                 </div>
+                {running && <CancelDownloadButton taskId={running.id} />}
                 {action?.kind === "go-to-album" && (upgradableTracks.length > 0 || runningUpgrade) && (
                   <button
                     type="button"
@@ -800,6 +803,7 @@ const AlbumPreview = () => {
                     )}
                   </button>
                 )}
+                {runningUpgrade && runningUpgrade.id !== running?.id && <CancelDownloadButton taskId={runningUpgrade.id} />}
                 {justCompleted && !running && action?.kind !== "go-to-album" && (
                   <span className={styles.done}>
                     <FaCheckCircle size={14} /> Downloaded

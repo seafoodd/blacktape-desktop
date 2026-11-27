@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { useLibraryStore, ItemType } from "@/shared/store/libraryStore.ts";
+import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 
 const registeredListeners: Record<string, (event: any) => Promise<void> | void> = {};
 
@@ -21,10 +22,11 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-describe("libraryStore download-track-saved listener", () => {
+describe("downloadStore download-track-saved listener", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useLibraryStore.setState({
+    useLibraryStore.setState({ selectedTab: "Test Artist" });
+    useDownloadStore.setState({
       activeDownloads: {
         "task-1": {
           id: "task-1",
@@ -44,13 +46,12 @@ describe("libraryStore download-track-saved listener", () => {
           ],
         },
       },
-      selectedTab: "Test Artist",
       _listenersInitialized: false,
     });
   });
 
   it("updates track to completed and triggers swap and refresh when download-track-saved arrives", async () => {
-    const { initDownloadListeners } = useLibraryStore.getState();
+    const { initDownloadListeners } = useDownloadStore.getState();
     await initDownloadListeners();
 
     expect(registeredListeners["download-track-saved"]).toBeDefined();
@@ -70,7 +71,7 @@ describe("libraryStore download-track-saved listener", () => {
       },
     });
 
-    const active = useLibraryStore.getState().activeDownloads["task-1"];
+    const active = useDownloadStore.getState().activeDownloads["task-1"];
     expect(active.tracks[0].percent).toBe(100);
     expect(active.tracks[0].status).toBe("completed");
 

@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { createLatestGuard } from "@/shared/lib/search/searchGuard.ts";
@@ -196,7 +197,7 @@ async function startAlbumDownload(
   preview: AlbumPreview,
   request: { trackUrls?: string[]; rows: string[]; format?: string },
 ): Promise<void> {
-  const library = useLibraryStore.getState();
+  const library = useDownloadStore.getState();
   const before = new Set(Object.keys(library.activeDownloads));
   const started = library.startDownload({
     platform: preview.platform,
@@ -209,7 +210,7 @@ async function startAlbumDownload(
     format: request.format,
     overrides: buildDownloadOverrides(preview),
   });
-  const active = useLibraryStore.getState().activeDownloads;
+  const active = useDownloadStore.getState().activeDownloads;
   const taskId = Object.keys(active).find((id) => !before.has(id));
   if (taskId !== undefined) {
     useAlbumPreviewStore.setState((s) => ({

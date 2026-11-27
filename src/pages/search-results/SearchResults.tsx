@@ -1,8 +1,8 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useMemo } from "react";
 import styles from "./search-results.module.css";
 import {
   ItemType,
-  useLibraryStore,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
 import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
@@ -29,7 +29,7 @@ import {
 
 /**
  * Full search page (search v2). Reads everything from `useSearchPageStore`; downloads go through
- * `useLibraryStore`. Layout: header with platform warnings, sticky filter bar, artist profile card, sections.
+ * `useDownloadStore`. Layout: header with platform warnings, sticky filter bar, artist profile card, sections.
  */
 const SearchResults = () => {
   const query = useSearchPageStore((s) => s.query);
@@ -42,7 +42,7 @@ const SearchResults = () => {
   const retry = useSearchPageStore((s) => s.retry);
   const loadMore = useSearchPageStore((s) => s.loadMore);
 
-  const activeDownloads = useLibraryStore((s) => s.activeDownloads);
+  const activeDownloads = useDownloadStore((s) => s.activeDownloads);
   const downloads = useMemo(
     () => buildDownloadMap(Object.values(activeDownloads)),
     [activeDownloads],

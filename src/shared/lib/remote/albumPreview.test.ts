@@ -317,8 +317,8 @@ describe("trackTaskStates", () => {
         { "task-1": { status: "downloading", overallPercent: 40 } },
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 40 },
-      [u(1)]: { phase: "running", percent: 40 },
+      [u(0)]: { phase: "running", taskId: "task-1", percent: 40 },
+      [u(1)]: { phase: "running", taskId: "task-1", percent: 40 },
     });
   });
 
@@ -328,7 +328,7 @@ describe("trackTaskStates", () => {
   ])("treats status %s as running", (status, percent) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status, overallPercent: percent } })[u(0)],
-    ).toEqual({ phase: "running", percent });
+    ).toEqual({ phase: "running", taskId: "t", percent });
   });
 
   it.each([
@@ -339,7 +339,7 @@ describe("trackTaskStates", () => {
   ])("clamps the percent %s to %s", (raw, expected) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status: "downloading", overallPercent: raw } })[u(0)],
-    ).toEqual({ phase: "running", percent: expected });
+    ).toEqual({ phase: "running", taskId: "t", percent: expected });
   });
 
   it("reports a completed task as done", () => {
@@ -381,9 +381,9 @@ describe("trackTaskStates", () => {
         previewTracks,
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 100 },
-      [u(1)]: { phase: "running", percent: 45 },
-      [u(2)]: { phase: "running", percent: 0 },
+      [u(0)]: { phase: "running", taskId: "task-1", percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", percent: 45 },
+      [u(2)]: { phase: "running", taskId: "task-1", percent: 0 },
     });
   });
 
@@ -405,8 +405,8 @@ describe("trackTaskStates", () => {
     expect(
       trackTaskStates({}, { "task-1": task }, previewTracks, albumUrl),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 100 },
-      [u(1)]: { phase: "running", percent: 15 },
+      [u(0)]: { phase: "running", taskId: "task-1", percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", percent: 15 },
     });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { useLibraryStore, ItemType } from "@/shared/store/libraryStore.ts";
+import { ItemType } from "@/shared/store/libraryStore.ts";
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 
 vi.mock("@tauri-apps/api/core", () => ({
   // Never resolves: the download stays "downloading" for the whole test.
@@ -26,39 +27,39 @@ function albumParams(trackUrls: string[]) {
 // so the calls are fire-and-forget.
 beforeEach(() => {
   vi.clearAllMocks();
-  useLibraryStore.setState({ activeDownloads: {} });
+  useDownloadStore.setState({ activeDownloads: {} });
 });
 
 describe("startDownload guard", () => {
   it("does not start a second download of the same album tracks while the first runs", () => {
-    const { startDownload } = useLibraryStore.getState();
+    const { startDownload } = useDownloadStore.getState();
 
     void startDownload(albumParams([TRACK_1]));
     void startDownload(albumParams([TRACK_1]));
 
-    const entries = Object.values(useLibraryStore.getState().activeDownloads);
+    const entries = Object.values(useDownloadStore.getState().activeDownloads);
     expect(entries).toHaveLength(1);
     expect(entries[0].trackUrls).toEqual([TRACK_1]);
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it("adds a second entry for a different track of the same album", () => {
-    const { startDownload } = useLibraryStore.getState();
+    const { startDownload } = useDownloadStore.getState();
 
     void startDownload(albumParams([TRACK_1]));
     void startDownload(albumParams([TRACK_2]));
 
-    const entries = Object.values(useLibraryStore.getState().activeDownloads);
+    const entries = Object.values(useDownloadStore.getState().activeDownloads);
     expect(entries).toHaveLength(2);
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it("starts a new download once the matching entry has failed", () => {
-    const { startDownload } = useLibraryStore.getState();
+    const { startDownload } = useDownloadStore.getState();
 
     void startDownload(albumParams([TRACK_1]));
-    const [firstId] = Object.keys(useLibraryStore.getState().activeDownloads);
-    useLibraryStore.setState((state) => ({
+    const [firstId] = Object.keys(useDownloadStore.getState().activeDownloads);
+    useDownloadStore.setState((state) => ({
       activeDownloads: {
         ...state.activeDownloads,
         [firstId]: { ...state.activeDownloads[firstId], status: "failed" },
@@ -67,12 +68,12 @@ describe("startDownload guard", () => {
 
     void startDownload(albumParams([TRACK_1]));
 
-    expect(Object.keys(useLibraryStore.getState().activeDownloads)).toHaveLength(2);
+    expect(Object.keys(useDownloadStore.getState().activeDownloads)).toHaveLength(2);
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it("does not add a second entry for a single track downloaded twice", () => {
-    const { startDownload } = useLibraryStore.getState();
+    const { startDownload } = useDownloadStore.getState();
     const trackParams = {
       platform: "bandcamp",
       downloadType: ItemType.Track,
@@ -82,33 +83,33 @@ describe("startDownload guard", () => {
     void startDownload(trackParams);
     void startDownload(trackParams);
 
-    expect(Object.keys(useLibraryStore.getState().activeDownloads)).toHaveLength(1);
+    expect(Object.keys(useDownloadStore.getState().activeDownloads)).toHaveLength(1);
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("startDownload format", () => {
   it("sends the picked format to the download command", () => {
-    void useLibraryStore.getState().startDownload({ ...albumParams([TRACK_1]), format: "251" });
+    void useDownloadStore.getState().startDownload({ ...albumParams([TRACK_1]), format: "251" });
     expect(invoke).toHaveBeenCalledWith("download", expect.objectContaining({ format: "251" }));
   });
 
   it("sends null when no format is picked", () => {
-    void useLibraryStore.getState().startDownload(albumParams([TRACK_1]));
+    void useDownloadStore.getState().startDownload(albumParams([TRACK_1]));
     expect(invoke).toHaveBeenCalledWith("download", expect.objectContaining({ format: null }));
   });
 
   it("handles auth_window_closed cancellation without reporting to telemetry", async () => {
     vi.mocked(invoke).mockRejectedValueOnce("auth_window_closed");
 
-    await useLibraryStore.getState().startDownload(albumParams([TRACK_1]));
+    await useDownloadStore.getState().startDownload(albumParams([TRACK_1]));
 
-    const entries = Object.values(useLibraryStore.getState().activeDownloads);
+    const entries = Object.values(useDownloadStore.getState().activeDownloads);
     expect(entries).toHaveLength(1);
     expect(entries[0].status).toBe("failed");
     expect(entries[0].message).toBe("auth_window_closed");
 
-    useLibraryStore.getState().dismissDownload(entries[0].id);
-    expect(Object.values(useLibraryStore.getState().activeDownloads)).toHaveLength(0);
+    useDownloadStore.getState().dismissDownload(entries[0].id);
+    expect(Object.values(useDownloadStore.getState().activeDownloads)).toHaveLength(0);
   });
 });

@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import { MdKeyboardArrowDown, MdPause, MdPlayArrow, MdWarningAmber } from "react-icons/md";
 import { FiCheck } from "react-icons/fi";
 import rowStyles from "@/features/library/ui/song-list-item/song-list-item.module.css";
@@ -389,6 +390,9 @@ export const AlbumTrackRow = ({
             >
               {status.percent}%
             </span>
+          )}
+          {status.kind === "running" && task?.phase === "running" && task.taskId && (
+            <CancelDownloadButton taskId={task.taskId} />
           )}
           {status.kind === "download" && (
             <span onDoubleClick={(e) => e.stopPropagation()}>

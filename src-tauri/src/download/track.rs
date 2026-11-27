@@ -15,11 +15,11 @@ fn upgrade_candidate_index(
     local_tier: crate::types::QualityTier,
     local_exists: bool,
 ) -> Result<usize, String> {
-    let chosen = crate::download::album::pick_candidate_entry_for_tier(candidates, format, selected);
+    let chosen = crate::download::source_selection::pick_candidate_entry_for_tier(candidates, format, selected);
     if !local_exists {
         return Ok(chosen.map_or(0, |entry| entry.0));
     }
-    chosen.filter(|(index, _, _)| crate::download::album::candidate_improves_local(
+    chosen.filter(|(index, _, _)| crate::download::source_selection::candidate_improves_local(
         local_tier, true, candidates[*index].quality_tier
     )).map(|entry| entry.0).ok_or_else(|| NO_TRACK_UPGRADE.into())
 }
@@ -87,7 +87,7 @@ pub async fn process_track_url(
             .and_then(|tracks| tracks.first());
         let mut candidates = supplied.and_then(|item| item.candidates.clone()).unwrap_or_default();
         let selected_source = supplied.and_then(|item| candidates.get(item.selected_candidate_idx.unwrap_or(0)))
-            .filter(|candidate| crate::download::album::candidate_improves_local(
+            .filter(|candidate| crate::download::source_selection::candidate_improves_local(
                 existing_song.quality_tier, local_exists, candidate.quality_tier,
             )).map(|candidate| candidate.source.clone());
         if selected_source.is_none() || effective_format.as_deref().is_some_and(|format| format != "best") {

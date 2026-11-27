@@ -100,6 +100,19 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
+#[derive(Debug)]
+pub struct RateLimitedError;
+
+impl std::fmt::Display for RateLimitedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "YouTube Music temporarily blocked search requests from this IP (rate limit). Try again later or switch VPN/network.",
+        )
+    }
+}
+
+impl Error for RateLimitedError {}
+
 async fn fetch_with_params(
     client: &reqwest::Client,
     query: &str,
@@ -113,8 +126,14 @@ async fn fetch_with_params(
         .header("Cookie", CONSENT_COOKIE)
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if matches!(
+        response.status(),
+        reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::TOO_MANY_REQUESTS
+    ) {
+        return Err(Box::new(RateLimitedError));
+    }
+    let response = response.error_for_status()?;
     let json: Value = response.json().await?;
     Ok(parse_search_response(&json))
 }

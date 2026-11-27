@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { PlayerControls } from "@/features/player";
 import {
@@ -37,7 +38,8 @@ import {
 } from "@/features/player/model/playerPersistence.ts";
 
 function PlayerView() {
-  const { activeView, initDownloadListeners } = useLibraryStore();
+  const { activeView } = useLibraryStore();
+  const { initDownloadListeners } = useDownloadStore();
   useGlobalShortcuts();
 
   useEffect(() => {

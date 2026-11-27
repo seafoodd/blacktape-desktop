@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import { MdCheck, MdHelpOutline } from "react-icons/md";
@@ -52,7 +53,7 @@ export function submitQualityDownload(params: StartDownloadParams, { start, onSt
   // Album Preview may open a confirmation before starting the download.
   useModalStore.getState().closeModal();
   if (start) start(params.format, params.overrides);
-  else void useLibraryStore.getState().startDownload(params);
+  else void useDownloadStore.getState().startDownload(params);
   onStarted?.();
 }
 

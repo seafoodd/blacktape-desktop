@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isValidElement, type ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
+import { ItemType, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { openQualityMenu, submitQualityDownload } from "@/features/download-quality/ui/QualityModal.tsx";
 
@@ -20,7 +21,7 @@ const album: StartDownloadParams = {
 
 afterEach(() => {
   useModalStore.getState().closeModal();
-  useLibraryStore.setState({ activeDownloads: {} });
+  useDownloadStore.setState({ activeDownloads: {} });
   vi.clearAllMocks();
 });
 
@@ -33,7 +34,7 @@ describe("quality selection submission", () => {
         openModal(
           <button onClick={() => {
             closeModal();
-            void useLibraryStore.getState().startDownload({ ...album, format: selectedFormat, overrides });
+            void useDownloadStore.getState().startDownload({ ...album, format: selectedFormat, overrides });
           }}>Download anyway</button>,
         );
       });
