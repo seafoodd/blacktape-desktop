@@ -1,4 +1,5 @@
 use crate::types::Platform;
+pub(crate) mod http;
 
 /// Classifies a page by its HTTP(S) host, never by text in its path or query.
 pub fn platform_of_url(raw: &str) -> Option<Platform> {

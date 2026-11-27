@@ -262,10 +262,7 @@ pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, Stri
 #[tauri::command]
 pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQuality {
     let lossless = platform == Platform::Bandcamp && {
-        let free = match reqwest::get(url.trim()).await {
-            Ok(response) => response.text().await.is_ok_and(|html| bandcamp_has_free_download(&html)),
-            Err(_) => false,
-        };
+        let free = crate::download::bandcamp::page_has_free_download(&url).await;
         free || bandcamp_purchased(&url).await
     };
     expected_quality(platform, lossless)

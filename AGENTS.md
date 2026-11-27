@@ -27,6 +27,7 @@ Every bug that is fixed gets a test that fails without the fix. If the bug came 
 ## Security
 
 - Determine a platform from the parsed HTTP(S) hostname. Never infer it from a substring in a URL path, query, fragment or user information.
+- Requests for platform pages and covers must validate the URL and every redirect, have a timeout, check HTTP status and bound the response size. Custom Bandcamp domains remain supported.
 
 Take extra care, and review twice, in code that handles auth tokens, downloads, the updater, file paths and URLs:
 - never log or commit tokens, keys or secrets;

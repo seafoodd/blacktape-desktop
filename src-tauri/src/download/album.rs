@@ -1177,12 +1177,7 @@ fn torrent_transfer_error(result: &crate::torrent::download::TorrentTransferResu
 }
 
 pub async fn download_album_cover(url: &str, output_dir: &Path) -> Result<(), String> {
-    let bytes = reqwest::get(url)
-        .await
-        .map_err(|e| e.to_string())?
-        .bytes()
-        .await
-        .map_err(|e| e.to_string())?;
+    let bytes = crate::platforms::http::get_cover(url).await?;
 
     tokio::fs::write(output_dir.join("cover.jpg"), &bytes)
         .await

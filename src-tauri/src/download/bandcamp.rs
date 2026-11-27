@@ -1,7 +1,6 @@
 use crate::download::{AlbumDownload, TrackDownload};
 use crate::utils::sanitize_fs;
 use regex::Regex;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -11,23 +10,7 @@ pub async fn parse_album(album_url: &str) -> Result<AlbumDownload, String> {
 
 /// Checks whether a Bandcamp album or track page advertises a free download (lossless available).
 pub async fn page_has_free_download(page_url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(page_url.trim()) else {
-        return false;
-    };
-    if crate::platforms::platform_of_url(parsed.as_str()) != Some(crate::types::Platform::Bandcamp) {
-        return false;
-    }
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_millis(2500))
-        .build()
-        .unwrap_or_default();
-    let Ok(resp) = client.get(parsed).send().await else {
-        return false;
-    };
-    if !resp.status().is_success() {
-        return false;
-    }
-    let Ok(html) = resp.text().await else {
+    let Ok(html) = crate::platforms::http::get_page(page_url).await else {
         return false;
     };
     crate::download::quality::bandcamp_has_free_download(&html)
@@ -36,15 +19,7 @@ pub async fn page_has_free_download(page_url: &str) -> bool {
 pub async fn parse_album_with_free_flag(album_url: &str) -> Result<(AlbumDownload, bool), String> {
     let base_url = extract_base_url(album_url)?;
 
-    let client = Client::new();
-    let html = client
-        .get(album_url)
-        .send()
-        .await
-        .map_err(|e| format!("Network request failed: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read page payload: {}", e))?;
+    let html = crate::platforms::http::get_page(album_url).await?;
 
     let is_free_download = crate::download::quality::bandcamp_has_free_download(&html);
     let mut tracks = parse_tracks_from_html(&html, base_url)?;
@@ -104,20 +79,12 @@ pub fn extract_album_url(html: &str, track_url: &str) -> Option<String> {
 
 /// Fetches the track page and returns its album url (see `extract_album_url`).
 pub async fn find_album_url(track_url: &str) -> Option<String> {
-    let html = Client::new().get(track_url).send().await.ok()?.text().await.ok()?;
+    let html = crate::platforms::http::get_page(track_url).await.ok()?;
     extract_album_url(&html, track_url)
 }
 
 pub async fn parse_track(track_url: &str) -> Result<(TrackDownload, Option<String>), String> {
-    let client = Client::new();
-    let html = client
-        .get(track_url)
-        .send()
-        .await
-        .map_err(|e| format!("Network request failed: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read page payload: {e}"))?;
+    let html = crate::platforms::http::get_page(track_url).await?;
 
     let meta = parse_track_meta(&html);
     let sanitized_name = sanitize_fs(&meta.title);
