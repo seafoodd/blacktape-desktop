@@ -67,6 +67,7 @@ export type SectionStatus =
   | "error";
 
 export interface SectionState {
+  retryCursors?: Partial<Record<SearchSource, SearchCursor>>;
   items: SearchSuggestion[];
   /** Copies of `items` on other platforms (see `itemsForPlatform`). */
   copies: ItemCopy[];
@@ -264,6 +265,26 @@ const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   };
 };
 
+function mergeProgress(previous: SourceProgress[], updates: SourceProgress[]): SourceProgress[] {
+  return [...previous.map((entry) => updates.find((update) => update.source === entry.source) ?? entry),
+    ...updates.filter((update) => !previous.some((entry) => entry.source === update.source))];
+}
+
+function paginationState(page: FullSearchPage, previous: SearchCursor, retries: SectionState["retryCursors"]) {
+  const retryCursors = { ...retries };
+  const cursor = { ...page.next_cursor };
+  for (const source of ["youtube", "soundcloud"] as const) {
+    if (previous[source] == null) continue;
+    if (page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) {
+      retryCursors[source] = { [source]: previous[source] };
+      if (source === "youtube") cursor.youtube = previous.youtube;
+      else cursor.soundcloud = previous.soundcloud;
+    } else delete retryCursors[source];
+  }
+  const hasMore = cursor.youtube != null || cursor.soundcloud != null;
+  return { retryCursors, nextCursor: hasMore ? cursor : null, hasMore };
+}
+
 export const useSearchPageStore = create<SearchPageState>((set, get) => {
   const setSection = (kind: SearchKind, patch: Partial<SectionState>): void =>
     set((s) => ({
@@ -371,7 +392,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       setSection(kind, { status: "loadingMore", error: null, progress: initialProgress });
       try {
         const page = await searchWithProgress(
-          { query: state.query, kind, platforms: SEARCH_PLATFORMS, sources: [source] },
+          { query: state.query, kind, platforms: SEARCH_PLATFORMS, sources: [source], ...(section.retryCursors?.[source] ? { cursor: section.retryCursors[source] } : {}) },
           (updates) => {
             if (!guard.isLatest(token)) return;
             setSection(kind, { progress: initialProgress.map((entry) => updates.find((u) => u.source === entry.source) ?? entry) });
@@ -379,12 +400,15 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         );
         if (!guard.isLatest(token)) return;
         const next = readySection(page);
+        const retryCursors = { ...section.retryCursors };
+        if (!page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) delete retryCursors[source];
         const cursor = { ...section.nextCursor };
         if (source === "youtube") cursor.youtube = next.nextCursor?.youtube ?? null;
         if (source === "soundcloud") cursor.soundcloud = next.nextCursor?.soundcloud ?? null;
         const hasMore = Boolean(cursor.youtube || cursor.soundcloud != null);
         setSection(kind, {
           ...next,
+          retryCursors,
           items: mergePages(section.items, next.items),
           copies: [...section.copies, ...next.copies],
           warnings: [...section.warnings.filter((warning) => !warning.includes(SOURCE_NAMES[source])), ...next.warnings],
@@ -413,7 +437,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         const page = await searchWithProgress(
           { query, kind, platforms: SEARCH_PLATFORMS, cursor },
           (progress) => {
-            if (guard.isLatest(token)) setSection(kind, { progress });
+            if (guard.isLatest(token)) setSection(kind, { progress: mergeProgress(section.progress, progress) });
           },
         );
         if (!guard.isLatest(token)) return;
@@ -421,6 +445,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         const next = readySection(page);
         setSection(kind, {
           ...next,
+          ...paginationState(page, cursor, section.retryCursors),
           items: mergePages(current.items, next.items),
           copies: [...current.copies, ...next.copies],
           // keep the first page's platform warnings (e.g. "Bandcamp unavailable")
@@ -428,7 +453,10 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         });
       } catch (err) {
         if (!guard.isLatest(token)) return;
-        setSection(kind, { status: "ready", error: errorMessage(err) });
+        const retryCursors = { ...section.retryCursors };
+        if (cursor.youtube != null) retryCursors.youtube = { youtube: cursor.youtube };
+        if (cursor.soundcloud != null) retryCursors.soundcloud = { soundcloud: cursor.soundcloud };
+        setSection(kind, { status: "ready", error: errorMessage(err), retryCursors });
       }
     },
 
