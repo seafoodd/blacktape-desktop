@@ -37,3 +37,4 @@ src-tauri/gen/
 
 # Local Cargo overrides (contains local SENTRY_DSN)
 .cargo/
+.tmp/
