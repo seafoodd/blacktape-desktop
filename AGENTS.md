@@ -26,6 +26,8 @@ Every bug that is fixed gets a test that fails without the fix. If the bug came 
 
 ## Security
 
+- Determine a platform from the parsed HTTP(S) hostname. Never infer it from a substring in a URL path, query, fragment or user information.
+
 Take extra care, and review twice, in code that handles auth tokens, downloads, the updater, file paths and URLs:
 - never log or commit tokens, keys or secrets;
 - treat file names, paths and URLs from the network or from tags as untrusted (no path traversal, check the host);

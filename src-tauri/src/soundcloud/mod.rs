@@ -231,11 +231,7 @@ pub fn next_offset_from_href(next_href: Option<&str>) -> Option<u32> {
 }
 
 pub fn is_soundcloud_url(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
-        .map(|h| h == "soundcloud.com" || h.ends_with(".soundcloud.com") || h == "snd.sc")
-        .unwrap_or(false)
+    crate::platforms::platform_of_url(url) == Some(crate::types::Platform::Soundcloud)
 }
 
 /// Picks the stream a full download should use, or `None` when only previews exist.

@@ -10,6 +10,7 @@ pub mod library_index;
 mod lyrics;
 pub mod metadata;
 mod playlists;
+pub(crate) mod platforms;
 mod preview;
 pub mod resolver;
 pub mod scan;
@@ -801,15 +802,7 @@ async fn get_album_preview(
     {
         client.fetch_canonical_release(raw_target).await?
     } else {
-        let detected_platform = if raw_target.contains("bandcamp.com") {
-            Platform::Bandcamp
-        } else if raw_target.contains("soundcloud.com") {
-            Platform::Soundcloud
-        } else if raw_target.contains("youtube.com") || raw_target.contains("youtu.be") {
-            Platform::Youtube
-        } else {
-            platform
-        };
+        let detected_platform = crate::platforms::platform_of_url(raw_target).unwrap_or(platform);
         let raw = crate::download::album_preview::album_preview(detected_platform, raw_target).await?;
         let mut upgraded: Option<crate::metadata::types::CanonicalRelease> = None;
         if !skip_mb_upgrade.unwrap_or(false) {

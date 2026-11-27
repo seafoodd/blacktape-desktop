@@ -298,19 +298,11 @@ pub(super) enum DownloadSite {
 }
 
 pub(super) fn download_site(url: &str) -> DownloadSite {
-    let host = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
-        .unwrap_or_default();
-    let on = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-    if on("youtube.com") || on("youtu.be") {
-        DownloadSite::Youtube
-    } else if on("bandcamp.com") {
-        DownloadSite::Bandcamp
-    } else if crate::soundcloud::is_soundcloud_url(url) {
-        DownloadSite::Soundcloud
-    } else {
-        DownloadSite::Other
+    match crate::platforms::platform_of_url(url) {
+        Some(crate::types::Platform::Youtube) => DownloadSite::Youtube,
+        Some(crate::types::Platform::Bandcamp) => DownloadSite::Bandcamp,
+        Some(crate::types::Platform::Soundcloud) => DownloadSite::Soundcloud,
+        _ => DownloadSite::Other,
     }
 }
 

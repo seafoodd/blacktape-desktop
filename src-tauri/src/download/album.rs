@@ -133,14 +133,8 @@ pub fn detect_platform_from_url(url: &str, fallback: Platform) -> Platform {
     let lower = url.to_ascii_lowercase();
     if lower.starts_with("magnet:") || lower.starts_with("torrent:") {
         Platform::Local
-    } else if lower.contains("bandcamp.com") {
-        Platform::Bandcamp
-    } else if lower.contains("soundcloud.com") {
-        Platform::Soundcloud
-    } else if lower.contains("youtube.com") || lower.contains("youtu.be") {
-        Platform::Youtube
     } else {
-        fallback
+        crate::platforms::platform_of_url(url).unwrap_or(fallback)
     }
 }
 

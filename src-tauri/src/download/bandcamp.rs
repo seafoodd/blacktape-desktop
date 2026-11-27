@@ -14,10 +14,7 @@ pub async fn page_has_free_download(page_url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(page_url.trim()) else {
         return false;
     };
-    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
-        return false;
-    };
-    if host != "bandcamp.com" && !host.ends_with(".bandcamp.com") {
+    if crate::platforms::platform_of_url(parsed.as_str()) != Some(crate::types::Platform::Bandcamp) {
         return false;
     }
     let client = Client::builder()

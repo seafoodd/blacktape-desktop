@@ -71,24 +71,7 @@ fn slot_for(key: &str) -> Slot {
 
 /// Infers the actual host platform from `url` when the URL explicitly belongs to Bandcamp, SoundCloud, or YouTube.
 pub fn platform_for_stream_url(fallback: Platform, url: &str) -> Platform {
-    let Ok(parsed) = url::Url::parse(url.trim()) else {
-        return fallback;
-    };
-    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
-        return fallback;
-    };
-    if host == "bandcamp.com" || host.ends_with(".bandcamp.com") {
-        Platform::Bandcamp
-    } else if host == "soundcloud.com" || host.ends_with(".soundcloud.com") {
-        Platform::Soundcloud
-    } else if host == "youtube.com"
-        || host.ends_with(".youtube.com")
-        || host == "youtu.be"
-    {
-        Platform::Youtube
-    } else {
-        fallback
-    }
+    crate::platforms::platform_of_url(url).unwrap_or(fallback)
 }
 
 /// Cached or freshly resolved stream of the track at `url`.
