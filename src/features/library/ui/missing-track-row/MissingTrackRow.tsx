@@ -18,6 +18,7 @@ import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { missingDownloadParams, useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {
   missingRemoteTrack,
@@ -36,6 +37,8 @@ interface MissingTrackRowProps {
   percent?: number;
   /** A running download (started elsewhere, e.g. from the search) fetches this song. */
   downloading?: boolean;
+  /** The owning download task; cancellation currently stops this whole task. */
+  downloadTaskId?: string;
   /** A song that was just removed: shown dimmed in its place, no actions. */
   ghost?: boolean;
   /** The platform has no stream for this song: no download or preview, but "Find another source". */
@@ -66,6 +69,7 @@ const MissingTrackRow = ({
   track,
   percent = 0,
   downloading = false,
+  downloadTaskId,
   ghost = false,
   unavailable = false,
   failure,
@@ -118,6 +122,7 @@ const MissingTrackRow = ({
         [styles.selectedBottom]: selected && !selectedBelow,
       })}
       data-song-row
+      tabIndex={busy ? 0 : undefined}
       aria-selected={selected}
       onClick={(e) => onSelect?.(e)}
       onDoubleClick={play}
@@ -195,14 +200,8 @@ const MissingTrackRow = ({
             <MdErrorOutline size={18} />
           </button>
         ) : busy ? (
-          <span
-            className={clsx(
-              styles.percent,
-              percent >= 100 ? styles.percentCompleted : percent > 0 ? styles.percentActive : styles.percentPending,
-            )}
-            aria-live="polite"
-          >
-            {percent}%
+          <span className={styles.percent}>
+            <TrackDownloadProgress taskId={downloadTaskId} percent={percent} />
           </span>
         ) : (
           <span className={styles.downloadButton} onDoubleClick={(e) => e.stopPropagation()}>

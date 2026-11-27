@@ -104,6 +104,7 @@ export interface TrackPlacement {
   album_artist: string;
   title: string;
   track_number: number | null;
+  disc_number?: number | null;
 }
 
 interface DownloadState {

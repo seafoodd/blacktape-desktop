@@ -353,24 +353,24 @@ export const AlbumTrackRow = ({
             {!track.available && track.note ? track.note : "No verified source"}
           </div>
         ) : null}
-        {track.candidates && track.candidates.length > 0 ? (
-          <CandidateSelector
-            track={track}
-            candidates={track.candidates}
-            selectedIdx={track.selected_candidate_idx ?? 0}
-            onSelect={onSelectCandidate}
-          />
-        ) : (
-          resolving &&
-          track.available &&
-          estimate && (
-            <span
-              className={clsx(styles.estimateBadge, styles[estimate.tier])}
-              title="Checking exact multi-source audio quality…"
-            >
-              <span className={styles.miniSpinner} aria-hidden="true" />
-              <span>{estimate.label}</span>
-            </span>
+        {status.kind !== "running" && status.kind !== "downloaded" && (
+          track.candidates && track.candidates.length > 0 ? (
+            <CandidateSelector
+              track={track}
+              candidates={track.candidates}
+              selectedIdx={track.selected_candidate_idx ?? 0}
+              onSelect={onSelectCandidate}
+            />
+          ) : (
+            resolving && track.available && estimate && (
+              <span
+                className={clsx(styles.estimateBadge, styles[estimate.tier])}
+                title="Checking exact multi-source audio quality…"
+              >
+                <span className={styles.miniSpinner} aria-hidden="true" />
+                <span>{estimate.label}</span>
+              </span>
+            )
           )
         )}
         <span className={styles.duration}>{formatTrackDuration(track.duration_ms)}</span>
@@ -379,20 +379,27 @@ export const AlbumTrackRow = ({
           {status.kind === "running" && (
             <span
               className={clsx(
-                styles.percent,
-                status.percent >= 100
-                  ? styles.percentCompleted
-                  : status.percent > 0
-                    ? styles.percentActive
-                    : styles.percentPending,
+                styles.transferSlot,
+                task?.phase === "running" && task.taskId && styles.transferCancellable,
               )}
-              aria-live="polite"
             >
-              {status.percent}%
+              <span
+                className={clsx(
+                  styles.percent,
+                  status.percent >= 100
+                    ? styles.percentCompleted
+                    : status.percent > 0
+                      ? styles.percentActive
+                      : styles.percentPending,
+                )}
+                aria-live="polite"
+              >
+                {status.percent}%
+              </span>
+              {task?.phase === "running" && task.taskId && (
+                <CancelDownloadButton taskId={task.taskId} />
+              )}
             </span>
-          )}
-          {status.kind === "running" && task?.phase === "running" && task.taskId && (
-            <CancelDownloadButton taskId={task.taskId} />
           )}
           {status.kind === "download" && (
             <span onDoubleClick={(e) => e.stopPropagation()}>

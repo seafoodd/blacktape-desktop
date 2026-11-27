@@ -1,5 +1,6 @@
 import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
 import { torrentStatusMessage } from "@/features/library/model/downloadStatusMessage.ts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
@@ -71,6 +72,7 @@ import { albumHasMultipleDiscs, playableRowsFrom, rowDiscNumber } from "./artist
 import {
   downloadingAlbumMetaLine,
   extraDownloadingTracksForAlbum,
+  findMissingTrackDownload,
   groupMissingSelection,
   isActiveLibraryDownload,
   matchDownloadToLibraryAlbum,
@@ -977,11 +979,13 @@ const ArtistAlbums = () => {
                   {metaLine && (
                     <span className={clsx(styles.albumMeta, "truncate")}>{metaLine}</span>
                   )}
-                  <span className={styles.albumUpgradingBadge} title="Downloading album">
-                    <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
-                    <span role="status">{torrentStatusMessage(download.message) ?? `Downloading ${download.overallPercent}%`}</span>
+                  <span className={styles.albumTransfer}>
+                    <span className={styles.albumUpgradingBadge} title="Downloading album">
+                      <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
+                      <span role="status">{torrentStatusMessage(download.message) ?? `Downloading ${download.overallPercent}%`}</span>
+                    </span>
+                    <CancelDownloadButton taskId={download.id} />
                   </span>
-                  <CancelDownloadButton taskId={download.id} />
                 </div>
                 <ul className={styles.songs}>
                   {tracks.length > 0 ? (
@@ -996,7 +1000,7 @@ const ArtistAlbums = () => {
                               <span className={styles.discHeaderTitle}>DISC {disc}</span>
                             </li>
                           )}
-                          <li className={clsx(styles.song, styles.downloadingSong)}>
+                          <li className={clsx(styles.song, styles.downloadingSong)} data-song-row tabIndex={0}>
                             <div className={styles.songLeft}>
                               <div className={styles.songTrackNumber}>
                                 {String(track.trackNumber || trackIdx + 1).padStart(2, "0")}
@@ -1007,13 +1011,7 @@ const ArtistAlbums = () => {
                             </div>
                             <div className={styles.songRight}>
                               <div className={styles.trackPercentage}>
-                                {track.status === "completed" || track.percent >= 100 ? (
-                                  <span className={styles.percentCompleted}>100%</span>
-                                ) : track.percent > 0 ? (
-                                  <span className={styles.percentActive}>{track.percent}%</span>
-                                ) : (
-                                  <span className={styles.percentPending}>0%</span>
-                                )}
+                                <TrackDownloadProgress taskId={download.id} percent={track.percent} finished={track.status === "completed" || track.status === "failed"} />
                               </div>
                             </div>
                           </li>
@@ -1095,6 +1093,7 @@ const ArtistAlbums = () => {
                     {albumMetaLine(album.songs)}
                   </span>
                 )}
+                <span className={styles.albumTransfer}>
                 {(() => {
                   const albumDownloads = downloadsByExistingAlbum.get(album.title) ?? [];
                   const torrentMessage = albumDownloads.map((d) => torrentStatusMessage(d.message)).find(Boolean);
@@ -1141,6 +1140,7 @@ const ArtistAlbums = () => {
                     return upgrade ? [upgrade.taskId] : [];
                   }),
                 ]} />
+                </span>
                 {(() => {
                   const source = sourceOf(album.title);
                   if (source) {
@@ -1188,9 +1188,6 @@ const ArtistAlbums = () => {
               <ul className={styles.songs}>
                 {(() => {
                   const { missing, rows } = albumViews[index];
-                  const download = missing
-                    ? Object.values(activeDownloads).find((d) => linkedAlbumOf(d) === album.title)
-                    : undefined;
                   const hasMultiDiscs = albumHasMultipleDiscs(
                     album.songs,
                     missing ? missing.tracks : undefined,
@@ -1203,6 +1200,12 @@ const ArtistAlbums = () => {
                   return (
                     <>
                       {rows.map(({ row, id }, i) => {
+                        const download = row.kind === "missing"
+                          ? (downloadsByExistingAlbum.get(album.title) ?? []).find((task) => missingTrackDownloading(task, row.track))
+                          : undefined;
+                        const cancelTarget = row.kind === "missing"
+                          ? findMissingTrackDownload(downloadsByExistingAlbum.get(album.title) ?? [], row.track)
+                          : undefined;
                         const disc = rowDiscNumber(row);
                         const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
                         if (showDiscHeader) {
@@ -1248,6 +1251,7 @@ const ArtistAlbums = () => {
                                   track={row.track}
                                   percent={missingTrackPercent(download, row.track)}
                                   downloading={missingTrackDownloading(download, row.track)}
+                                  downloadTaskId={cancelTarget?.id}
                                   ghost={row.track.url === ""}
                                   unavailable={unavailable.has(row.track.url)}
                                   failure={missingFailures[row.track.url]}
@@ -1282,7 +1286,7 @@ const ArtistAlbums = () => {
                                   <span className={styles.discHeaderTitle}>DISC {tr.discNumber}</span>
                                 </li>
                               )}
-                              <li className={clsx(styles.song, styles.downloadingSong)}>
+                              <li className={clsx(styles.song, styles.downloadingSong)} data-song-row tabIndex={0}>
                                 <div className={styles.songLeft}>
                                   <div className={styles.songTrackNumber}>
                                     {String(tr.trackNumber).padStart(2, "0")}
@@ -1293,13 +1297,7 @@ const ArtistAlbums = () => {
                                 </div>
                                 <div className={styles.songRight}>
                                   <div className={styles.trackPercentage}>
-                                    {tr.status === "completed" || tr.percent >= 100 ? (
-                                      <span className={styles.percentCompleted}>100%</span>
-                                    ) : tr.percent > 0 ? (
-                                      <span className={styles.percentActive}>{tr.percent}%</span>
-                                    ) : (
-                                      <span className={styles.percentPending}>0%</span>
-                                    )}
+                                    <TrackDownloadProgress taskId={tr.taskId} percent={tr.percent} finished={tr.status === "completed" || tr.status === "failed"} />
                                   </div>
                                 </div>
                               </li>

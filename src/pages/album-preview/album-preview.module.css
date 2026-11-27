@@ -289,9 +289,8 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: flex-end;
-    /* as wide as the 30px download button minus its negative right margin (.rowSplit), whatever the row shows,
-       so the durations line up */
-    width: 76px;
+    /* One stable slot for a download button, percentage, cancel or completed check. */
+    width: 44px;
     margin-left: 4px;
 }
 
@@ -327,7 +326,9 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     min-width: 36px;
-    text-align: right;
+    text-align: center;
+    /* Progress is display-only, including while the hover action replaces it. */
+    pointer-events: none;
 }
 
 .percentCompleted {
@@ -340,6 +341,50 @@
 
 .percentPending {
     color: var(--color-muted, rgba(255, 255, 255, 0.45));
+}
+
+.transferSlot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    place-items: center;
+    /* Share the completed check's right-edge center; the hit target can extend into the row padding. */
+    width: 16px;
+    flex: 0 0 16px;
+    height: 30px;
+    isolation: isolate;
+}
+
+.transferSlot > * {
+    grid-area: 1 / 1;
+}
+
+.transferSlot > button {
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.trackRow:hover .transferCancellable > .percent,
+.trackRow:focus-within .transferCancellable > .percent {
+    visibility: hidden;
+}
+
+.trackRow:hover .transferCancellable > button,
+.trackRow:focus-within .transferCancellable > button,
+.transferCancellable > button:disabled {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.transferCancellable:has(> button:disabled) > .percent {
+    visibility: hidden;
+}
+
+@media (hover: none) {
+    .transferCancellable > .percent { visibility: hidden; }
+    .transferCancellable > button { opacity: 1; pointer-events: auto; }
 }
 
 .titleBadge {

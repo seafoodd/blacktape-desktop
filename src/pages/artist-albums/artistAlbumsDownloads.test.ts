@@ -8,9 +8,11 @@ import {
   groupMissingSelection,
   extraDownloadingTracksForAlbum,
   unifiedAlbumKey,
+  findMissingTrackDownload,
 } from "./artistAlbumsDownloads.ts";
 import { ItemType, type DownloadProgress } from "@/shared/store/libraryStore.ts";
 import type { Song } from "@/shared/types.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 
 it("groups only selected, available missing tracks by album without mixing their positions", () => {
   const first = { album: "In Utero", track: { index: 11, url: "missing-one" } };
@@ -38,6 +40,20 @@ function dl(over: Partial<DownloadProgress> = {}): DownloadProgress {
       { title: "Waiting for the Sun", status: "pending", percent: 0, trackNumber: 2 },
     ],
     ...over,
+  };
+}
+
+function missingTrack(overrides: Partial<AlbumTrackInfo> = {}): AlbumTrackInfo {
+  return {
+    index: 0,
+    title: "Song",
+    artists: [],
+    track_number: 1,
+    disc_number: 1,
+    url: "",
+    available: true,
+    note: null,
+    ...overrides,
   };
 }
 
@@ -124,6 +140,179 @@ describe("artistAlbumsDownloads", () => {
     const librarySongs = [{ title: "Roadhouse Blues" }];
     const extra = extraDownloadingTracksForAlbum(librarySongs, ["Peace Frog"], [dl()]);
     expect(extra.map((t) => t.title)).toEqual(["Waiting for the Sun"]);
+  });
+
+  it("does not match a different title that happens to share the missing row's track number", () => {
+    expect(findMissingTrackDownload([
+      dl({ tracks: [{ title: "Different Song", status: "downloading", percent: 30, trackNumber: 1 }] }),
+    ], missingTrack())).toBeUndefined();
+  });
+
+  it("uses known disc metadata to distinguish same-titled tracks across discs", () => {
+    const discOne = dl({
+      id: "disc-one",
+      tracks: [{ title: "Song", status: "downloading", percent: 20, trackNumber: 1, discNumber: 1 }],
+    });
+    const discTwo = dl({
+      id: "disc-two",
+      tracks: [{ title: "Song", status: "downloading", percent: 40, trackNumber: 1, discNumber: 2 }],
+    });
+
+    expect(findMissingTrackDownload([discOne, discTwo], missingTrack({ disc_number: 2 }))?.id).toBe("disc-two");
+  });
+
+  it("does not choose between equally strong recovered matches when the row has no disc", () => {
+    const recoveredOne = dl({
+      id: "recovered-one",
+      tracks: [{ title: "Song", status: "downloading", percent: 20, trackNumber: 1 }],
+    });
+    const recoveredTwo = dl({
+      id: "recovered-two",
+      tracks: [{ title: "Song", status: "downloading", percent: 40, trackNumber: 1 }],
+    });
+
+    expect(findMissingTrackDownload([recoveredOne, recoveredTwo], missingTrack({ disc_number: null }))).toBeUndefined();
+  });
+
+  it("prefers an exact selected track URL over weaker title metadata and ignores completed tasks", () => {
+    const exactUrl = dl({ id: "url-match", trackUrls: ["https://example.test/track/song"] });
+    const titleMatch = dl({
+      id: "title-match",
+      tracks: [{ title: "Song", status: "downloading", percent: 30, trackNumber: 1 }],
+    });
+    const completedUrl = dl({
+      id: "completed",
+      status: "completed",
+      trackUrls: ["https://example.test/track/song"],
+    });
+
+    expect(findMissingTrackDownload([titleMatch, completedUrl, exactUrl], missingTrack({
+      url: "https://example.test/track/song",
+    }))?.id).toBe("url-match");
+  });
+
+  it("matches a unique placement task by normalized title and uses its library disc", () => {
+    const placement = dl({
+      id: "placement",
+      itemType: ItemType.Track,
+      tracks: [],
+      placement: {
+        title: "  SONG ",
+        track_number: 1,
+        album: "Morrison Hotel",
+        album_artist: "The Doors",
+        disc_number: 2,
+      },
+    });
+
+    expect(findMissingTrackDownload([placement], missingTrack({ title: "Song", disc_number: 2 }))?.id)
+      .toBe("placement");
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "does not offer cancellation for a %s track while a sibling in its album task is active",
+    (trackStatus) => {
+      const task = dl({
+        tracks: [
+          { title: "Song", status: trackStatus, percent: 100, trackNumber: 1, discNumber: 1 },
+          { title: "Sibling", status: "downloading", percent: 25, trackNumber: 2, discNumber: 1 },
+        ],
+      });
+
+      expect(findMissingTrackDownload([task], missingTrack())).toBeUndefined();
+    },
+  );
+
+  it.each(["completed", "failed"] as const)(
+    "does not use an exact selected track URL to offer cancellation for a %s track",
+    (trackStatus) => {
+      const task = dl({
+        trackUrls: ["https://example.test/track/song"],
+        tracks: [
+          { title: "Song", status: trackStatus, percent: 100, trackNumber: 1, discNumber: 1 },
+          { title: "Sibling", status: "downloading", percent: 25, trackNumber: 2, discNumber: 1 },
+        ],
+      });
+
+      expect(findMissingTrackDownload([task], missingTrack({
+        url: "https://example.test/track/song",
+      }))).toBeUndefined();
+    },
+  );
+
+  it("continues matching a track at 100 percent while its progress status is downloading", () => {
+    const task = dl({
+      tracks: [{ title: "Song", status: "downloading", percent: 100, trackNumber: 1, discNumber: 1 }],
+    });
+
+    expect(findMissingTrackDownload([task], missingTrack())?.id).toBe("dl-1");
+  });
+
+  it("rejects same-title same-disc progress when both known track numbers differ", () => {
+    const task = dl({
+      tracks: [{ title: "Intro", status: "downloading", percent: 50, trackNumber: 3, discNumber: 1 }],
+    });
+
+    expect(findMissingTrackDownload([task], missingTrack({
+      title: "Intro",
+      track_number: 1,
+      disc_number: 1,
+    }))).toBeUndefined();
+  });
+
+  it("rejects placement progress when both known track numbers differ", () => {
+    const task = dl({
+      itemType: ItemType.Track,
+      tracks: [],
+      placement: {
+        title: "Intro",
+        track_number: 3,
+        album: "Morrison Hotel",
+        album_artist: "The Doors",
+        disc_number: 1,
+      },
+    });
+
+    expect(findMissingTrackDownload([task], missingTrack({
+      title: "Intro",
+      track_number: 1,
+      disc_number: 1,
+    }))).toBeUndefined();
+  });
+
+  it("preserves each originating task id and placement fallback while filtering represented tracks", () => {
+    const first = dl({
+      id: "album-task",
+      tracks: [
+        { title: "Saved Song", status: "downloading", percent: 15, trackNumber: 1 },
+        { title: "Missing Song", status: "pending", percent: 0, trackNumber: 2 },
+        { title: "New Song", status: "downloading", percent: 40, trackNumber: 3 },
+      ],
+    });
+    const second = dl({
+      id: "placement-task",
+      itemType: ItemType.Track,
+      tracks: [],
+      overallPercent: 65,
+      placement: {
+        title: "Placement Song",
+        track_number: 4,
+        album: "Morrison Hotel",
+        album_artist: "The Doors",
+      },
+    });
+
+    expect(extraDownloadingTracksForAlbum([{ title: "Saved Song" }], ["Missing Song"], [first, second]))
+      .toEqual([
+        {
+          taskId: "album-task", title: "New Song", trackNumber: 3, discNumber: 1,
+          percent: 40, status: "downloading",
+        },
+        {
+          taskId: "placement-task", title: "Placement Song", trackNumber: 4, discNumber: 1,
+          percent: 65, status: "downloading",
+        },
+      ]);
   });
 
   it("produces identical unifiedAlbumKey across downloading and library albums and formats release year meta", () => {

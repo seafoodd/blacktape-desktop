@@ -194,21 +194,6 @@
     border-color: rgba(22, 163, 74, 0.35);
 }
 
-.upgradeSpinner {
-    width: 10px;
-    height: 10px;
-    border: 1.5px solid color-mix(in srgb, var(--color-primaryLight) 30%, transparent);
-    border-top-color: var(--color-primaryLight);
-    border-radius: 50%;
-    animation: songUpgradeSpin 700ms linear infinite;
-}
-
-@keyframes songUpgradeSpin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
 /* duration at rest, the "..." button on hover, stacked in one cell so nothing beside them moves */
 .endSlot {
     display: grid;

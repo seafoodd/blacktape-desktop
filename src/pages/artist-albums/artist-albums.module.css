@@ -50,7 +50,6 @@
 .downloadingSong {
     cursor: default !important;
     user-select: none;
-    pointer-events: none;
 
     &:hover {
         background-color: transparent !important;
@@ -62,14 +61,6 @@
     font-weight: 600;
     min-width: 48px;
     text-align: right;
-}
-
-.percentCompleted {
-    color: var(--color-primary);
-}
-
-.percentActive {
-    color: var(--color-text, #ffffff);
 }
 
 .percentPending {
@@ -152,6 +143,22 @@
     min-width: 0;
     font-size: var(--font-sm);
     color: var(--color-muted);
+}
+
+.albumTransfer {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.albumTransfer:empty { display: none; }
+
+.albumTransfer > button {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
 }
 
 .albumUpgradingBadge {

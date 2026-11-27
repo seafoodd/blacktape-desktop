@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
@@ -234,23 +234,16 @@ const SongListItem = ({
         >
           {isFav ? <MdFavorite size={16} /> : <MdFavoriteBorder size={16} />}
         </button>
-        {upgradeProgress && (
+        {upgradeProgress?.done && (
           <span
-            className={clsx(styles.upgradeBadge, upgradeProgress.done && styles.upgradeBadgeDone)}
-            title={upgradeProgress.done ? "Upgraded" : `Upgrading (${upgradeProgress.percent}%)`}
+            className={clsx(styles.upgradeBadge, styles.upgradeBadgeDone)}
+            title="Upgraded"
           >
-            {!upgradeProgress.done && <span className={styles.upgradeSpinner} aria-hidden="true" />}
-            <span>
-              {upgradeProgress.done
-                ? "Upgraded"
-                : upgradeProgress.percent > 0
-                  ? `${upgradeProgress.percent}%`
-                  : "Upgrading"}
-            </span>
+            Upgraded
           </span>
         )}
-        {upgradeProgress && !upgradeProgress.done && upgradeProgress.taskId && (
-          <CancelDownloadButton taskId={upgradeProgress.taskId} />
+        {upgradeProgress && !upgradeProgress.done && (
+          <TrackDownloadProgress taskId={upgradeProgress.taskId} percent={upgradeProgress.percent} />
         )}
         <QualityBadge song={song} className={styles.qualityBadge} />
         {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}

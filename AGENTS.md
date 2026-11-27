@@ -17,6 +17,8 @@ For larger changes, have a separate reviewer (a subagent or `superpowers:request
 
 ## Bugs
 
+- When replacing progress text with a hover action, keep their centers aligned and prevent the hidden text from intercepting pointer events. Verify the actual hover target and click in a browser, not only opacity or rendered markup.
+
 - Keep a download visible and retryable when its cancellation command fails. Prefer a running task over completed history when matching a download control to a URL.
 
 - A transfer reaching 100% is complete only after its library save succeeds. Derive task success from confirmed saves and preserve individual failures in the frontend.

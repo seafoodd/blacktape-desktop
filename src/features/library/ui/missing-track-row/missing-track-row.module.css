@@ -223,17 +223,6 @@
     font-weight: 600;
 }
 
-.percentCompleted {
-    color: var(--color-primary);
-}
-
-.percentActive {
-    color: var(--color-text, #ffffff);
-}
-
-.percentPending {
-    color: var(--color-muted, #888888);
-}
 
 /* Placeholder of a song that was just removed: dimmed, nothing to click. */
 .ghost {

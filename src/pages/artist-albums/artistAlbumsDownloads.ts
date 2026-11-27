@@ -2,6 +2,7 @@ import type { Album, Song } from "@/shared/types.ts";
 import type { LibraryAlbumSource } from "@/shared/lib/library/libraryIndex.ts";
 import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import type { DownloadProgress } from "@/shared/store/libraryStore.ts";
+import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 
 const ACTIVE_STATUSES = new Set(["downloading", "idle", "processing"]);
 
@@ -21,6 +22,47 @@ export function groupMissingSelection<T extends { album: string; track: { url: s
 
 export function isActiveLibraryDownload(d: Pick<DownloadProgress, "status" | "url">): boolean {
   return ACTIVE_STATUSES.has(d.status) && !d.url.startsWith("resolve:");
+}
+
+/** A destructive action needs a unique source or title/disc match; track numbers alone are insufficient. */
+export function findMissingTrackDownload(
+  downloads: readonly DownloadProgress[],
+  track: AlbumTrackInfo,
+): DownloadProgress | undefined {
+  const title = normalizeAlbumTitle(track.title);
+  const disc = track.disc_number ?? 1;
+  const metadataScore = (candidateTitle: string, candidateDisc?: number | null, candidateNumber?: number | null): number => {
+    if (!title || normalizeAlbumTitle(candidateTitle) !== title) return 0;
+    if (candidateDisc != null && candidateDisc !== disc) return 0;
+    if (candidateNumber != null && track.track_number != null && candidateNumber !== track.track_number) return 0;
+    return candidateDisc != null ? 2 : 1;
+  };
+  let bestScore = 0;
+  let matches: DownloadProgress[] = [];
+  for (const download of downloads) {
+    if (!isActiveLibraryDownload(download)) continue;
+    const progress = download.placement || download.itemType === "Track"
+      ? download.tracks.slice(0, 1)
+      : download.tracks.filter((item) => metadataScore(item.title, item.discNumber, item.trackNumber) > 0);
+    if (progress.length > 0 && progress.every((item) => item.status === "completed" || item.status === "failed")) continue;
+    let score: number;
+    if (download.trackUrls?.length) {
+      score = track.url && download.trackUrls.some((url) => sameUrl(url, track.url)) ? 3 : 0;
+    } else if (track.url && sameUrl(download.url, track.url)) {
+      score = 3;
+    } else if (download.placement) {
+      score = metadataScore(download.placement.title, download.placement.disc_number, download.placement.track_number);
+    } else {
+      score = download.tracks.reduce((best, item) => Math.max(best, metadataScore(item.title, item.discNumber, item.trackNumber)), 0);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      matches = [download];
+    } else if (score > 0 && score === bestScore) {
+      matches.push(download);
+    }
+  }
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function normalizeAlbumTitle(title: string): string {
@@ -70,6 +112,7 @@ export function matchDownloadToLibraryAlbum(
 }
 
 export interface IntegratedDownloadingTrack {
+  taskId: string;
   title: string;
   trackNumber: number;
   discNumber: number;
@@ -112,6 +155,7 @@ export function extraDownloadingTracksForAlbum(
         if (!key || existingTitles.has(key) || seenDownloading.has(key)) return;
         seenDownloading.add(key);
         out.push({
+          taskId: d.id,
           title: tr.title,
           trackNumber: tr.trackNumber ?? idx + 1,
           discNumber: tr.discNumber ?? 1,
@@ -124,6 +168,7 @@ export function extraDownloadingTracksForAlbum(
       if (key && !existingTitles.has(key) && !seenDownloading.has(key)) {
         seenDownloading.add(key);
         out.push({
+          taskId: d.id,
           title: d.placement.title,
           trackNumber: d.placement.track_number ?? albumSongs.length + 1,
           discNumber: 1,
