@@ -998,22 +998,78 @@ pub async fn download_batch_streaming(
     Ok(downloaded)
 }
 
-struct OwnedPreviewProcess(tokio::process::Child);
+struct OwnedPreviewProcess {
+    child: tokio::process::Child,
+    #[cfg(unix)]
+    group: Option<u32>,
+    #[cfg(target_os = "windows")]
+    _job: std::os::windows::io::OwnedHandle,
+    completed: bool,
+}
+
+impl OwnedPreviewProcess {
+    fn new(child: tokio::process::Child) -> Result<Self, String> {
+        #[cfg(target_os = "windows")]
+        let job = match preview_process_job(&child) {
+            Ok(job) => job,
+            Err(error) => {
+                let mut child = child;
+                if let Some(pid) = child.id() { crate::download::TaskRegistry::kill_pid(pid); }
+                let _ = child.start_kill();
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            #[cfg(unix)]
+            group: child.id(),
+            child,
+            #[cfg(target_os = "windows")]
+            _job: job,
+            completed: false,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn preview_process_job(child: &tokio::process::Child) -> Result<std::os::windows::io::OwnedHandle, String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    // An unnamed job owns only this preview and its descendants. Closing its last handle
+    // terminates descendants even if their parent has exited while they still hold pipes.
+    let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if raw.is_null() { return Err(format!("Could not create preview process job: {}", std::io::Error::last_os_error())); }
+    // SAFETY: CreateJobObjectW returned a new, non-null handle owned by this scope.
+    let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: the handle is live; limits points to the structure of the stated size/class.
+    if unsafe { SetInformationJobObject(job.as_raw_handle(), JobObjectExtendedLimitInformation,
+        (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+        std::mem::size_of_val(&limits) as u32) } == 0 {
+        return Err(format!("Could not configure preview process job: {}", std::io::Error::last_os_error()));
+    }
+    let process = child.raw_handle().ok_or("Preview process handle unavailable")?;
+    // SAFETY: both handles are valid for the duration of this call. No other process is queried.
+    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) } == 0 {
+        return Err(format!("Could not own preview process tree: {}", std::io::Error::last_os_error()));
+    }
+    Ok(job)
+}
 
 impl Drop for OwnedPreviewProcess {
     fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            if let Some(pid) = self.0.id() {
-                #[cfg(target_os = "windows")]
-                crate::download::TaskRegistry::kill_pid(pid);
-                #[cfg(unix)]
-                {
-                    // prepare_command gives this child a group of its own.
-                    let _ = std::process::Command::new("kill")
-                        .args(["-KILL", "--", &format!("-{pid}")]).output();
-                }
-                let _ = self.0.start_kill();
+        if !self.completed {
+            #[cfg(unix)]
+            if let Some(pid) = self.group {
+                // Retain the original group ID: Child::id() is gone after wait reaps the parent.
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{pid}")]).output();
             }
+            let _ = self.child.start_kill();
         }
     }
 }
@@ -1034,20 +1090,26 @@ pub(crate) async fn wait_with_deadline(
     limit: Duration,
 ) -> Result<std::process::Output, String> {
     use tokio::io::AsyncWriteExt;
-    let mut process = OwnedPreviewProcess(child);
-    tokio::time::timeout(limit, async {
+    let mut process = OwnedPreviewProcess::new(child)?;
+    let result = tokio::time::timeout(limit, async {
         if let Some(input) = input {
-            let mut stdin = process.0.stdin.take().ok_or("yt-dlp stdin unavailable")?;
+            let mut stdin = process.child.stdin.take().ok_or("yt-dlp stdin unavailable")?;
             stdin.write_all(&input).await.map_err(|error| error.to_string())?;
         }
-        let stdout = process.0.stdout.take();
-        let stderr = process.0.stderr.take();
+        let stdout = process.child.stdout.take();
+        let stderr = process.child.stderr.take();
         let (status, stdout, stderr) = tokio::try_join!(
-            process.0.wait(), read_process_pipe(stdout), read_process_pipe(stderr)
+            process.child.wait(), read_process_pipe(stdout), read_process_pipe(stderr)
         ).map_err(|error| error.to_string())?;
         Ok(std::process::Output { status, stdout, stderr })
-    }).await.map_err(|_| "yt-dlp timed out after its preview deadline".to_string())?
+    }).await.map_err(|_| "yt-dlp timed out after its preview deadline".to_string())?;
+    process.completed = result.is_ok();
+    result
 }
+
+#[cfg(test)]
+#[path = "ytdlp_descendant_tests.rs"]
+mod descendant_tests;
 
 #[cfg(test)]
 #[path = "ytdlp_deadline_tests.rs"]
