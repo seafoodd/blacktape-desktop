@@ -415,6 +415,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
             // If the failure occurred outside yt-dlp (e.g. metadata parsing, album discovery, cover fetching),
             // report it here with the task's url and track context.
             if e != super::youtube_sign_in::CANCELLED && e != super::track::NO_TRACK_UPGRADE
+                && !super::youtube_sign_in::is_skipped_message(&e)
                 && !e.starts_with("ERROR:") && !e.starts_with("[yt-dlp") && !e.contains("No such file or directory") {
                 crate::telemetry::report_download_error_with_context(
                     &format!("{:?}", task.platform).to_lowercase(),

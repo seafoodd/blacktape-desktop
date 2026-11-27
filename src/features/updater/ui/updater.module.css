@@ -41,7 +41,6 @@
     border: 1px solid var(--color-border);
     border-radius: 4px;
     font-size: var(--font-sm, 12px);
-    scrollbar-width: thin;
     display: flex;
     flex-direction: column;
     gap: 4px;

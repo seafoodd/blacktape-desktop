@@ -23,7 +23,6 @@
     padding-right: 4px;
     gap: 2px;
     overflow-y: auto;
-    scrollbar-width: thin;
 }
 
 .playlistItem {

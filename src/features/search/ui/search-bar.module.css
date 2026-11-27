@@ -176,7 +176,6 @@
     max-height: 480px;
     height: 100%;
     overflow-y: auto;
-    scrollbar-width: thin;
     scroll-behavior: smooth;
 }
 

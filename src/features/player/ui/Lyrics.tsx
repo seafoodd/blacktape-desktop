@@ -14,6 +14,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import { LyricLine, parseLyrics } from "../lib/lyricsParser";
 import { providerName } from "../lib/lyricsSource";
+import { shouldFollowLine } from "../lib/lyricsFollow.ts";
 import { MdFormatColorText, MdSync } from "react-icons/md";
 import {
   ContextMenu,
@@ -425,19 +426,22 @@ export const Lyrics = ({ className }: LyricsProps) => {
   }, [songKey]);
 
   // Auto-scroll to active line
+  const followedIndexRef = useRef(-1);
   useEffect(() => {
+    const lineChanged = followedIndexRef.current !== activeIndex;
+    followedIndexRef.current = activeIndex;
     if (
       parsedLyrics?.isTimed &&
       activeIndex >= 0 &&
       activeLineRef.current &&
-      !userScrolled
+      shouldFollowLine({ isPlaying, userScrolled, lineChanged })
     ) {
       activeLineRef.current.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
     }
-  }, [activeIndex, userScrolled, parsedLyrics?.isTimed]);
+  }, [activeIndex, userScrolled, isPlaying, parsedLyrics?.isTimed]);
 
   const handleLineClick = async (line: LyricLine) => {
     if (line.timeMs !== undefined && currentSong?.duration_ms) {

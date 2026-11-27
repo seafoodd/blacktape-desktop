@@ -269,7 +269,18 @@ pub async fn process_track_url(
         .await;
         staged_torrent_track(staging, result, &track_info.title)?
     } else {
-        ytdlp::download_single(app_handle, &track_info, output_dir, task_id).await?
+        let mut wanted = vec![track_info.clone()];
+        if super::youtube_sign_in::is_torrent_download(effective_format.as_deref(), &wanted) {
+            let skipped = super::youtube_sign_in::leave_out_youtube_unless_signed_in(
+                &mut wanted,
+                super::youtube_sign_in::has_session(app_handle),
+            ).await;
+            if skipped > 0 {
+                return Err(super::youtube_sign_in::skipped_message(skipped));
+            }
+        }
+        let track = wanted.pop().ok_or("There is no track to download.")?;
+        ytdlp::download_single(app_handle, &track, output_dir, task_id).await?
     };
 
     let mut cover_path = None;

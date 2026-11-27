@@ -10,13 +10,14 @@
 .rightSidebarContent {
     flex: 1;
     overflow-y: auto;
-    scrollbar-width: thin;
     /*padding: 8px 0 8px 8px;*/
 }
 
+/* Starts on the border and reaches into this sidebar: the main panel's scrollbar ends right before the border,
+   and anything laid over it hides the bar and takes the mouse from it. */
 .resizer {
     position: absolute;
-    left: -5px;
+    left: -1px;
     top: 0;
     bottom: 0;
     width: 8px;

@@ -3,7 +3,6 @@
     flex-direction: column;
     gap: 4px;
     overflow-y: auto;
-    scrollbar-width: thin;
     scroll-behavior: smooth;
     max-height: 100%;
     font-size: var(--font-lg);

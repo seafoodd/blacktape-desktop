@@ -5,7 +5,6 @@
     height: 100%;
     overflow-y: auto;
     color: var(--color-text);
-    scrollbar-width: thin;
     scroll-behavior: smooth;
 }
 
@@ -375,7 +374,6 @@
     gap: 12px;
     overflow-x: auto;
     padding-bottom: 6px;
-    scrollbar-width: thin;
 }
 
 .discoItem {

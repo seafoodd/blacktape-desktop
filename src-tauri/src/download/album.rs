@@ -1187,6 +1187,8 @@ pub async fn process_album_url(
     let task_staging = crate::torrent::download::torrent_staging_dir(&torrent_staging, task_id);
     let _staging = crate::torrent::download::TorrentStagingCleanup(task_staging);
 
+    let from_torrent = super::youtube_sign_in::is_torrent_download(effective_format.as_deref(), &tracks);
+
     let producer = async {
         let mut transfer_err: Option<String> = None;
         for (_hash, (locator, requests)) in torrent_groups {
@@ -1217,6 +1219,16 @@ pub async fn process_album_url(
                         transfer_err = Some(err);
                     }
                 }
+            }
+        }
+
+        if from_torrent {
+            let skipped = super::youtube_sign_in::leave_out_youtube_unless_signed_in(
+                &mut http_tracks,
+                super::youtube_sign_in::has_session(app_handle),
+            ).await;
+            if skipped > 0 {
+                transfer_err.get_or_insert_with(|| super::youtube_sign_in::skipped_message(skipped));
             }
         }
 

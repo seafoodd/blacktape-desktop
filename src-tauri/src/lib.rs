@@ -1,3 +1,4 @@
+mod alt_menu;
 pub(crate) mod asset_scope;
 pub mod audio;
 pub mod auth;
@@ -1062,6 +1063,7 @@ pub fn run() {
             });
         })
         .manage(Mutex::new(None::<discord_presence::DiscordRpcClient>))
+        .plugin(alt_menu::init())
         .plugin(
             tauri::plugin::Builder::<_, ()>::new("torrent")
                 .invoke_handler(generate_handler![
