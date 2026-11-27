@@ -1,9 +1,90 @@
 use reqwest::{Client, Response};
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::future::Future;
 
 const PAGE_LIMIT: usize = 8 * 1024 * 1024;
 const COVER_LIMIT: usize = 12 * 1024 * 1024;
+
+pub struct Failure {
+    pub message: String,
+    pub retry: bool,
+    pub retry_after: Option<Duration>,
+}
+
+impl Failure {
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self { message: message.into(), retry: false, retry_after: None }
+    }
+
+    pub fn from_response(response: &Response) -> Self {
+        let status = response.status();
+        let retry_after = response.headers().get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| {
+                value.trim().parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
+                    httpdate::parse_http_date(value).ok().map(|date| {
+                        date.duration_since(std::time::SystemTime::now()).unwrap_or_default()
+                    })
+                })
+            });
+        Self { message: format!("HTTP {status}"), retry: status.is_server_error() || status.as_u16() == 429, retry_after }
+    }
+}
+
+impl From<reqwest::Error> for Failure {
+    fn from(error: reqwest::Error) -> Self {
+        let retry = match error.status() {
+            Some(status) => status.is_server_error() || status.as_u16() == 429,
+            None => error.is_timeout() || error.is_connect() || error.is_body() || error.is_request() || error.is_decode(),
+        };
+        Self { message: error.without_url().to_string(), retry, retry_after: None }
+    }
+}
+
+pub fn backoff(attempt: u32) -> Duration {
+    Duration::from_secs(3u64.saturating_pow(attempt.saturating_sub(1)))
+}
+
+pub async fn retrying<T, F, Fut>(attempts: u32, pause: impl Fn(u32) -> Duration, attempt: F) -> Result<T, String>
+where F: FnMut() -> Fut, Fut: Future<Output = Result<T, Failure>> {
+    retrying_for(Duration::from_secs(10 * 60), attempts, pause, attempt).await
+}
+
+pub async fn retrying_for<T, F, Fut>(
+    budget: Duration,
+    attempts: u32,
+    pause: impl Fn(u32) -> Duration,
+    mut attempt: F,
+) -> Result<T, String>
+where F: FnMut() -> Fut, Fut: Future<Output = Result<T, Failure>> {
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut number = 1;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("Request deadline exceeded".into());
+        }
+        let result = tokio::time::timeout_at(deadline, attempt()).await
+            .map_err(|_| "Request deadline exceeded".to_string())?;
+        match result {
+            Ok(value) => return Ok(value),
+            Err(failure) if failure.retry && number < attempts => {
+                let delay = failure.retry_after.unwrap_or_else(|| pause(number));
+                if delay >= deadline.saturating_duration_since(tokio::time::Instant::now()) {
+                    return Err(failure.message);
+                }
+                tracing::warn!(attempt = number, error = %failure.message, "Request failed, retrying");
+                tokio::time::sleep(delay).await;
+                number += 1;
+            }
+            Err(failure) => return Err(failure.message),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "retry_tests.rs"]
+mod retry_tests;
 
 /// Custom artist domains are supported, but local addresses and embedded credentials are rejected.
 pub fn checked_public_url(raw: &str) -> Result<url::Url, String> {
