@@ -20,7 +20,7 @@ pub struct BandcampSearchResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct AutoSection {
-    pub results: Vec<BandcampResult>,
+    pub results: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
@@ -38,7 +38,7 @@ pub struct BandcampResult {
     pub id: u64,
     pub name: String,
     pub band_name: Option<String>,
-    pub img: String,
+    pub img: Option<String>,
     pub item_url_path: Option<String>,
     pub album_name: Option<String>,
     pub album_id: Option<u64>,
@@ -55,11 +55,12 @@ impl From<BandcampResult> for SearchSuggestion {
 
         let display_artist = res.band_name.unwrap_or_else(|| res.name.clone());
 
+        let image = res.img.unwrap_or_default();
         let img_src = match item_type {
-            ItemType::Album => res.img.replace("/img/", "/img/a"),
-            ItemType::Track => res.img.replace("/img/", "/img/a"),
+            ItemType::Album => image.replace("/img/", "/img/a"),
+            ItemType::Track => image.replace("/img/", "/img/a"),
 
-            _ => res.img,
+            _ => image,
         };
 
         Self {
@@ -92,6 +93,19 @@ fn http_client() -> &'static Client {
     })
 }
 
+fn parse_response(body: &str) -> Result<Vec<SearchSuggestion>, String> {
+    let parsed: BandcampSearchResponse = serde_json::from_str(body)
+        .map_err(|_| "Bandcamp returned an invalid search response".to_string())?;
+    Ok(parsed.auto.results.into_iter()
+        .filter_map(|row| serde_json::from_value::<BandcampResult>(row).ok())
+        .map(SearchSuggestion::from)
+        .collect())
+}
+
+#[cfg(test)]
+#[path = "bandcamp_tests.rs"]
+mod tests;
+
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
     let client = http_client();
     let url = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic";
@@ -106,15 +120,7 @@ pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error 
 
     if response.status().is_success() {
         let body_text = response.text().await?;
-        let parsed: BandcampSearchResponse = serde_json::from_str(&body_text)
-            .map_err(|e| format!("JSON Error: {} | Body: {}", e, body_text))?;
-        let suggestions = parsed
-            .auto
-            .results
-            .into_iter()
-            .map(SearchSuggestion::from)
-            .collect();
-        Ok(suggestions)
+        parse_response(&body_text).map_err(Into::into)
     } else {
         Err(format!("Bandcamp API error: {}", response.status()).into())
     }
