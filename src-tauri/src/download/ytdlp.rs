@@ -581,6 +581,7 @@ async fn download_track_internal(
                 error = %err,
                 "yt-dlp process failed to spawn"
             );
+            ctx.record_failure(format!("Could not start yt-dlp: {err}"));
             return None;
         }
     };
@@ -675,6 +676,7 @@ async fn download_track_internal(
                 error = %err,
                 "yt-dlp child wait error"
             );
+            ctx.record_failure(format!("Could not wait for yt-dlp: {err}"));
             return None;
         }
     };
@@ -981,13 +983,18 @@ pub async fn download_batch_streaming(
     // Nothing downloaded because every track failed: tell the user why instead of finishing silently.
     if downloaded.is_empty() {
         discard_failed_batch(&ctx.temp_dir).await;
+        let cancelled = match app.try_state::<crate::download::TaskRegistry>() {
+            Some(registry) => registry.is_cancelled(task_id).await,
+            None => false,
+        };
+        if cancelled {
+            return Err(empty_batch_error(true, &[]));
+        }
         if let Some(Err(error)) = ctx.youtube_sign_in.get() {
             return Err(error.clone());
         }
         let reasons = ctx.failures.lock().map(|f| f.clone()).unwrap_or_default();
-        if !reasons.is_empty() {
-            return Err(reasons.join("; "));
-        }
+        return Err(empty_batch_error(false, &reasons));
     }
 
     Ok(downloaded)
@@ -1017,6 +1024,20 @@ where
 #[cfg(test)]
 #[path = "ytdlp_fallback_tests.rs"]
 mod fallback_tests;
+
+fn empty_batch_error(cancelled: bool, reasons: &[String]) -> String {
+    if cancelled {
+        "Task cancelled".into()
+    } else if reasons.is_empty() {
+        "No tracks could be downloaded.".into()
+    } else {
+        reasons.join("; ")
+    }
+}
+
+#[cfg(test)]
+#[path = "ytdlp_batch_error_tests.rs"]
+mod batch_error_tests;
 
 async fn discard_failed_batch(temp_dir: &Path) {
     if let Err(error) = tokio::fs::remove_dir_all(temp_dir).await {
