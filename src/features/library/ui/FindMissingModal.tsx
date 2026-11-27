@@ -87,7 +87,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
             ? failedSong
             ? `Pick another version of "${album}":`
             : `Which one is "${album}"?`
-            : "No matching album was found."}
+            : error ? "Album sources could not be searched." : "No matching album was found."}
       </span>
       {linked && (
         <span className={styles.linked}>

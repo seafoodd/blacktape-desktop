@@ -203,6 +203,7 @@ pub async fn fetch_canonical_album_suggestions_result(
     Ok(deduped)
 }
 
+#[cfg(test)]
 pub async fn fetch_canonical_album_suggestions(
     query: &str,
     cache_dir: Option<std::path::PathBuf>,
