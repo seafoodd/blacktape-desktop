@@ -308,7 +308,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
         DownloadPayload::TrackURL(url) => {
             // A Bandcamp track of an album goes through the album pipeline: album folder, cover, track number.
             let album_url = if task.platform == crate::types::Platform::Bandcamp {
-                crate::download::bandcamp::find_album_url(&url).await
+                crate::platforms::bandcamp::download::find_album_url(&url).await
             } else {
                 None
             };

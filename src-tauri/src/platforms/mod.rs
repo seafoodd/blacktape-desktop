@@ -1,12 +1,13 @@
 use crate::types::Platform;
 pub(crate) mod http;
 pub mod soundcloud;
+pub mod bandcamp;
 
 pub async fn search_dropdown(platform: Platform, query: &str) -> Result<crate::search::SourceResults, String> {
     use crate::search::{self, SourceResults};
     match platform {
         Platform::Youtube => search::search_youtube_with_fallback(query).await.map(SourceResults::complete).map_err(|error| error.to_string()),
-        Platform::Bandcamp => search::bandcamp::search(query).await.map(SourceResults::complete).map_err(|error| error.to_string()),
+        Platform::Bandcamp => crate::platforms::bandcamp::search::search(query).await.map(SourceResults::complete).map_err(|error| error.to_string()),
         Platform::Soundcloud => crate::platforms::soundcloud::search::search_outcome(query).await.map_err(|error| error.to_string()),
         Platform::Local => Err("Local files cannot be searched remotely".into()),
     }
@@ -29,7 +30,7 @@ pub async fn artist_profile(platform: Platform, url: &str) -> Result<crate::sear
     use crate::search;
     match platform {
         Platform::Youtube => search::youtube_full::artist_profile(url).await.map_err(|error| error.to_string()),
-        Platform::Bandcamp => search::bandcamp_full::artist_profile(url).await.map_err(|error| error.to_string()),
+        Platform::Bandcamp => crate::platforms::bandcamp::search_full::artist_profile(url).await.map_err(|error| error.to_string()),
         Platform::Soundcloud => crate::platforms::soundcloud::search::artist_profile(url).await,
         Platform::Local => Err("artist profiles are not available for local files".into()),
     }
@@ -39,7 +40,7 @@ pub async fn album_metadata(platform: Platform, url: &str) -> Result<(crate::dow
     use crate::download;
     match platform {
         Platform::Youtube => download::youtube::parse_album(url).await.map(|album| (album, Vec::new(), false)),
-        Platform::Bandcamp => download::bandcamp::parse_album_with_free_flag(url).await.map(|(album, free)| (album, Vec::new(), free)),
+        Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album_with_free_flag(url).await.map(|(album, free)| (album, Vec::new(), free)),
         Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album_with_skipped(url).await.map(|(album, skipped)| (album, skipped, false)),
         Platform::Local => Err("Local albums have no remote metadata".into()),
     }

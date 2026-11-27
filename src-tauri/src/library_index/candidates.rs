@@ -134,7 +134,7 @@ pub async fn find_album_candidates(
         tasks.spawn(async move {
             use crate::search::progress::{with_deadline, dropdown_deadline, Source};
             let (source, result) = match platform {
-                Platform::Bandcamp => (Source::Bandcamp, with_deadline(dropdown_deadline(Source::Bandcamp), crate::search::bandcamp::search(&q)).await),
+                Platform::Bandcamp => (Source::Bandcamp, with_deadline(dropdown_deadline(Source::Bandcamp), crate::platforms::bandcamp::search::search(&q)).await),
                 Platform::Youtube => (Source::Youtube, with_deadline(dropdown_deadline(Source::Youtube), crate::search::search_youtube_with_fallback(&q)).await),
                 _ => (Source::Soundcloud, with_deadline(dropdown_deadline(Source::Soundcloud), crate::platforms::soundcloud::search::search_kind(&q, crate::platforms::soundcloud::search::SearchKind::Sets, 50, 0)).await.map(|page| page.items)),
             };

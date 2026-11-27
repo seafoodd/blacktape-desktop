@@ -1,6 +1,5 @@
 pub mod album;
 pub mod album_preview;
-pub mod bandcamp;
 pub mod cookies;
 pub mod deno;
 pub(crate) mod discovery;

@@ -1,4 +1,4 @@
-use blacktape_desktop_lib::download::bandcamp::parse_album;
+use blacktape_desktop_lib::platforms::bandcamp::download::parse_album;
 
 #[tokio::test]
 #[ignore]

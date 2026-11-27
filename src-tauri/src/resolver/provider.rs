@@ -131,7 +131,7 @@ pub async fn resolve_bandcamp_candidates(
     duration_ms: u64,
 ) -> Result<Vec<AudioCandidate>, String> {
     let query = format!("{} {}", artist, title);
-    let search_res = crate::search::bandcamp::search(&query).await;
+    let search_res = crate::platforms::bandcamp::search::search(&query).await;
 
     let suggestions = match search_res {
         Ok(s) => s,
@@ -181,7 +181,7 @@ pub async fn resolve_bandcamp_candidates(
 
     let mut top = keep_top_candidates(candidates);
     if let Some(url) = top.first().map(|candidate| candidate.source.primary_url().to_owned()) {
-        if crate::download::bandcamp::page_has_free_download(&url).await {
+        if crate::platforms::bandcamp::download::page_has_free_download(&url).await {
             mark_bandcamp_lossless(&mut top, &url);
         }
     }
@@ -317,7 +317,7 @@ pub async fn resolve_bandcamp_album_tracks(
     album_title: &str,
 ) -> Result<(Vec<crate::download::TrackDownload>, bool), String> {
     let query = format!("{} {}", artist, album_title);
-    let search_res = crate::search::bandcamp::search(&query).await;
+    let search_res = crate::platforms::bandcamp::search::search(&query).await;
     let suggestions = match search_res {
         Ok(s) => s,
         Err(error) => return Err(error.to_string()),
@@ -329,7 +329,7 @@ pub async fn resolve_bandcamp_album_tracks(
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
             {
-                let (album_download, is_free_download) = crate::download::bandcamp::parse_album_with_free_flag(&item.item_url_path).await.map_err(|error| error.to_string())?;
+                let (album_download, is_free_download) = crate::platforms::bandcamp::download::parse_album_with_free_flag(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from Bandcamp album '{}' (free_lossless={})",
                     album_download.tracks.len(),
@@ -389,7 +389,7 @@ pub async fn find_platform_album_editions(
     let timeout = std::time::Duration::from_millis(2200);
 
     let yt_fut = tokio::time::timeout(timeout, crate::search::youtube_fast::search(&query));
-    let bc_fut = tokio::time::timeout(timeout, crate::search::bandcamp::search(&query));
+    let bc_fut = tokio::time::timeout(timeout, crate::platforms::bandcamp::search::search(&query));
     let sc_fut = tokio::time::timeout(timeout, crate::platforms::soundcloud::search::search(&query));
 
     let (yt_res, bc_res, sc_res) = tokio::join!(yt_fut, bc_fut, sc_fut);

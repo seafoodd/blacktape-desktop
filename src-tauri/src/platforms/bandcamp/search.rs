@@ -80,7 +80,7 @@ fn parse_response(body: &str) -> Result<Vec<SearchSuggestion>, String> {
 }
 
 #[cfg(test)]
-#[path = "bandcamp_tests.rs"]
+#[path = "search_tests.rs"]
 mod tests;
 
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {

@@ -264,7 +264,7 @@ pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, Stri
 #[tauri::command]
 pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQuality {
     let lossless = platform == Platform::Bandcamp && {
-        let free = crate::download::bandcamp::page_has_free_download(&url).await;
+        let free = crate::platforms::bandcamp::download::page_has_free_download(&url).await;
         free || bandcamp_purchased(&url).await
     };
     expected_quality(platform, lossless)
@@ -273,7 +273,7 @@ pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQu
 /// The first track page of the album at `url`.
 async fn first_track_url(platform: Platform, url: &str) -> Result<String, String> {
     let album = match platform {
-        Platform::Bandcamp => crate::download::bandcamp::parse_album(url).await?,
+        Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album(url).await?,
         Platform::Youtube => crate::download::youtube::parse_album(url).await?,
         Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album(url).await?,
         Platform::Local => return Err("Local files have no download formats.".into()),

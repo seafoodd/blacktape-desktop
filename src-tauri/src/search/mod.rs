@@ -49,8 +49,6 @@ pub(crate) mod cache;
 #[cfg(test)]
 mod cache_tests;
 
-pub mod bandcamp;
-pub mod bandcamp_full;
 pub mod full;
 pub mod progress;
 pub mod ranking;
