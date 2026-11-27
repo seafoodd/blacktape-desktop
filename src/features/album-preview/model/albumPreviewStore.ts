@@ -253,7 +253,11 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
     });
     useLibraryStore.getState().setActiveView("ALBUM_PREVIEW");
     try {
-      const rawPreview = await getAlbumPreview(item.platform, item.item_url_path);
+      const rawPreview = await getAlbumPreview(item.platform, item.item_url_path, undefined, {
+        artist: item.band_name,
+        title: item.name,
+        coverUrl: item.img,
+      });
       if (!guard.isLatest(token)) return;
       const { preview, cacheDone } = mergeTracksFromCache(rawPreview);
       const needsResolution = shouldResolveCandidates(preview, cacheDone);

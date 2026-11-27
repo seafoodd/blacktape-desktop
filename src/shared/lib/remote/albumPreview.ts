@@ -198,16 +198,26 @@ export function hasMetadataChanges(
   return preview.tracks.some((t) => t.title !== (original.trackTitles[t.index] ?? t.title));
 }
 
+export interface AlbumPreviewFallbackMeta {
+  artist?: string;
+  title?: string;
+  coverUrl?: string;
+}
+
 /** Fetches the track list of the album at `url`. Rejects with a message string. */
 export const getAlbumPreview = (
   platform: Platform,
   url: string,
   skipMbUpgrade?: boolean,
+  fallbackMeta?: AlbumPreviewFallbackMeta,
 ): Promise<AlbumPreview> =>
   invoke<AlbumPreview>("get_album_preview", {
     platform,
     url,
     ...(skipMbUpgrade ? { skipMbUpgrade } : {}),
+    ...(fallbackMeta?.artist ? { fallbackArtist: fallbackMeta.artist } : {}),
+    ...(fallbackMeta?.title ? { fallbackTitle: fallbackMeta.title } : {}),
+    ...(fallbackMeta?.coverUrl ? { fallbackCoverUrl: fallbackMeta.coverUrl } : {}),
   });
 
 /** The tracks that can be selected and downloaded, in album order. */

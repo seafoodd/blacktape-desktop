@@ -139,7 +139,11 @@ describe("open", () => {
     expect(store().item).toBe(item);
     expect(store().preview).toBeNull();
     expect(setActiveViewMock).toHaveBeenCalledWith("ALBUM_PREVIEW");
-    expect(getAlbumPreviewMock).toHaveBeenCalledWith("bandcamp", ALBUM_URL);
+    expect(getAlbumPreviewMock).toHaveBeenCalledWith("bandcamp", ALBUM_URL, undefined, {
+      artist: item.band_name,
+      title: item.name,
+      coverUrl: item.img,
+    });
 
     const preview = makePreview();
     pending.resolve(preview);

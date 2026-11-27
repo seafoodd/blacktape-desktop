@@ -797,6 +797,9 @@ async fn get_album_preview(
     platform: Platform,
     url: String,
     skip_mb_upgrade: Option<bool>,
+    fallback_artist: Option<String>,
+    fallback_title: Option<String>,
+    fallback_cover_url: Option<String>,
 ) -> Result<crate::download::album_preview::AlbumPreview, String> {
     let cache_dir = app.path().app_cache_dir().ok();
     let client = crate::metadata::MusicBrainzClient::new(cache_dir.clone());
@@ -810,21 +813,57 @@ async fn get_album_preview(
         client.fetch_canonical_release(raw_target).await?
     } else {
         let detected_platform = crate::platforms::platform_of_url(raw_target).unwrap_or(platform);
-        let raw = crate::download::album_preview::album_preview(detected_platform, raw_target).await?;
-        let mut upgraded: Option<crate::metadata::types::CanonicalRelease> = None;
-        if !skip_mb_upgrade.unwrap_or(false) {
-            if let Some(mut mb_release) = client
-                .try_cached_canonical_for_album(&raw.artist, &raw.title)
-                .await
-            {
-                if mb_release.cover_url.is_none() {
-                    mb_release.cover_url = raw.cover_url.clone();
+        match crate::download::album_preview::album_preview(detected_platform, raw_target).await {
+            Ok(raw) => {
+                let mut upgraded: Option<crate::metadata::types::CanonicalRelease> = None;
+                if !skip_mb_upgrade.unwrap_or(false) {
+                    if let Some(mut mb_release) = client
+                        .try_cached_canonical_for_album(&raw.artist, &raw.title)
+                        .await
+                    {
+                        if mb_release.cover_url.is_none() {
+                            mb_release.cover_url = raw.cover_url.clone();
+                        }
+                        crate::platforms::musicbrainz::seed_candidates_from_preview(&mut mb_release, &raw);
+                        upgraded = Some(mb_release);
+                    }
                 }
-                crate::platforms::musicbrainz::seed_candidates_from_preview(&mut mb_release, &raw);
-                upgraded = Some(mb_release);
+                upgraded.unwrap_or_else(|| crate::metadata::fallback::synthesize_canonical_from_preview(raw))
+            }
+            Err(err) => {
+                let mut recovered: Option<crate::metadata::types::CanonicalRelease> = None;
+                if !skip_mb_upgrade.unwrap_or(false) {
+                    if let (Some(artist), Some(title)) = (
+                        fallback_artist.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                        fallback_title.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                    ) {
+                        tracing::warn!(
+                            platform = ?detected_platform,
+                            url = %raw_target,
+                            error = %err,
+                            "Platform album preview failed; falling back to MusicBrainz canonical lookup"
+                        );
+                        if let Some(mb_release) = client.try_cached_canonical_for_album(artist, title).await {
+                            recovered = Some(mb_release);
+                        } else if let Some(rg_id) = client.find_matching_release_group_id(artist, title).await {
+                            if let Ok(mb_release) = client.fetch_canonical_release(&format!("rg:{rg_id}")).await {
+                                recovered = Some(mb_release);
+                            }
+                        }
+                        if let Some(ref mut mb) = recovered {
+                            if mb.cover_url.is_none() {
+                                mb.cover_url = fallback_cover_url
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string);
+                            }
+                        }
+                    }
+                }
+                recovered.ok_or(err)?
             }
         }
-        upgraded.unwrap_or_else(|| crate::metadata::fallback::synthesize_canonical_from_preview(raw))
     };
 
     // Check if we already have the fully resolved release in cache

@@ -114,31 +114,30 @@ impl DiscordRpcClient {
             .start(now - position_ms)
             .end(now + duration_ms - position_ms);
 
-        let mut cover_url = song.external_cover_url.clone();
+        let mut cover_url = initial_cover_url(song);
 
         if cover_url.is_none() {
             if let Some(fetched_url) = self.cover_fetcher.fetch_cover_url(song) {
                 cover_url = Some(fetched_url.clone());
-                let Some(song_id) = song.id else {
-                    return Ok(());
-                };
-                let handle = self.handle.clone();
+                if let Some(song_id) = song.id {
+                    let handle = self.handle.clone();
 
-                tauri::async_runtime::spawn(async move {
-                    let db_state = handle.state::<tokio::sync::Mutex<Database>>();
-                    let db = db_state.lock().await;
+                    tauri::async_runtime::spawn(async move {
+                        let db_state = handle.state::<tokio::sync::Mutex<Database>>();
+                        let db = db_state.lock().await;
 
-                    if db
-                        .update_external_cover(song_id, &fetched_url)
-                        .await
-                        .is_ok()
-                    {
-                        // straight to the player (an event could also be sent by the web view)
-                        if let Some(player) = handle.try_state::<std::sync::Mutex<AudioPlayer>>() {
-                            lock_player(&player).apply_external_cover(song_id, fetched_url);
+                        if db
+                            .update_external_cover(song_id, &fetched_url)
+                            .await
+                            .is_ok()
+                        {
+                            // straight to the player (an event could also be sent by the web view)
+                            if let Some(player) = handle.try_state::<std::sync::Mutex<AudioPlayer>>() {
+                                lock_player(&player).apply_external_cover(song_id, fetched_url);
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
         }
 
@@ -200,6 +199,18 @@ impl DiscordRpcClient {
         }
         Ok(())
     }
+}
+
+fn initial_cover_url(song: &Song) -> Option<String> {
+    if let Some(url) = song.external_cover_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(url.to_string());
+    }
+    if let Some(cover_url) = song.cover_url.as_deref().map(str::trim) {
+        if cover_url.starts_with("https://") || cover_url.starts_with("http://") {
+            return Some(cover_url.to_string());
+        }
+    }
+    None
 }
 
 impl Drop for DiscordRpcClient {
@@ -269,5 +280,46 @@ mod tests {
             _ => panic!("Expected a ConnectError variant"),
         }
         assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn initial_cover_url_uses_web_cover_url_for_streamed_songs_and_skips_local_paths() {
+        let mut song = Song {
+            id: None,
+            path: String::new(),
+            title: "Streamed".into(),
+            artists: vec!["Artist".into()],
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            duration_ms: 180_000,
+            track_number: Some(1),
+            disc_number: None,
+            genre: None,
+            release_year: None,
+            cover_url: Some("https://example.com/cover.jpg".into()),
+            external_cover_url: None,
+            lyrics: None,
+            lyrics_source: None,
+            source: crate::types::Platform::Youtube,
+            source_url: Some("https://music.youtube.com/watch?v=abc".into()),
+            source_item_id: None,
+            canonical_track_slug: String::new(),
+            canonical_album_slug: String::new(),
+            quality_tier: crate::types::QualityTier::High,
+        };
+        assert_eq!(
+            initial_cover_url(&song).as_deref(),
+            Some("https://example.com/cover.jpg")
+        );
+
+        song.external_cover_url = Some("https://cdn.example.com/ext.jpg".into());
+        assert_eq!(
+            initial_cover_url(&song).as_deref(),
+            Some("https://cdn.example.com/ext.jpg")
+        );
+
+        song.external_cover_url = None;
+        song.cover_url = Some("C:\\Music\\cover.jpg".into());
+        assert_eq!(initial_cover_url(&song), None);
     }
 }
