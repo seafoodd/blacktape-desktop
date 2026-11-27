@@ -5,12 +5,14 @@ pub mod bandcamp;
 pub mod youtube;
 pub mod musicbrainz;
 
+// Keep requests on the heap: progress/cache/deadline wrappers otherwise multiply
+// large platform future states on Tokio worker stacks in debug builds.
 pub async fn search_dropdown(platform: Platform, query: &str) -> Result<crate::search::SourceResults, String> {
     use crate::search::{self, SourceResults};
     match platform {
-        Platform::Youtube => search::search_youtube_with_fallback(query).await.map(SourceResults::complete).map_err(|error| error.to_string()),
-        Platform::Bandcamp => crate::platforms::bandcamp::search::search(query).await.map(SourceResults::complete).map_err(|error| error.to_string()),
-        Platform::Soundcloud => crate::platforms::soundcloud::search::search_outcome(query).await.map_err(|error| error.to_string()),
+        Platform::Youtube => Box::pin(search::search_youtube_with_fallback(query)).await.map(SourceResults::complete).map_err(|error| error.to_string()),
+        Platform::Bandcamp => Box::pin(crate::platforms::bandcamp::search::search(query)).await.map(SourceResults::complete).map_err(|error| error.to_string()),
+        Platform::Soundcloud => Box::pin(crate::platforms::soundcloud::search::search_outcome(query)).await.map_err(|error| error.to_string()),
         Platform::Local => Err("Local files cannot be searched remotely".into()),
     }
 }
@@ -19,29 +21,29 @@ pub(crate) async fn search_page(platform: Platform, query: &str, kind: crate::se
     use crate::search::full;
     match platform {
         Platform::Youtube => match cursor.and_then(|cursor| cursor.youtube.as_deref()) {
-            Some(token) => full::youtube_more(query, kind, token).await,
-            None => full::youtube_first_page(query, kind).await,
+            Some(token) => Box::pin(full::youtube_more(query, kind, token)).await,
+            None => Box::pin(full::youtube_first_page(query, kind)).await,
         },
-        Platform::Bandcamp => full::bandcamp_page(query, kind).await,
-        Platform::Soundcloud => full::soundcloud_page(query, kind, cursor.and_then(|cursor| cursor.soundcloud).unwrap_or(0)).await,
+        Platform::Bandcamp => Box::pin(full::bandcamp_page(query, kind)).await,
+        Platform::Soundcloud => Box::pin(full::soundcloud_page(query, kind, cursor.and_then(|cursor| cursor.soundcloud).unwrap_or(0))).await,
         Platform::Local => Err("Local files have no remote search pages".into()),
     }
 }
 
 pub async fn artist_profile(platform: Platform, url: &str) -> Result<crate::search::full::ArtistProfile, String> {
     match platform {
-        Platform::Youtube => crate::platforms::youtube::search_full::artist_profile(url).await.map_err(|error| error.to_string()),
-        Platform::Bandcamp => crate::platforms::bandcamp::search_full::artist_profile(url).await.map_err(|error| error.to_string()),
-        Platform::Soundcloud => crate::platforms::soundcloud::search::artist_profile(url).await,
+        Platform::Youtube => Box::pin(crate::platforms::youtube::search_full::artist_profile(url)).await.map_err(|error| error.to_string()),
+        Platform::Bandcamp => Box::pin(crate::platforms::bandcamp::search_full::artist_profile(url)).await.map_err(|error| error.to_string()),
+        Platform::Soundcloud => Box::pin(crate::platforms::soundcloud::search::artist_profile(url)).await,
         Platform::Local => Err("artist profiles are not available for local files".into()),
     }
 }
 
 pub async fn album_metadata(platform: Platform, url: &str) -> Result<(crate::download::AlbumDownload, Vec<crate::platforms::soundcloud::download::SkippedTrack>, bool), String> {
     match platform {
-        Platform::Youtube => crate::platforms::youtube::download::parse_album(url).await.map(|album| (album, Vec::new(), false)),
-        Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album_with_free_flag(url).await.map(|(album, free)| (album, Vec::new(), free)),
-        Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album_with_skipped(url).await.map(|(album, skipped)| (album, skipped, false)),
+        Platform::Youtube => Box::pin(crate::platforms::youtube::download::parse_album(url)).await.map(|album| (album, Vec::new(), false)),
+        Platform::Bandcamp => Box::pin(crate::platforms::bandcamp::download::parse_album_with_free_flag(url)).await.map(|(album, free)| (album, Vec::new(), free)),
+        Platform::Soundcloud => Box::pin(crate::platforms::soundcloud::download::parse_album_with_skipped(url)).await.map(|(album, skipped)| (album, skipped, false)),
         Platform::Local => Err("Local albums have no remote metadata".into()),
     }
 }
@@ -49,9 +51,9 @@ pub async fn album_metadata(platform: Platform, url: &str) -> Result<(crate::dow
 pub async fn track_candidates(platform: Platform, artist: &str, title: &str, duration_ms: u64) -> Result<Vec<crate::metadata::types::AudioCandidate>, String> {
     use crate::resolver::provider;
     match platform {
-        Platform::Youtube => provider::resolve_youtube_candidates(artist, title, duration_ms).await,
-        Platform::Bandcamp => provider::resolve_bandcamp_candidates(artist, title, duration_ms).await,
-        Platform::Soundcloud => provider::resolve_soundcloud_candidates(artist, title, duration_ms).await,
+        Platform::Youtube => Box::pin(provider::resolve_youtube_candidates(artist, title, duration_ms)).await,
+        Platform::Bandcamp => Box::pin(provider::resolve_bandcamp_candidates(artist, title, duration_ms)).await,
+        Platform::Soundcloud => Box::pin(provider::resolve_soundcloud_candidates(artist, title, duration_ms)).await,
         Platform::Local => Err("Local tracks have no remote candidates".into()),
     }
 }
@@ -59,9 +61,9 @@ pub async fn track_candidates(platform: Platform, artist: &str, title: &str, dur
 pub async fn album_tracks(platform: Platform, artist: &str, title: &str) -> Result<(Vec<crate::download::TrackDownload>, bool), String> {
     use crate::resolver::provider;
     match platform {
-        Platform::Youtube => provider::resolve_youtube_album_tracks(artist, title).await.map(|tracks| (tracks, false)),
-        Platform::Bandcamp => provider::resolve_bandcamp_album_tracks(artist, title).await,
-        Platform::Soundcloud => provider::resolve_soundcloud_album_tracks(artist, title).await.map(|tracks| (tracks, false)),
+        Platform::Youtube => Box::pin(provider::resolve_youtube_album_tracks(artist, title)).await.map(|tracks| (tracks, false)),
+        Platform::Bandcamp => Box::pin(provider::resolve_bandcamp_album_tracks(artist, title)).await,
+        Platform::Soundcloud => Box::pin(provider::resolve_soundcloud_album_tracks(artist, title)).await.map(|tracks| (tracks, false)),
         Platform::Local => Err("Local albums have no remote tracks".into()),
     }
 }
@@ -69,15 +71,18 @@ pub async fn album_tracks(platform: Platform, artist: &str, title: &str) -> Resu
 pub async fn stream(app: &tauri::AppHandle, platform: Platform, url: &str) -> Result<crate::preview::resolve::StreamInfo, String> {
     use crate::preview::resolve;
     match platform {
-        Platform::Youtube => resolve::resolve_youtube(app, url).await,
-        Platform::Bandcamp => resolve::resolve_bandcamp(url).await,
-        Platform::Soundcloud => resolve::resolve_soundcloud(url).await,
+        Platform::Youtube => Box::pin(resolve::resolve_youtube(app, url)).await,
+        Platform::Bandcamp => Box::pin(resolve::resolve_bandcamp(url)).await,
+        Platform::Soundcloud => Box::pin(resolve::resolve_soundcloud(url)).await,
         Platform::Local => Err("local files are already playable".into()),
     }
 }
 
 #[cfg(test)]
 mod dispatch_tests;
+
+#[cfg(test)]
+mod future_size_tests;
 
 /// Classifies a page by its HTTP(S) host, never by text in its path or query.
 pub fn platform_of_url(raw: &str) -> Option<Platform> {

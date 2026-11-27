@@ -53,6 +53,7 @@ When changing a Zustand store action, search for `\.actionName\b`, not only for 
 - `src/shared/` holds only code used by three or more areas; code for one feature or page lives in it.
 - Tests sit next to the file they test.
 - Imports use the `@/` alias with the file extension, e.g. `@/shared/lib/ui/time.ts`.
+- Keep platform dispatch futures small: pin large request futures on the heap before adding cache, progress and deadline wrappers. Check debug builds on Tokio worker stacks as well as unit tests.
 
 ## No dead code
 

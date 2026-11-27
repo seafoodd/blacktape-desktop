@@ -223,8 +223,8 @@ pub async fn fetch_canonical_album_suggestions(
 /// The fast path is given `FAST_PATH_TIMEOUT`; see `with_fallback` for the exact rules.
 pub async fn search_youtube_with_fallback(query: &str) -> SearchResult {
     with_fallback(
-        youtube_fast::search(query),
-        youtube::search(query),
+        Box::pin(youtube_fast::search(query)),
+        Box::pin(youtube::search(query)),
         FAST_PATH_TIMEOUT,
     )
     .await
