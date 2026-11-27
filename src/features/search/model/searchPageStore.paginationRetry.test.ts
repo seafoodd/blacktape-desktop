@@ -86,6 +86,7 @@ describe("search page continuation retry", () => {
     useSearchPageStore.getState().open("radiohead");
     await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(3));
     const firstTrackArgs = searchFullMock.mock.calls.find(([args]) => args.kind === ItemType.Track)?.[0];
+    if (!firstTrackArgs) throw new Error("missing first-page track request");
     const firstRequestId: number = firstTrackArgs.requestId;
     emit(firstRequestId, "bandcamp", "failed");
     emit(firstRequestId, "musicbrainz", "failed");
@@ -148,5 +149,51 @@ describe("search page continuation retry", () => {
       expect.objectContaining({ source: "musicbrainz", state: "failed" }),
       expect.objectContaining({ source: "soundcloud", state: "done" }),
     ]));
+  });
+
+  it("retries a failed first-page YouTube chain from the token that failed", async () => {
+    const initialTrack = deferred<FullSearchPage>();
+    const retryYoutube = deferred<FullSearchPage>();
+    searchFullMock.mockImplementation(({ kind, sources }: {
+      kind: SearchKind;
+      sources?: string[];
+    }) => {
+      if (kind !== ItemType.Track) return Promise.resolve(page([]));
+      if (sources?.includes("youtube")) return retryYoutube.promise;
+      return initialTrack.promise;
+    });
+
+    useSearchPageStore.getState().open("radiohead");
+    await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(3));
+    const firstTrackArgs = searchFullMock.mock.calls.find(([args]) => args.kind === ItemType.Track)?.[0];
+    emit(firstTrackArgs.requestId, "youtube", "failed");
+    emit(firstTrackArgs.requestId, "bandcamp", "done");
+    emit(firstTrackArgs.requestId, "soundcloud", "done");
+    initialTrack.resolve(page(
+      [item("First page result", "youtube")],
+      { youtube: "failed-first-chain-token", soundcloud: 20 },
+      [{ platform: "youtube", source: "youtube", message: "continuation timed out" }],
+    ));
+    await vi.waitFor(() => expect(useSearchPageStore.getState().sections[ItemType.Track].status).toBe("ready"));
+
+    const retry = useSearchPageStore.getState().retrySource(ItemType.Track, "youtube");
+    await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(4));
+    const retryArgs = searchFullMock.mock.calls[3][0];
+    expect(retryArgs.sources).toEqual(["youtube"]);
+    expect(retryArgs.cursor).toEqual(expect.objectContaining({ youtube: "failed-first-chain-token" }));
+
+    emit(retryArgs.requestId, "youtube", "done");
+    retryYoutube.resolve(page(
+      [item("Recovered YouTube", "youtube")],
+      { youtube: "next-token", soundcloud: 20 },
+    ));
+    await retry;
+
+    const section = useSearchPageStore.getState().sections[ItemType.Track];
+    expect(section.items.map((entry) => entry.name).sort()).toEqual([
+      "First page result",
+      "Recovered YouTube",
+    ]);
+    expect(section.nextCursor).toEqual({ youtube: "next-token", soundcloud: 20 });
   });
 });

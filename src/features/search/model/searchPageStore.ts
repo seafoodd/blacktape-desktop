@@ -254,7 +254,14 @@ async function searchWithProgress(
 /** The state of a section that has its page; `progress` is kept as the request left it. */
 const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   const nextCursor = page.next_cursor ?? null;
+  const retryCursors: SectionState["retryCursors"] = {};
+  for (const source of ["youtube", "soundcloud"] as const) {
+    if (nextCursor?.[source] != null && page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) {
+      retryCursors[source] = { [source]: nextCursor[source] };
+    }
+  }
   return {
+    retryCursors,
     items: page.items ?? [],
     copies: page.copies ?? [],
     status: "ready",
@@ -401,6 +408,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         if (!guard.isLatest(token)) return;
         const next = readySection(page);
         const retryCursors = { ...section.retryCursors };
+        if (next.retryCursors?.[source]) retryCursors[source] = next.retryCursors[source];
         if (!page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) delete retryCursors[source];
         const cursor = { ...section.nextCursor };
         if (source === "youtube") cursor.youtube = next.nextCursor?.youtube ?? null;
