@@ -750,12 +750,8 @@ pub async fn process_album_url(
             .iter()
             .any(|d| d.tracks.iter().any(|t| t.candidates.is_empty()));
         if needs_resolution {
-            crate::resolver::resolve_release_candidates(&mut canonical, None, url).await;
-            if let Ok(serialized) = serde_json::to_string(&canonical) {
-                client
-                    .write_cache(&format!("release_v7:{}", canonical.id), &serialized)
-                    .await;
-            }
+            let complete = crate::resolver::resolve_release_candidates(&mut canonical, None, url).await;
+            crate::resolver::persist_complete_release(&client, &canonical, complete).await;
         }
 
         let mut track_downloads = Vec::new();

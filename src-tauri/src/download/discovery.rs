@@ -39,11 +39,11 @@ async fn stream_matches(
         if tracks.len() > 3 && !album.is_empty() {
             let (artist, album, tracks) = (artist.to_owned(), album.to_owned(), tracks.to_vec());
             tasks.spawn(async move {
-                let mut sources = AlbumPlatformTracks { yt: vec![], bc: vec![], bc_free: false, sc: vec![] };
+                let mut sources = AlbumPlatformTracks { complete: false, yt: vec![], bc: vec![], bc_free: false, sc: vec![] };
                 match platform {
-                    Platform::Youtube => sources.yt = resolve_youtube_album_tracks(&artist, &album).await,
-                    Platform::Bandcamp => (sources.bc, sources.bc_free) = resolve_bandcamp_album_tracks(&artist, &album).await,
-                    Platform::Soundcloud => sources.sc = resolve_soundcloud_album_tracks(&artist, &album).await,
+                    Platform::Youtube => sources.yt = resolve_youtube_album_tracks(&artist, &album).await.unwrap_or_default(),
+                    Platform::Bandcamp => (sources.bc, sources.bc_free) = resolve_bandcamp_album_tracks(&artist, &album).await.unwrap_or_default(),
+                    Platform::Soundcloud => sources.sc = resolve_soundcloud_album_tracks(&artist, &album).await.unwrap_or_default(),
                     Platform::Local => unreachable!(),
                 }
                 tracks.into_iter().map(|track| {
@@ -66,7 +66,7 @@ async fn stream_matches(
                     Platform::Bandcamp => resolve_bandcamp_candidates(&artist, &track.title, length).await,
                     Platform::Soundcloud => resolve_soundcloud_candidates(&artist, &track.title, length).await,
                     Platform::Local => unreachable!(),
-                };
+                }.unwrap_or_default();
                 vec![StreamMatch { index: track.index, candidates }]
             });
         }

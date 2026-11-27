@@ -64,7 +64,7 @@ pub async fn resolve_youtube_candidates(
     artist: &str,
     title: &str,
     duration_ms: u64,
-) -> Vec<AudioCandidate> {
+) -> Result<Vec<AudioCandidate>, String> {
     let query = format!("{} {}", artist, title);
     let search_res = crate::search::search_youtube_with_fallback(&query).await;
 
@@ -72,7 +72,7 @@ pub async fn resolve_youtube_candidates(
         Ok(s) => s,
         Err(e) => {
             warn!("YouTube candidate search failed for '{}': {}", query, e);
-            return Vec::new();
+            return Err(e.to_string());
         }
     };
 
@@ -121,7 +121,7 @@ pub async fn resolve_youtube_candidates(
         artist,
         title
     );
-    top
+    Ok(top)
 }
 
 /// Queries Bandcamp for candidate streams matching the target track.
@@ -129,7 +129,7 @@ pub async fn resolve_bandcamp_candidates(
     artist: &str,
     title: &str,
     duration_ms: u64,
-) -> Vec<AudioCandidate> {
+) -> Result<Vec<AudioCandidate>, String> {
     let query = format!("{} {}", artist, title);
     let search_res = crate::search::bandcamp::search(&query).await;
 
@@ -137,7 +137,7 @@ pub async fn resolve_bandcamp_candidates(
         Ok(s) => s,
         Err(e) => {
             warn!("Bandcamp candidate search failed for '{}': {}", query, e);
-            return Vec::new();
+            return Err(e.to_string());
         }
     };
 
@@ -191,7 +191,7 @@ pub async fn resolve_bandcamp_candidates(
         artist,
         title
     );
-    top
+    Ok(top)
 }
 
 fn mark_bandcamp_lossless(candidates: &mut [AudioCandidate], verified_url: &str) {
@@ -209,15 +209,15 @@ pub async fn resolve_soundcloud_candidates(
     artist: &str,
     title: &str,
     duration_ms: u64,
-) -> Vec<AudioCandidate> {
+) -> Result<Vec<AudioCandidate>, String> {
     let query = format!("{} {}", artist, title);
-    let search_res = crate::search::soundcloud::search(&query).await;
+    let search_res = crate::search::soundcloud::search_kind(&query, crate::search::soundcloud::SearchKind::Tracks, 50, 0).await.map(|page| page.items);
 
     let suggestions = match search_res {
         Ok(s) => s,
         Err(e) => {
             warn!("SoundCloud candidate search failed for '{}': {}", query, e);
-            return Vec::new();
+            return Err(e.to_string());
         }
     };
 
@@ -266,7 +266,7 @@ pub async fn resolve_soundcloud_candidates(
         artist,
         title
     );
-    top
+    Ok(top)
 }
 
 /// Placeholder for BitTorrent swarm provider (Milestone 2).
@@ -284,12 +284,12 @@ pub async fn resolve_torrent_candidates(
 pub async fn resolve_youtube_album_tracks(
     artist: &str,
     album_title: &str,
-) -> Vec<crate::download::TrackDownload> {
+) -> Result<Vec<crate::download::TrackDownload>, String> {
     let query = format!("{} {}", artist, album_title);
     let search_res = crate::search::youtube_fast::search(&query).await;
     let suggestions = match search_res {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => return Err(error.to_string()),
     };
 
     for item in suggestions {
@@ -297,29 +297,30 @@ pub async fn resolve_youtube_album_tracks(
             && item.item_url_path.contains("browse/MPREb_")
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
-            if let Ok(album_download) = crate::download::youtube::parse_album(&item.item_url_path).await {
+            {
+                let album_download = crate::download::youtube::parse_album(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from YouTube Music album '{}'",
                     album_download.tracks.len(),
                     item.item_url_path
                 );
-                return album_download.tracks;
+                return Ok(album_download.tracks);
             }
         }
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Queries Bandcamp for the full album matching `artist` and `album_title`, along with whether it offers free lossless downloads.
 pub async fn resolve_bandcamp_album_tracks(
     artist: &str,
     album_title: &str,
-) -> (Vec<crate::download::TrackDownload>, bool) {
+) -> Result<(Vec<crate::download::TrackDownload>, bool), String> {
     let query = format!("{} {}", artist, album_title);
     let search_res = crate::search::bandcamp::search(&query).await;
     let suggestions = match search_res {
         Ok(s) => s,
-        Err(_) => return (Vec::new(), false),
+        Err(error) => return Err(error.to_string()),
     };
 
     for item in suggestions {
@@ -327,32 +328,31 @@ pub async fn resolve_bandcamp_album_tracks(
             && item.item_url_path.contains("/album/")
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
-            if let Ok((album_download, is_free_download)) =
-                crate::download::bandcamp::parse_album_with_free_flag(&item.item_url_path).await
             {
+                let (album_download, is_free_download) = crate::download::bandcamp::parse_album_with_free_flag(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from Bandcamp album '{}' (free_lossless={})",
                     album_download.tracks.len(),
                     item.item_url_path,
                     is_free_download
                 );
-                return (album_download.tracks, is_free_download);
+                return Ok((album_download.tracks, is_free_download));
             }
         }
     }
-    (Vec::new(), false)
+    Ok((Vec::new(), false))
 }
 
 /// Queries SoundCloud for the full album / set matching `artist` and `album_title`.
 pub async fn resolve_soundcloud_album_tracks(
     artist: &str,
     album_title: &str,
-) -> Vec<crate::download::TrackDownload> {
+) -> Result<Vec<crate::download::TrackDownload>, String> {
     let query = format!("{} {}", artist, album_title);
-    let search_res = crate::search::soundcloud::search(&query).await;
+    let search_res = crate::search::soundcloud::search_kind(&query, crate::search::soundcloud::SearchKind::Sets, 50, 0).await.map(|page| page.items);
     let suggestions = match search_res {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => return Err(error.to_string()),
     };
 
     for item in suggestions {
@@ -360,17 +360,18 @@ pub async fn resolve_soundcloud_album_tracks(
             && item.item_url_path.contains("/sets/")
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
-            if let Ok((album_download, _)) = crate::download::soundcloud::parse_album_with_skipped(&item.item_url_path).await {
+            {
+                let (album_download, _) = crate::download::soundcloud::parse_album_with_skipped(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from SoundCloud album '{}'",
                     album_download.tracks.len(),
                     item.item_url_path
                 );
-                return album_download.tracks;
+                return Ok(album_download.tracks);
             }
         }
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Searches YouTube Music, Bandcamp, and SoundCloud concurrently for matching album releases

@@ -491,8 +491,8 @@ async fn cached_preview(
             .iter()
             .any(|d| d.tracks.iter().any(|t| t.candidates.is_empty()));
         if needs_resolution {
-            crate::resolver::resolve_release_candidates(&mut canonical, None, url).await;
-            if let Ok(serialized) = serde_json::to_string(&canonical) {
+            let complete = crate::resolver::resolve_release_candidates(&mut canonical, None, url).await;
+            if let (true, Ok(serialized)) = (complete, serde_json::to_string(&canonical)) {
                 client
                     .write_cache(&format!("release:{}", canonical.id), &serialized)
                     .await;

@@ -876,17 +876,13 @@ async fn get_album_preview(
     let app_handle = app.clone();
     let album_url = initial_preview.url.clone();
     tokio::spawn(async move {
-        crate::resolver::resolve_release_candidates(&mut canonical, Some(&app_handle), &album_url)
+        let complete = crate::resolver::resolve_release_candidates(&mut canonical, Some(&app_handle), &album_url)
             .await;
-        if let Ok(serialized) = serde_json::to_string(&canonical) {
-            let client = crate::metadata::MusicBrainzClient::new(cache_dir);
-            client
-                .write_cache(&format!("release_v7:{}", canonical.id), &serialized)
-                .await;
-        }
+        let client = crate::metadata::MusicBrainzClient::new(cache_dir);
+        crate::resolver::persist_complete_release(&client, &canonical, complete).await;
         let _ = app_handle.emit(
             "album-candidates-done",
-            serde_json::json!({ "album_url": album_url }),
+            serde_json::json!({ "album_url": album_url, "complete": complete }),
         );
     });
 

@@ -9,6 +9,7 @@ use tauri::Emitter;
 use tracing::info;
 
 pub struct AlbumPlatformTracks {
+    pub complete: bool,
     pub yt: Vec<TrackDownload>,
     pub bc: Vec<TrackDownload>,
     pub bc_free: bool,
@@ -23,12 +24,15 @@ pub async fn resolve_album_platform_tracks(
     let bc_fut = provider::resolve_bandcamp_album_tracks(artist, album_title);
     let sc_fut = provider::resolve_soundcloud_album_tracks(artist, album_title);
 
-    let (yt, (bc, bc_free), sc) = tokio::join!(yt_fut, bc_fut, sc_fut);
+    let (yt, bc, sc) = tokio::join!(yt_fut, bc_fut, sc_fut);
+    let complete = yt.is_ok() && bc.is_ok() && sc.is_ok();
+    let (bc, bc_free) = bc.unwrap_or_default();
     AlbumPlatformTracks {
-        yt,
+        complete,
+        yt: yt.unwrap_or_default(),
         bc,
         bc_free,
-        sc,
+        sc: sc.unwrap_or_default(),
     }
 }
 
@@ -165,11 +169,12 @@ pub async fn resolve_release_candidates(
     release: &mut CanonicalRelease,
     app_handle: Option<&tauri::AppHandle>,
     album_url: &str,
-) {
+) -> bool {
     let artist = release.album_artist.clone();
     let album_title = release.title.clone();
 
     let album_tracks = resolve_album_platform_tracks(&artist, &album_title).await;
+    let mut complete = album_tracks.complete;
 
     let mut global_track_idx = 0;
     for disc in &mut release.discs {
@@ -186,7 +191,8 @@ pub async fn resolve_release_candidates(
             // If candidates are still empty (e.g. tracks not matched in album), fall back to single-track probes
             if candidates.is_empty() {
                 let t_artist = track.artists.first().map(|s| s.as_str()).unwrap_or(&artist);
-                let probed = resolve_candidates_for_track(t_artist, &track.title, track.duration_ms).await;
+                let (probed, probes_complete) = resolve_track_outcome(t_artist, &track.title, track.duration_ms).await;
+                complete &= probes_complete;
                 candidates.extend(probed);
             }
 
@@ -228,7 +234,18 @@ pub async fn resolve_release_candidates(
             global_track_idx += 1;
         }
     }
+    complete
 }
+
+pub async fn persist_complete_release(client: &crate::metadata::MusicBrainzClient, release: &CanonicalRelease, complete: bool) {
+    if !complete { return; }
+    if let Ok(serialized) = serde_json::to_string(release) {
+        client.write_cache(&format!("release_v7:{}", release.id), &serialized).await;
+    }
+}
+
+#[cfg(test)]
+mod cache_tests;
 
 /// Resolves audio candidates for a track across all supported platforms concurrently.
 /// Ranks results strictly by: Strict Match -> Quality Tier -> Bitrate -> Confidence.
@@ -237,6 +254,10 @@ pub async fn resolve_candidates_for_track(
     title: &str,
     duration_ms: u64,
 ) -> Vec<AudioCandidate> {
+    resolve_track_outcome(artist, title, duration_ms).await.0
+}
+
+async fn resolve_track_outcome(artist: &str, title: &str, duration_ms: u64) -> (Vec<AudioCandidate>, bool) {
     info!(
         "Resolving multi-source candidates for '{} - {}' (duration: {}ms)",
         artist, title, duration_ms
@@ -250,13 +271,14 @@ pub async fn resolve_candidates_for_track(
     let (yt_res, bc_res, sc_res, tor_res) = tokio::join!(yt_fut, bc_fut, sc_fut, tor_fut);
 
     let mut all_candidates = Vec::new();
-    all_candidates.extend(yt_res);
-    all_candidates.extend(bc_res);
-    all_candidates.extend(sc_res);
+    let complete = yt_res.is_ok() && bc_res.is_ok() && sc_res.is_ok();
+    all_candidates.extend(yt_res.unwrap_or_default());
+    all_candidates.extend(bc_res.unwrap_or_default());
+    all_candidates.extend(sc_res.unwrap_or_default());
     all_candidates.extend(tor_res);
 
     arbiter::rank_candidates(&mut all_candidates);
-    all_candidates
+    (all_candidates, complete)
 }
 
 /// Populates a canonical track with resolved candidates.
@@ -335,6 +357,7 @@ mod tests {
             ..TrackDownload::default()
         };
         let album_tracks = AlbumPlatformTracks {
+            complete: true,
             yt: vec![track_proto("https://youtube.com/watch?v=1", "In Absentia ΛΟΓΟΣ")],
             bc: vec![track_proto("https://heavenpierceher.bandcamp.com/track/in-absentia", "In Absentia ΛΟΓΟΣ")],
             bc_free: true,

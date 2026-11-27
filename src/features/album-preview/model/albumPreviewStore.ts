@@ -88,6 +88,7 @@ const resolvedCandidatesByUrl = new Map<
   string,
   { tracks: Record<number, AlbumTrackInfo>; total_duration_ms: number | null; done: boolean }
 >();
+const incompleteCandidateUrls = new Set<string>();
 
 function hasNonTorrentCandidates(track: AlbumTrackInfo): boolean {
   return track.candidates?.some((candidate) => candidate.source.kind !== "torrent") ?? false;
@@ -146,6 +147,7 @@ function mergeTracksFromCache(preview: AlbumPreview): { preview: AlbumPreview; c
 }
 
 function shouldResolveCandidates(preview: AlbumPreview, cacheDone: boolean): boolean {
+  if (incompleteCandidateUrls.has(preview.url)) return true;
   if (preview.candidates_resolved || cacheDone) return false;
   return preview.tracks.some((t) => t.available && (!t.candidates || t.candidates.length === 0));
 }
@@ -483,7 +485,7 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
     if (status !== "ready" || !preview) return;
 
     const { preview: mergedFromCache, cacheDone } = mergeTracksFromCache(preview);
-    const nextResolving = cacheDone || mergedFromCache.candidates_resolved ? false : resolvingCandidates;
+    const nextResolving = incompleteCandidateUrls.has(preview.url) || (cacheDone || mergedFromCache.candidates_resolved ? false : resolvingCandidates);
     if (mergedFromCache !== preview || nextResolving !== resolvingCandidates) {
       set({ preview: mergedFromCache, resolvingCandidates: nextResolving });
     }
@@ -562,8 +564,7 @@ export const useAlbumPreviewStore = create<AlbumPreviewStore>((set, get) => ({
         };
         const doneNow =
           Boolean(fresh.candidates_resolved) ||
-          Boolean(resolvedCandidatesByUrl.get(targetUrl)?.done) ||
-          !updatedPreview.tracks.some((t) => t.available && !hasNonTorrentCandidates(t));
+          Boolean(resolvedCandidatesByUrl.get(targetUrl)?.done);
         if (doneNow) {
           const entry = resolvedCandidatesByUrl.get(targetUrl) ?? {
             tracks: {},
@@ -693,8 +694,21 @@ if (typeof window !== "undefined") {
     });
   })?.catch(console.error);
 
-  listen<{ album_url: string }>("album-candidates-done", (event) => {
+  listen<{ album_url: string; complete?: boolean }>("album-candidates-done", (event) => {
     const albumUrl = event.payload.album_url;
+    if (event.payload.complete === false) {
+      incompleteCandidateUrls.add(albumUrl);
+      resolvedCandidatesByUrl.delete(albumUrl);
+      const { preview } = useAlbumPreviewStore.getState();
+      if (preview?.url === albumUrl) {
+        useAlbumPreviewStore.setState({ preview: { ...preview, candidates_resolved: false }, resolvingCandidates: false });
+      }
+      useNavigationStore.getState().syncAlbumCandidates?.(albumUrl, (snapshot) => ({
+        preview: { ...snapshot, candidates_resolved: false }, resolvingCandidates: false,
+      }));
+      return;
+    }
+    incompleteCandidateUrls.delete(albumUrl);
     const cached = resolvedCandidatesByUrl.get(albumUrl) ?? {
       tracks: {},
       total_duration_ms: null,
