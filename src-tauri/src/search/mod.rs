@@ -120,7 +120,7 @@ pub async fn fetch_canonical_album_suggestions_result(
         Ok(groups) => groups,
         Err(error) => client.saved_release_groups(query).await.ok_or(error)?,
     };
-    groups.retain(|rg| !crate::metadata::musicbrainz::is_bootleg_only_group(&rg.releases));
+    groups.retain(|rg| !crate::platforms::musicbrainz::is_bootleg_only_group(&rg.releases));
     // Prefer full studio Albums over EPs over Singles, no secondary types, and high release counts.
     groups.sort_by(|a, b| {
         let primary_rank = |p: Option<&str>| match p {

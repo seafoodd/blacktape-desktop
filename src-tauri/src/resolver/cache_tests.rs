@@ -1,6 +1,7 @@
 use super::persist_complete_release;
 use crate::{
-    metadata::{musicbrainz::MusicBrainzClient, types::{AudioCandidate, AudioQualityTier, AudioSource, CanonicalDisc, CanonicalRelease, CanonicalTrack}},
+    platforms::musicbrainz::MusicBrainzClient,
+    metadata::types::{AudioCandidate, AudioQualityTier, AudioSource, CanonicalDisc, CanonicalRelease, CanonicalTrack},
 };
 
 fn release(id: &str, with_candidate: bool) -> CanonicalRelease {

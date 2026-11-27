@@ -3,6 +3,7 @@ pub(crate) mod http;
 pub mod soundcloud;
 pub mod bandcamp;
 pub mod youtube;
+pub mod musicbrainz;
 
 pub async fn search_dropdown(platform: Platform, query: &str) -> Result<crate::search::SourceResults, String> {
     use crate::search::{self, SourceResults};

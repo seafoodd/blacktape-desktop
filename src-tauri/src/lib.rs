@@ -820,7 +820,7 @@ async fn get_album_preview(
                 if mb_release.cover_url.is_none() {
                     mb_release.cover_url = raw.cover_url.clone();
                 }
-                crate::metadata::musicbrainz::seed_candidates_from_preview(&mut mb_release, &raw);
+                crate::platforms::musicbrainz::seed_candidates_from_preview(&mut mb_release, &raw);
                 upgraded = Some(mb_release);
             }
         }

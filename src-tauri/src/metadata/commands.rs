@@ -1,4 +1,4 @@
-use crate::metadata::musicbrainz::MusicBrainzClient;
+use crate::platforms::musicbrainz::MusicBrainzClient;
 use crate::metadata::types::{CanonicalRelease, CanonicalReleaseSummary, CanonicalTrack, ReleaseEditionOption};
 use crate::types::Platform;
 use tauri::{command, AppHandle, Manager};
