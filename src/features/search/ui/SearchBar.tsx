@@ -26,6 +26,8 @@ import {
 } from "@/shared/hooks/useDownloadStatus.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
+import { SearchProgress, SearchPulse } from "./SearchProgress.tsx";
+import { useSearchProgressStyle } from "../model/searchProgressStyle.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
 import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
@@ -96,6 +98,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
     searchResults,
     searchWarning,
     partialResultsFor,
+    searchRun,
     setSearchQuery,
     executeSearch,
     activeCategory,
@@ -107,6 +110,8 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
     initDownloadListeners,
   } = useLibraryStore();
   const modalOpen = useModalStore((s) => s.isOpen);
+  const progressStyle = useSearchProgressStyle();
+  const pulseRun = progressStyle === "pulse" && query.trim() !== "" ? searchRun : null;
 
   useEffect(() => {
     if (modalOpen) {
@@ -190,7 +195,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
         <AiOutlineSearch size={18} className={styles.searchIcon} />
 
         <input
-          className={styles.input}
+          className={clsx(styles.input, pulseRun && styles.inputWithPulse)}
           type="text"
           placeholder="Search music..."
           value={query}
@@ -204,6 +209,8 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
           }}
           onFocus={(e) => e.currentTarget.select()}
         />
+
+        {pulseRun && <SearchPulse run={pulseRun} />}
 
         <button
           type="button"
@@ -295,6 +302,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
 
       {showDropdown && !modalOpen && (
         <div className={styles.suggestions}>
+          {progressStyle === "dashboard" && searchRun && <SearchProgress run={searchRun} />}
           {!showingSkeleton && searchWarning && (
             <div className={styles.warningBanner}>
               <span>{searchWarning}</span>

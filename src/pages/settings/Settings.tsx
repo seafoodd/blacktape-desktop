@@ -23,6 +23,12 @@ import { TelemetrySettings } from "@/features/telemetry";
 import { KeymapSettings } from "@/features/keymaps/ui/KeymapSettings.tsx";
 import { SETTINGS_HEADER_HEIGHT, useChromeHeight } from "@/shared/ui/modal";
 import { TorrentIndexerSettings } from "@/pages/settings/TorrentIndexerSettings.tsx";
+import {
+  parseSearchProgressStyle,
+  SEARCH_PROGRESS_STYLES,
+  useSearchProgressStyle,
+  writeSearchProgressStyle,
+} from "@/features/search/model/searchProgressStyle.ts";
 
 type SettingsTab =
   | "appearance"
@@ -45,6 +51,7 @@ export const Settings = () => {
     setBgBlur,
   } = useTheme();
   const { fetchTabs } = useLibraryStore();
+  const progressStyle = useSearchProgressStyle();
   useChromeHeight(SETTINGS_HEADER_HEIGHT);
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
 
@@ -189,6 +196,28 @@ export const Settings = () => {
                   <option value="12px">Small (12px)</option>
                   <option value="14px">Medium (14px) (default)</option>
                   <option value="16px">Large (16px)</option>
+                </select>
+              </div>
+
+              <div className={styles.settingRow}>
+                <label htmlFor="search-progress-select">
+                  Search Radar
+                  <span className={styles.mutedText}>
+                    {" "}
+                    {SEARCH_PROGRESS_STYLES.find((s) => s.id === progressStyle)?.description}
+                  </span>
+                </label>
+                <select
+                  id="search-progress-select"
+                  className={styles.select}
+                  value={progressStyle}
+                  onChange={(e) => writeSearchProgressStyle(parseSearchProgressStyle(e.target.value))}
+                >
+                  {SEARCH_PROGRESS_STYLES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 

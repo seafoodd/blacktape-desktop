@@ -43,6 +43,11 @@
     }
 }
 
+/* room for the progress counter */
+.inputWithPulse {
+    padding-right: 150px;
+}
+
 .filterToggleBtn {
     position: absolute;
     right: 6px;

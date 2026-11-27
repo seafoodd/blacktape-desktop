@@ -162,3 +162,167 @@ describe("executeSearch partial results", () => {
     expect(useLibraryStore.getState().searchCache).not.toHaveProperty("radiohead");
   });
 });
+
+describe("executeSearch progress", () => {
+  const progress = (source: "youtube" | "bandcamp", state: string, extra = {}) => ({
+    source,
+    state,
+    elapsedMs: null,
+    count: null,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listeners.clear();
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    useLibraryStore.setState({
+      searchQuery: "",
+      searchResults: [],
+      searchCache: {},
+      searchWarning: null,
+      partialResultsFor: null,
+      searchRun: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the trimmed query as typed while the search is pending and takes progress of its own request", async () => {
+    let finish: (value: SearchSuggestion[]) => void = () => {};
+    searchPlatformsMock.mockImplementation(
+      () => new Promise<SearchSuggestion[]>((resolve) => (finish = resolve)),
+    );
+
+    const { run, requestId } = await startSearch("  Radiohead  ");
+    const pending = useLibraryStore.getState().searchRun;
+    expect(pending?.query).toBe("Radiohead");
+    expect(pending?.finishedAt).toBeNull();
+    expect(pending?.cached).toBe(false);
+
+    emit("search-progress", { requestId, progress: progress("youtube", "running") });
+    const shown = useLibraryStore.getState().searchRun;
+    expect(shown?.sources).toHaveLength(1);
+    expect(shown?.sources[0].source).toBe("youtube");
+    expect(shown?.sources[0].state).toBe("running");
+    expect(typeof shown?.sources[0].startedAt).toBe("number");
+
+    emit("search-progress", {
+      requestId: requestId - 1,
+      progress: progress("bandcamp", "done", { elapsedMs: 5, count: 1 }),
+    });
+    expect(useLibraryStore.getState().searchRun?.sources).toHaveLength(1);
+
+    finish([]);
+    await run;
+  });
+
+  it("after the search finishes sets finishedAt, closes running sources to unknown, keeps done ones and removes listeners", async () => {
+    let finish: (value: SearchSuggestion[]) => void = () => {};
+    searchPlatformsMock.mockImplementation(
+      () => new Promise<SearchSuggestion[]>((resolve) => (finish = resolve)),
+    );
+
+    const { run, requestId } = await startSearch("Radiohead");
+    emit("search-progress", { requestId, progress: progress("youtube", "running") });
+    emit("search-progress", {
+      requestId,
+      progress: progress("bandcamp", "done", { elapsedMs: 40, count: 3 }),
+    });
+
+    finish([]);
+    await run;
+
+    const finished = useLibraryStore.getState().searchRun;
+    expect(finished?.finishedAt).not.toBeNull();
+    const bySource = Object.fromEntries(finished?.sources.map((s) => [s.source, s]) ?? []);
+    expect(bySource.youtube.state).toBe("unknown");
+    expect(bySource.youtube.startedAt).toBeNull();
+    expect(bySource.bandcamp).toEqual({
+      source: "bandcamp",
+      state: "done",
+      elapsedMs: 40,
+      count: 3,
+      startedAt: null,
+    });
+    expect(activeListenerCount()).toBe(0);
+  });
+
+  it("a search answered from the cache is marked cached, has no sources and asks no platform", async () => {
+    searchPlatformsMock.mockResolvedValueOnce([item("hit")]);
+    await useLibraryStore.getState().executeSearch("Radiohead");
+    // Another search in between, so the cached query is not the previous run.
+    searchPlatformsMock.mockResolvedValueOnce([item("other")]);
+    await useLibraryStore.getState().executeSearch("Blur");
+    searchPlatformsMock.mockClear();
+
+    await useLibraryStore.getState().executeSearch("  radiohead  ");
+
+    const run = useLibraryStore.getState().searchRun;
+    expect(run?.cached).toBe(true);
+    expect(run?.sources).toEqual([]);
+    expect(run?.finishedAt).not.toBeNull();
+    expect(useLibraryStore.getState().searchResults).toEqual([item("hit")]);
+    expect(searchPlatformsMock).not.toHaveBeenCalled();
+  });
+
+  it("running the same query again after its search finished keeps the previous run and asks no platform", async () => {
+    let finish: (value: SearchSuggestion[]) => void = () => {};
+    searchPlatformsMock.mockImplementation(
+      () => new Promise<SearchSuggestion[]>((resolve) => (finish = resolve)),
+    );
+
+    const { run, requestId } = await startSearch("Radiohead");
+    emit("search-progress", { requestId, progress: progress("youtube", "done", { elapsedMs: 40, count: 3 }) });
+    finish([item("hit")]);
+    await run;
+
+    const first = useLibraryStore.getState().searchRun;
+    expect(first?.cached).toBe(false);
+    expect(first?.sources).toHaveLength(1);
+
+    searchPlatformsMock.mockClear();
+    await useLibraryStore.getState().executeSearch("Radiohead ");
+
+    const again = useLibraryStore.getState().searchRun;
+    expect(again).toEqual(first);
+    expect(again?.cached).toBe(false);
+    expect(again?.sources).toEqual(first?.sources);
+    expect(searchPlatformsMock).not.toHaveBeenCalled();
+  });
+
+  it("an empty query sets searchRun to null", async () => {
+    useLibraryStore.setState({
+      searchRun: { query: "old", startedAt: 1, finishedAt: 2, cached: false, sources: [] },
+    });
+
+    await useLibraryStore.getState().executeSearch("   ");
+
+    expect(useLibraryStore.getState().searchRun).toBeNull();
+    expect(searchPlatformsMock).not.toHaveBeenCalled();
+  });
+
+  it("an older search finishing after a newer one started does not overwrite the newer searchRun", async () => {
+    const finishers: Array<(value: SearchSuggestion[]) => void> = [];
+    searchPlatformsMock.mockImplementation(
+      () => new Promise<SearchSuggestion[]>((resolve) => finishers.push(resolve)),
+    );
+
+    const older = useLibraryStore.getState().executeSearch("Old Query");
+    await vi.waitFor(() => expect(searchPlatformsMock).toHaveBeenCalledTimes(1));
+    const newer = useLibraryStore.getState().executeSearch("New Query");
+    await vi.waitFor(() => expect(searchPlatformsMock).toHaveBeenCalledTimes(2));
+
+    finishers[1]([]);
+    await newer;
+    const afterNewer = useLibraryStore.getState().searchRun;
+    expect(afterNewer?.query).toBe("New Query");
+    expect(afterNewer?.finishedAt).not.toBeNull();
+
+    finishers[0]([]);
+    await older;
+    expect(useLibraryStore.getState().searchRun).toBe(afterNewer);
+  });
+});

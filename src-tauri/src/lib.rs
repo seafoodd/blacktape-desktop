@@ -175,13 +175,23 @@ async fn get_search_suggestions(
 
     let want_canonical = (platforms.contains(&Platform::Youtube) || platforms.len() > 1)
         && search::is_long_enough_for_musicbrainz(&query);
+    let report = search_progress_events(app.clone(), "search-progress", request_id);
     for platform in platforms {
         let q = query.clone();
+        let report = report.clone();
         tasks.spawn(async move {
+            use search::progress::{track, Source};
             match platform {
-                Platform::Bandcamp => search::bandcamp::search(&q).await,
-                Platform::Youtube => search::search_youtube_with_fallback(&q).await,
-                Platform::Soundcloud => search::soundcloud::search(&q).await,
+                Platform::Bandcamp => {
+                    track(&report, Source::Bandcamp, search::bandcamp::search(&q), Vec::len).await
+                }
+                Platform::Youtube => {
+                    let request = search::search_youtube_with_fallback(&q);
+                    track(&report, Source::Youtube, request, Vec::len).await
+                }
+                Platform::Soundcloud => {
+                    track(&report, Source::Soundcloud, search::soundcloud::search(&q), Vec::len).await
+                }
                 _ => Ok(Vec::new()),
             }
         });
@@ -192,19 +202,22 @@ async fn get_search_suggestions(
     if want_canonical {
         let q_mb = query.clone();
         let cache_dir = app.path().app_cache_dir().ok();
+        let report = report.clone();
+        search::progress::waiting(&report, search::progress::Source::Musicbrainz);
         musicbrainz.spawn(async move {
             let is_latest = move || LATEST_SUGGESTION_SEQ.load(Ordering::SeqCst) == seq;
             tokio::time::sleep(MUSICBRAINZ_TYPING_PAUSE).await;
             let client = crate::metadata::MusicBrainzClient::new(cache_dir).only_while(is_latest);
             let answer = if is_latest() {
-                search::fetch_canonical_album_suggestions_result(
+                let request = search::fetch_canonical_album_suggestions_result(
                     &client,
                     &q_mb,
                     Platform::Youtube,
                     6,
                     std::time::Duration::from_millis(6000),
-                )
-                .await
+                );
+                search::progress::track(&report, search::progress::Source::Musicbrainz, request, Vec::len)
+                    .await
             } else {
                 Err("The search was replaced by a newer one.".to_string())
             };
@@ -234,6 +247,17 @@ async fn get_search_suggestions(
     rank(found)
 }
 
+/// Sends what each source of one search is doing to the UI as `event`.
+fn search_progress_events(
+    app: AppHandle,
+    event: &'static str,
+    request_id: u64,
+) -> search::progress::Report {
+    std::sync::Arc::new(move |progress| {
+        let _ = app.emit(event, serde_json::json!({ "requestId": request_id, "progress": progress }));
+    })
+}
+
 #[command]
 async fn search_full(
     app: AppHandle,
@@ -241,9 +265,15 @@ async fn search_full(
     kind: SearchKind,
     platforms: Vec<Platform>,
     cursor: Option<SearchCursor>,
+    // Marks the progress events of this call; without it none are sent.
+    request_id: Option<u64>,
 ) -> Result<FullSearchPage, String> {
     let cache_dir = app.path().app_cache_dir().ok();
-    search::full::search_full_with_cache(&query, kind, &platforms, cursor, cache_dir).await
+    let report = match request_id {
+        Some(id) => search_progress_events(app, "search-full-progress", id),
+        None => search::progress::ignore(),
+    };
+    search::full::search_full_with_cache(&query, kind, &platforms, cursor, cache_dir, &report).await
 }
 
 #[command]

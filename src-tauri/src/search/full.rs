@@ -23,6 +23,7 @@
 
 #![allow(dead_code)]
 
+use crate::search::progress::{self, track, Report, Source};
 use crate::search::{bandcamp_full, ranking, soundcloud, youtube_full, SearchSuggestion};
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
@@ -141,6 +142,12 @@ pub(crate) struct Fetched {
     pub warning: Option<String>,
 }
 
+impl Fetched {
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
 /// Orchestrates one `search_full` request (see module docs).
 ///
 /// Contract:
@@ -159,16 +166,18 @@ pub async fn search_full(
     platforms: &[Platform],
     cursor: Option<SearchCursor>,
 ) -> Result<FullSearchPage, String> {
-    search_full_with_cache(query, kind, platforms, cursor, None).await
+    search_full_with_cache(query, kind, platforms, cursor, None, &progress::ignore()).await
 }
 
-/// Same as `search_full`, with an optional cache directory for MusicBrainz canonical lookups.
+/// Same as `search_full`, with an optional cache directory for MusicBrainz canonical lookups, and `report` told
+/// what each source is doing.
 pub async fn search_full_with_cache(
     query: &str,
     kind: SearchKind,
     platforms: &[Platform],
     cursor: Option<SearchCursor>,
     cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
 ) -> Result<FullSearchPage, String> {
     let query = query.trim();
     let want_youtube = platforms.contains(&Platform::Youtube);
@@ -189,13 +198,19 @@ pub async fn search_full_with_cache(
         }
         let youtube = async {
             match &token {
-                Some(token) => Some(youtube_more(query, kind, token).await),
+                Some(token) => {
+                    let request = youtube_more(query, kind, token);
+                    Some(track(report, Source::Youtube, request, Fetched::len).await)
+                }
                 None => None,
             }
         };
         let soundcloud = async {
             match offset {
-                Some(offset) => Some(soundcloud_page(query, kind, offset).await),
+                Some(offset) => {
+                    let request = soundcloud_page(query, kind, offset);
+                    Some(track(report, Source::Soundcloud, request, Fetched::len).await)
+                }
                 None => None,
             }
         };
@@ -222,35 +237,39 @@ pub async fn search_full_with_cache(
     let want_canonical = kind == SearchKind::Album && (want_youtube || platforms.len() > 1);
     let youtube = async {
         if want_youtube {
-            Some(youtube_first_page(upstream_query, kind).await)
+            let request = youtube_first_page(upstream_query, kind);
+            Some(track(report, Source::Youtube, request, Fetched::len).await)
         } else {
             None
         }
     };
     let bandcamp = async {
         if want_bandcamp {
-            Some(bandcamp_page(upstream_query, kind).await)
+            let request = bandcamp_page(upstream_query, kind);
+            Some(track(report, Source::Bandcamp, request, Fetched::len).await)
         } else {
             None
         }
     };
     let soundcloud = async {
         if want_soundcloud {
-            Some(soundcloud_page(upstream_query, kind, 0).await)
+            let request = soundcloud_page(upstream_query, kind, 0);
+            Some(track(report, Source::Soundcloud, request, Fetched::len).await)
         } else {
             None
         }
     };
     let musicbrainz = async {
         if want_canonical {
-            super::fetch_canonical_album_suggestions_result(
-                &crate::metadata::MusicBrainzClient::new(cache_dir),
+            let client = crate::metadata::MusicBrainzClient::new(cache_dir);
+            let request = super::fetch_canonical_album_suggestions_result(
+                &client,
                 query,
                 Platform::Youtube,
                 8,
                 Duration::from_millis(6000),
-            )
-            .await
+            );
+            track(report, Source::Musicbrainz, request, Vec::len).await
         } else {
             Ok(Vec::new())
         }

@@ -31,6 +31,7 @@ pub mod bandcamp;
 pub mod soundcloud;
 pub mod bandcamp_full;
 pub mod full;
+pub mod progress;
 pub mod ranking;
 pub mod youtube;
 pub mod youtube_fast;

@@ -3,6 +3,12 @@ import { getArtistAlbums, getArtists } from "@/shared/lib/audio.ts";
 import { searchPlatforms } from "@/shared/lib/search/search.ts";
 import { type PlatformFilter, SEARCH_PLATFORMS } from "@/shared/lib/remote/platforms.ts";
 import { createLatestGuard } from "@/shared/lib/search/searchGuard.ts";
+import {
+  applyProgress,
+  closeProgress,
+  type SearchRun,
+  type SourceProgressEvent,
+} from "@/shared/lib/search/searchProgress.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Album, ArtistSummary, Platform } from "@/shared/types.ts";
@@ -160,6 +166,8 @@ interface LibraryState {
   searchWarning: string | null;
   /** The query whose first results are shown while slower sources are still searching. */
   partialResultsFor: string | null;
+  /** What the current or last dropdown search asked for and how its sources did. */
+  searchRun: SearchRun | null;
   setSearchQuery: (query: string) => void;
   executeSearch: (query: string, force?: boolean) => Promise<void>;
 
@@ -210,6 +218,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   searchCache: {},
   searchWarning: null,
   partialResultsFor: null,
+  searchRun: null,
 
   activeCategory: "All",
   activePlatform: "All",
@@ -221,17 +230,34 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const token = searchGuard.begin();
     const trimmedQuery = query.trim().toLowerCase();
     if (!trimmedQuery) {
-      set({ searchResults: [], searchWarning: null, partialResultsFor: null });
+      set({ searchResults: [], searchWarning: null, partialResultsFor: null, searchRun: null });
       return;
     }
 
     set({ searchWarning: null, partialResultsFor: null });
     const { searchCache } = get();
 
+    const run: SearchRun = {
+      query: query.trim(),
+      startedAt: Date.now(),
+      finishedAt: null,
+      cached: false,
+      sources: [],
+    };
     if (!force && searchCache[trimmedQuery]) {
-      set({ searchResults: searchCache[trimmedQuery] });
+      // The same query again, such as after a typed space, keeps the timings of its search.
+      const previous = get().searchRun;
+      const searchedJustNow =
+        previous !== null &&
+        previous.finishedAt !== null &&
+        previous.query.toLowerCase() === trimmedQuery;
+      set({
+        searchResults: searchCache[trimmedQuery],
+        searchRun: searchedJustNow ? previous : { ...run, finishedAt: run.startedAt, cached: true },
+      });
       return;
     }
+    set({ searchRun: run });
 
     let warning: string | null = null;
     let finished = false;
@@ -244,6 +270,15 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             if (ev.payload.requestId === token) {
               warning = ev.payload.message;
             }
+          },
+        ));
+        unlisten.push(await listen<{ requestId: number; progress: SourceProgressEvent }>(
+          "search-progress",
+          (ev) => {
+            if (finished || !searchGuard.isLatest(token)) return;
+            if (ev.payload.requestId !== token) return;
+            run.sources = applyProgress(run.sources, ev.payload.progress, Date.now());
+            set({ searchRun: { ...run } });
           },
         ));
         unlisten.push(await listen<{ requestId: number; results: SearchSuggestion[] }>(
@@ -280,6 +315,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       captureFrontendError(error, "libraryStore.executeSearch");
     } finally {
       unlisten.forEach((stop) => stop());
+      if (searchGuard.isLatest(token)) {
+        set({ searchRun: { ...run, finishedAt: Date.now(), sources: closeProgress(run.sources) } });
+      }
     }
   },
 

@@ -20,6 +20,7 @@
  * leaves `hasMore` true, so "Show more" simply retries.
  */
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import {
   ItemType,
   useLibraryStore,
@@ -31,8 +32,15 @@ import {
   type ArtistProfile,
   type FullSearchPage,
   type SearchCursor,
+  type SearchFullArgs,
   type SearchKind,
 } from "@/shared/lib/search/searchFull.ts";
+import {
+  applyProgress,
+  closeProgress,
+  type SourceProgress,
+  type SourceProgressEvent,
+} from "@/shared/lib/search/searchProgress.ts";
 import {
   createLatestGuard,
   type LatestGuard,
@@ -66,6 +74,8 @@ export interface SectionState {
   hasMore: boolean;
   /** Platform warnings of the last response, e.g. "YouTube unavailable". */
   warnings: string[];
+  /** What each source did, or is doing, for the last request of this section. */
+  progress: SourceProgress[];
 }
 
 export type ProfileStatus = "idle" | "loading" | "ready" | "error";
@@ -105,6 +115,7 @@ export const emptySection = (): SectionState => ({
   nextCursor: null,
   hasMore: false,
   warnings: [],
+  progress: [],
 });
 
 const SEARCH_PLATFORMS: Platform[] = ["youtube", "bandcamp", "soundcloud"];
@@ -161,7 +172,42 @@ function errorMessage(err: unknown): string {
   return "Search failed";
 }
 
-const readySection = (page: FullSearchPage): SectionState => {
+let lastProgressRequest = 0;
+
+/** `searchFull` that hands over what its sources are doing while it runs. */
+async function searchWithProgress(
+  args: SearchFullArgs,
+  onProgress: (sources: SourceProgress[]) => void,
+): Promise<FullSearchPage> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return searchFull(args);
+  const requestId = ++lastProgressRequest;
+  let sources: SourceProgress[] = [];
+  onProgress(sources);
+  let stop: () => void;
+  try {
+    stop = await listen<{ requestId: number; progress: SourceProgressEvent }>(
+      "search-full-progress",
+      (ev) => {
+        if (ev.payload.requestId !== requestId) return;
+        sources = applyProgress(sources, ev.payload.progress, Date.now());
+        onProgress(sources);
+      },
+    );
+  } catch (err) {
+    // The search matters more than its progress.
+    console.error("Failed to listen for search progress:", err);
+    return searchFull(args);
+  }
+  try {
+    return await searchFull({ ...args, requestId });
+  } finally {
+    stop();
+    onProgress(closeProgress(sources));
+  }
+}
+
+/** The state of a section that has its page; `progress` is kept as the request left it. */
+const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   const nextCursor = page.next_cursor ?? null;
   return {
     items: page.items ?? [],
@@ -208,11 +254,12 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
     token: number,
   ): Promise<void> => {
     try {
-      const page = await searchFull({
-        query,
-        kind,
-        platforms: SEARCH_PLATFORMS,
-      });
+      const page = await searchWithProgress(
+        { query, kind, platforms: SEARCH_PLATFORMS },
+        (progress) => {
+          if (searchGuard.isLatest(token)) setSection(kind, { progress });
+        },
+      );
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, readySection(page));
       if (kind === ItemType.Artist) startProfile(query, page.items ?? []);
@@ -223,6 +270,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
         ...emptySection(),
         status: "error",
         error: errorMessage(err),
+        progress: get().sections[kind].progress,
       });
     }
   };
@@ -275,12 +323,12 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       const token = guard.begin();
       setSection(kind, { status: "loadingMore", error: null });
       try {
-        const page = await searchFull({
-          query,
-          kind,
-          platforms: SEARCH_PLATFORMS,
-          cursor,
-        });
+        const page = await searchWithProgress(
+          { query, kind, platforms: SEARCH_PLATFORMS, cursor },
+          (progress) => {
+            if (guard.isLatest(token)) setSection(kind, { progress });
+          },
+        );
         if (!guard.isLatest(token)) return;
         const current = get().sections[kind];
         const next = readySection(page);
@@ -322,7 +370,8 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
 
       for (const kind of KINDS) {
         if (sections[kind]?.status === "loadingMore") {
-          setSection(kind, { status: "ready" });
+          // its progress can no longer arrive: nothing in it may keep counting
+          setSection(kind, { status: "ready", progress: closeProgress(sections[kind].progress) });
         }
       }
 
