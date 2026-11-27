@@ -25,6 +25,7 @@ import {
   formatCountLabel,
   hasActiveFilters,
   uniqueWarnings,
+  warningSource,
 } from "./searchResultsFormat.ts";
 
 /**
@@ -40,6 +41,7 @@ const SearchResults = () => {
   const setFilters = useSearchPageStore((s) => s.setFilters);
   const setSort = useSearchPageStore((s) => s.setSort);
   const retry = useSearchPageStore((s) => s.retry);
+  const retrySource = useSearchPageStore((s) => s.retrySource);
   const loadMore = useSearchPageStore((s) => s.loadMore);
 
   const activeDownloads = useDownloadStore((s) => s.activeDownloads);
@@ -130,14 +132,20 @@ const SearchResults = () => {
         </h2>
         {warnings.length > 0 && (
           <ul className={styles.notices}>
-            {warnings.map((message) => (
+            {warnings.map((message) => {
+              const affected = ([ItemType.Track, ItemType.Album, ItemType.Artist] as SearchKind[]).filter(kind => sections[kind].warnings.includes(message));
+              const source = affected.map(kind => sections[kind].warningSources?.[message]).find(Boolean) ?? warningSource(message);
+              return (
               <li key={message} className={styles.notice}>
                 <span>{message}</span>
-                <button type="button" className={styles.noticeRetry} onClick={() => retry()}>
-                  Retry
+                <button type="button" className={styles.noticeRetry}
+                  disabled={affected.some(kind => sections[kind].status === "loading" || sections[kind].status === "loadingMore")}
+                  onClick={() => { if (source) { for (const kind of affected) void retrySource(kind, source); } else retry(); }}>
+                  {source ? "Retry source" : "Retry search"}
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </header>

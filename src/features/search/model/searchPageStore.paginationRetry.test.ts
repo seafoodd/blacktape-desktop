@@ -196,4 +196,77 @@ describe("search page continuation retry", () => {
     ]);
     expect(section.nextCursor).toEqual({ youtube: "next-token", soundcloud: 20 });
   });
+
+  it("clears recovered source warnings across later pages while retaining Bandcamp failure", async () => {
+    const firstPage = deferred<FullSearchPage>();
+    const firstMore = deferred<FullSearchPage>();
+    const secondMore = deferred<FullSearchPage>();
+    searchFullMock.mockImplementation(({ kind, cursor }: {
+      kind: SearchKind;
+      cursor?: FullSearchPage["next_cursor"];
+    }) => {
+      if (kind !== ItemType.Track) return Promise.resolve(page([]));
+      if (cursor?.youtube === "yt-next") return secondMore.promise;
+      if (cursor) return firstMore.promise;
+      return firstPage.promise;
+    });
+
+    useSearchPageStore.getState().open("radiohead");
+    await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(3));
+    const initialArgs = searchFullMock.mock.calls.find(([args]) => args.kind === ItemType.Track)?.[0];
+    if (!initialArgs) throw new Error("missing first-page track request");
+    emit(initialArgs.requestId, "bandcamp", "failed");
+    emit(initialArgs.requestId, "youtube", "failed");
+    emit(initialArgs.requestId, "soundcloud", "done");
+    firstPage.resolve(page(
+      [item("First page", "youtube")],
+      { youtube: "yt-start", soundcloud: 10 },
+      [
+        { platform: "bandcamp", source: "bandcamp", message: "Bandcamp unavailable" },
+        { platform: "youtube", source: "youtube", message: "HTTP 503" },
+      ],
+    ));
+    await vi.waitFor(() => expect(useSearchPageStore.getState().sections[ItemType.Track].status).toBe("ready"));
+
+    const firstLoad = useSearchPageStore.getState().loadMore(ItemType.Track);
+    await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(4));
+    const firstMoreArgs = searchFullMock.mock.calls[3][0];
+    emit(firstMoreArgs.requestId, "youtube", "running");
+    emit(firstMoreArgs.requestId, "youtube", "done");
+    emit(firstMoreArgs.requestId, "soundcloud", "failed");
+    firstMore.resolve(page(
+      [item("Second page", "youtube")],
+      { youtube: "yt-next", soundcloud: null },
+      [{ platform: "soundcloud", source: "soundcloud", message: "SoundCloud unavailable" }],
+    ));
+    await firstLoad;
+
+    let section = useSearchPageStore.getState().sections[ItemType.Track];
+    expect(section.warnings).toHaveLength(2);
+    expect(section.warnings.some((warning) => warning.includes("YouTube"))).toBe(false);
+    expect(section.warnings.some((warning) => warning.includes("Bandcamp"))).toBe(true);
+
+    const secondLoad = useSearchPageStore.getState().loadMore(ItemType.Track);
+    await vi.waitFor(() => expect(searchFullMock).toHaveBeenCalledTimes(5));
+    const secondMoreArgs = searchFullMock.mock.calls[4][0];
+    expect(secondMoreArgs.cursor).toEqual({ youtube: "yt-next", soundcloud: 10 });
+    emit(secondMoreArgs.requestId, "youtube", "done");
+    emit(secondMoreArgs.requestId, "soundcloud", "done");
+    secondMore.resolve(page(
+      [item("Third page", "youtube")],
+      { youtube: "yt-final", soundcloud: 20 },
+      [],
+    ));
+    await secondLoad;
+
+    section = useSearchPageStore.getState().sections[ItemType.Track];
+    expect(section.warnings).toEqual([expect.stringContaining("Bandcamp")]);
+    expect(section.warnings.some((warning) => warning.includes("SoundCloud"))).toBe(false);
+    expect(section.warnings.some((warning) => warning.includes("YouTube"))).toBe(false);
+    expect(section.progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "bandcamp", state: "failed" }),
+      expect.objectContaining({ source: "youtube", state: "done" }),
+      expect.objectContaining({ source: "soundcloud", state: "done" }),
+    ]));
+  });
 });

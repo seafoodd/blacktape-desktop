@@ -76,7 +76,7 @@ export const SearchPulse = ({ run, onRetry }: { run: SearchRun; onRetry?: (sourc
   return (
     <>
       <div className={styles.pulse} onMouseDown={keepFocus}>
-        <button type="button" className={styles.counter} aria-describedby={detailsId}>
+        <button type="button" className={styles.counter} aria-controls={detailsId} aria-label="Search source progress">
           {run.cached ? (
             "saved"
           ) : (
@@ -90,7 +90,7 @@ export const SearchPulse = ({ run, onRetry }: { run: SearchRun; onRetry?: (sourc
             </>
           )}
         </button>
-        <div id={detailsId} className={styles.details} role="tooltip">
+        <div id={detailsId} className={styles.details} role="group" aria-label="Search sources">
           <p className={styles.summary}>
             {run.cached ? "Saved results, nothing was requested" : `“${run.query}”`}
           </p>

@@ -68,6 +68,7 @@ export type SectionStatus =
 
 export interface SectionState {
   retryCursors?: Partial<Record<SearchSource, SearchCursor>>;
+  warningSources?: Record<string, SearchSource>;
   items: SearchSuggestion[];
   /** Copies of `items` on other platforms (see `itemsForPlatform`). */
   copies: ItemCopy[];
@@ -254,6 +255,12 @@ async function searchWithProgress(
 /** The state of a section that has its page; `progress` is kept as the request left it. */
 const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   const nextCursor = page.next_cursor ?? null;
+  const warnings = (page.warnings ?? []).map((warning) => formatSearchError(warning.message, warning.source ?? warning.platform));
+  const warningSources: Record<string, SearchSource> = {};
+  for (const [index, warning] of (page.warnings ?? []).entries()) {
+    const source = warning.source ?? warning.platform;
+    if (source in SOURCE_NAMES) warningSources[warnings[index]] = source as SearchSource;
+  }
   const retryCursors: SectionState["retryCursors"] = {};
   for (const source of ["youtube", "soundcloud"] as const) {
     if (nextCursor?.[source] != null && page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) {
@@ -262,15 +269,26 @@ const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   }
   return {
     retryCursors,
+    warningSources,
     items: page.items ?? [],
     copies: page.copies ?? [],
     status: "ready",
     error: null,
     nextCursor,
     hasMore: Boolean(page.has_more) && nextCursor !== null,
-    warnings: (page.warnings ?? []).map((w) => formatSearchError(w.message, w.source ?? w.platform)),
+    warnings,
   };
 };
+
+function mergeWarnings(previous: SectionState, next: Pick<SectionState, "warnings" | "warningSources">, recovered: SearchSource[]) {
+  const warnings = [...new Set([
+    ...previous.warnings.filter(message => !recovered.some(source =>
+      previous.warningSources?.[message] === source || (!previous.warningSources?.[message] && message.toLowerCase().includes(SOURCE_NAMES[source].toLowerCase())))),
+    ...next.warnings,
+  ])];
+  const sources = { ...previous.warningSources, ...next.warningSources };
+  return { warnings, warningSources: Object.fromEntries(warnings.flatMap(message => sources[message] ? [[message, sources[message]]] : [])) };
+}
 
 function mergeProgress(previous: SourceProgress[], updates: SourceProgress[]): SourceProgress[] {
   return [...previous.map((entry) => updates.find((update) => update.source === entry.source) ?? entry),
@@ -419,7 +437,7 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
           retryCursors,
           items: mergePages(section.items, next.items),
           copies: [...section.copies, ...next.copies],
-          warnings: [...section.warnings.filter((warning) => !warning.includes(SOURCE_NAMES[source])), ...next.warnings],
+          ...mergeWarnings(section, next, [source]),
           progress: closeProgress(get().sections[kind].progress),
           nextCursor: hasMore ? cursor : null, hasMore,
         });
@@ -456,8 +474,8 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
           ...paginationState(page, cursor, section.retryCursors),
           items: mergePages(current.items, next.items),
           copies: [...current.copies, ...next.copies],
-          // keep the first page's platform warnings (e.g. "Bandcamp unavailable")
-          warnings: [...new Set([...current.warnings, ...next.warnings])],
+          ...mergeWarnings(current, next, (["youtube", "soundcloud"] as const).filter(source =>
+            cursor[source] != null && !page.warnings.some(warning => (warning.source ?? warning.platform) === source))),
         });
       } catch (err) {
         if (!guard.isLatest(token)) return;
