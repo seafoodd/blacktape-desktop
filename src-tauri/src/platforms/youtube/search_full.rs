@@ -14,7 +14,7 @@
 
 use crate::search::ItemType;
 use crate::search::full::{ArtistProfile, SearchKind};
-use crate::search::youtube_fast::{audience_from_segments, parse_count, parse_duration, CLIENT_VERSION};
+use crate::platforms::youtube::search_fast::{audience_from_segments, parse_count, parse_duration, CLIENT_VERSION};
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use serde_json::{json, Value};
@@ -195,7 +195,7 @@ async fn request_json(request: reqwest::RequestBuilder, budget: Duration) -> Res
 }
 
 #[cfg(test)]
-#[path = "youtube_request_tests.rs"]
+#[path = "request_tests.rs"]
 mod request_tests;
 
 /// First-page chain (D5): `fetch_page(.., None)`, then follow `next_token` sequentially until `items.len() >= target`

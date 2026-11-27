@@ -1,4 +1,4 @@
-use super::youtube;
+use crate::platforms::youtube::download as youtube;
 use crate::platforms::bandcamp::download as bandcamp;
 use crate::platforms::soundcloud::download as soundcloud;
 use crate::download::album::download_album_cover;

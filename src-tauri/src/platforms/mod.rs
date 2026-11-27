@@ -2,6 +2,7 @@ use crate::types::Platform;
 pub(crate) mod http;
 pub mod soundcloud;
 pub mod bandcamp;
+pub mod youtube;
 
 pub async fn search_dropdown(platform: Platform, query: &str) -> Result<crate::search::SourceResults, String> {
     use crate::search::{self, SourceResults};
@@ -27,9 +28,8 @@ pub(crate) async fn search_page(platform: Platform, query: &str, kind: crate::se
 }
 
 pub async fn artist_profile(platform: Platform, url: &str) -> Result<crate::search::full::ArtistProfile, String> {
-    use crate::search;
     match platform {
-        Platform::Youtube => search::youtube_full::artist_profile(url).await.map_err(|error| error.to_string()),
+        Platform::Youtube => crate::platforms::youtube::search_full::artist_profile(url).await.map_err(|error| error.to_string()),
         Platform::Bandcamp => crate::platforms::bandcamp::search_full::artist_profile(url).await.map_err(|error| error.to_string()),
         Platform::Soundcloud => crate::platforms::soundcloud::search::artist_profile(url).await,
         Platform::Local => Err("artist profiles are not available for local files".into()),
@@ -37,9 +37,8 @@ pub async fn artist_profile(platform: Platform, url: &str) -> Result<crate::sear
 }
 
 pub async fn album_metadata(platform: Platform, url: &str) -> Result<(crate::download::AlbumDownload, Vec<crate::platforms::soundcloud::download::SkippedTrack>, bool), String> {
-    use crate::download;
     match platform {
-        Platform::Youtube => download::youtube::parse_album(url).await.map(|album| (album, Vec::new(), false)),
+        Platform::Youtube => crate::platforms::youtube::download::parse_album(url).await.map(|album| (album, Vec::new(), false)),
         Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album_with_free_flag(url).await.map(|(album, free)| (album, Vec::new(), free)),
         Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album_with_skipped(url).await.map(|(album, skipped)| (album, skipped, false)),
         Platform::Local => Err("Local albums have no remote metadata".into()),

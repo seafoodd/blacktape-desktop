@@ -286,7 +286,7 @@ pub async fn resolve_youtube_album_tracks(
     album_title: &str,
 ) -> Result<Vec<crate::download::TrackDownload>, String> {
     let query = format!("{} {}", artist, album_title);
-    let search_res = crate::search::youtube_fast::search(&query).await;
+    let search_res = crate::platforms::youtube::search_fast::search(&query).await;
     let suggestions = match search_res {
         Ok(s) => s,
         Err(error) => return Err(error.to_string()),
@@ -298,7 +298,7 @@ pub async fn resolve_youtube_album_tracks(
             && matches_album_listing(artist, album_title, &item.name, &item.band_name)
         {
             {
-                let album_download = crate::download::youtube::parse_album(&item.item_url_path).await.map_err(|error| error.to_string())?;
+                let album_download = crate::platforms::youtube::download::parse_album(&item.item_url_path).await.map_err(|error| error.to_string())?;
                 debug!(
                     "Resolved {} tracks from YouTube Music album '{}'",
                     album_download.tracks.len(),
@@ -388,7 +388,7 @@ pub async fn find_platform_album_editions(
     let query = format!("{artist} {album_title}");
     let timeout = std::time::Duration::from_millis(2200);
 
-    let yt_fut = tokio::time::timeout(timeout, crate::search::youtube_fast::search(&query));
+    let yt_fut = tokio::time::timeout(timeout, crate::platforms::youtube::search_fast::search(&query));
     let bc_fut = tokio::time::timeout(timeout, crate::platforms::bandcamp::search::search(&query));
     let sc_fut = tokio::time::timeout(timeout, crate::platforms::soundcloud::search::search(&query));
 

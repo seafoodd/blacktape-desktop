@@ -274,7 +274,7 @@ pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQu
 async fn first_track_url(platform: Platform, url: &str) -> Result<String, String> {
     let album = match platform {
         Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album(url).await?,
-        Platform::Youtube => crate::download::youtube::parse_album(url).await?,
+        Platform::Youtube => crate::platforms::youtube::download::parse_album(url).await?,
         Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album(url).await?,
         Platform::Local => return Err("Local files have no download formats.".into()),
     };

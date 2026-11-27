@@ -52,9 +52,7 @@ mod cache_tests;
 pub mod full;
 pub mod progress;
 pub mod ranking;
-pub mod youtube;
-pub mod youtube_fast;
-pub mod youtube_full;
+use crate::platforms::youtube::{search as youtube, search_fast as youtube_fast};
 #[cfg(test)]
 mod simulation_tests;
 

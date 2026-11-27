@@ -5,7 +5,7 @@
 use super::ItemType;
 use super::full::{assemble_with_canonical, Fetched};
 use super::ranking::{normalize, rank_flat_with_options, rank_with_options, RankOptions};
-use super::youtube_fast::merge_album_results;
+use crate::platforms::youtube::search_fast::merge_album_results;
 use super::SearchSuggestion;
 use crate::types::Platform;
 
