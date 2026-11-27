@@ -4,7 +4,10 @@ use crate::audio::transition::{
     effective_duration, progress_fraction, resolve_transition, should_buffer, song_key, PendingNext, SongKey,
     Transition,
 };
-use crate::discord_presence::DiscordRpcClient;
+use crate::discord_presence::{
+    discord_rpc::current_timestamp_ms, DesiredPresence, DiscordRpcClient, PresenceWatcher, PushedPresence, SyncAction,
+    DISCORD_SYNC_INTERVAL,
+};
 use crate::download::opus_source::OpusSource;
 use crate::{
     audio::media_controls::MediaControls,
@@ -73,12 +76,13 @@ pub struct PlaybackError {
     pub message: String,
 }
 
-/// One update of the Discord presence, applied in order by the presence thread.
+/// One update of the Discord presence, stored as desired state by the presence watcher.
 struct DiscordUpdate {
     song: Song,
     duration_ms: i64,
     position_ms: i64,
     paused: bool,
+    now_epoch_ms: i64,
 }
 
 /// A song of the queue that is streamed from its platform instead of played from a file.
@@ -1193,11 +1197,37 @@ impl AudioPlayer {
     fn spawn_discord_worker(handle: AppHandle) -> mpsc::Sender<DiscordUpdate> {
         let (tx, rx) = mpsc::channel::<DiscordUpdate>();
         let spawned = std::thread::Builder::new().name("discord-presence".into()).spawn(move || {
-            while let Ok(mut update) = rx.recv() {
-                while let Ok(newer) = rx.try_recv() {
-                    update = newer;
+            let mut watcher = PresenceWatcher::new(DISCORD_SYNC_INTERVAL);
+            loop {
+                match watcher.next_action(std::time::Instant::now()) {
+                    SyncAction::Idle => {
+                        let Ok(update) = rx.recv() else { break };
+                        watcher.set_desired(Self::into_desired(update));
+                        while let Ok(newer) = rx.try_recv() {
+                            watcher.set_desired(Self::into_desired(newer));
+                        }
+                    }
+                    SyncAction::Wait(wait) => match rx.recv_timeout(wait) {
+                        Ok(update) => {
+                            watcher.set_desired(Self::into_desired(update));
+                            while let Ok(newer) = rx.try_recv() {
+                                watcher.set_desired(Self::into_desired(newer));
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    },
+                    SyncAction::SyncNow => {
+                        while let Ok(newer) = rx.try_recv() {
+                            watcher.set_desired(Self::into_desired(newer));
+                        }
+                        let Some(desired) = watcher.desired().cloned() else {
+                            continue;
+                        };
+                        let pushed = Self::apply_discord_update(&handle, &desired);
+                        watcher.record_sync_result(std::time::Instant::now(), pushed);
+                    }
                 }
-                Self::apply_discord_update(&handle, update);
             }
         });
         if let Err(e) = spawned {
@@ -1206,7 +1236,17 @@ impl AudioPlayer {
         tx
     }
 
-    fn apply_discord_update(handle: &AppHandle, update: DiscordUpdate) {
+    fn into_desired(update: DiscordUpdate) -> DesiredPresence {
+        DesiredPresence::from_playback(
+            update.song,
+            update.duration_ms,
+            update.position_ms,
+            update.paused,
+            update.now_epoch_ms,
+        )
+    }
+
+    fn apply_discord_update(handle: &AppHandle, desired: &DesiredPresence) -> Option<PushedPresence> {
         let state = handle.state::<Mutex<Option<DiscordRpcClient>>>();
         let mut client = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if client.is_none() {
@@ -1214,17 +1254,26 @@ impl AudioPlayer {
                 Ok(created) => *client = Some(created),
                 Err(e) => {
                     tracing::error!("Cannot create Discord RPC client: {e}");
-                    return;
+                    return None;
                 }
             }
         }
-        let Some(discord) = client.as_mut() else { return };
+        let discord = client.as_mut()?;
         if !discord.is_connected() && discord.reconnect().is_err() {
-            return;
+            return None;
         }
-        if let Err(e) = discord.update_song(&update.song, update.duration_ms, update.position_ms, update.paused) {
-            tracing::warn!("Discord RPC update failed, disconnecting: {e}");
-            discord.is_connected = false;
+        match discord.update_song(
+            &desired.song,
+            desired.start_epoch_ms,
+            desired.end_epoch_ms,
+            desired.paused,
+        ) {
+            Ok(resolved_cover) => Some(PushedPresence::from_desired(desired, resolved_cover)),
+            Err(e) => {
+                tracing::warn!("Discord RPC update failed, disconnecting: {e}");
+                discord.is_connected = false;
+                None
+            }
         }
     }
 
@@ -1234,13 +1283,22 @@ impl AudioPlayer {
         let Some(song) = self.current_song.clone() else {
             return;
         };
+        let Ok(now_epoch_ms) = current_timestamp_ms() else {
+            return;
+        };
         let position_ms =
             force_position_ms.unwrap_or_else(|| i64::try_from(self.current_position().as_millis()).unwrap_or(0));
         let duration_ms = self
             .duration
             .and_then(|d| i64::try_from(d.as_millis()).ok())
             .unwrap_or(0);
-        let update = DiscordUpdate { song, duration_ms, position_ms, paused: self.is_paused() };
+        let update = DiscordUpdate {
+            song,
+            duration_ms,
+            position_ms,
+            paused: self.is_paused(),
+            now_epoch_ms,
+        };
         // the thread only stops with the app
         let _ = self.discord.send(update);
     }

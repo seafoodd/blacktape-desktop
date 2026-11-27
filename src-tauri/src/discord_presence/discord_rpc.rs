@@ -1,21 +1,21 @@
-use crate::db::db::Database;
-use crate::{discord_presence::cover_fetcher::CoverFetcher, types::Song};
 use crate::audio::player::{lock_player, AudioPlayer};
+use crate::db::db::Database;
+use crate::{
+    discord_presence::{cover_fetcher::CoverFetcher, watcher::initial_cover_url},
+    types::Song,
+};
 use discord_rich_presence::{
     activity::{self, Activity, Assets, Timestamps},
     DiscordIpc, DiscordIpcClient,
 };
-use std::{
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+#[cfg(test)]
+use std::{thread, time::Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const CLIENT_ID: &str = "1490382526169219342";
 const SOURCE_CODE_URL: &str = "https://github.com/seafoodd/blacktape-desktop";
 const APP_NAME: &str = "Blacktape Music Player";
-const MAX_RETRIES: u32 = 10;
-const RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum RpcError {
@@ -38,6 +38,7 @@ impl std::error::Error for RpcError {}
 
 type Result<T> = std::result::Result<T, RpcError>;
 
+#[cfg(test)]
 fn retry<T, E, F>(mut f: F, max_attempts: u32, delay: Duration) -> Result<T>
 where
     F: FnMut() -> std::result::Result<T, E>,
@@ -90,29 +91,21 @@ impl DiscordRpcClient {
     pub fn update_song(
         &mut self,
         song: &Song,
-        duration_ms: i64,
-        position_ms: i64,
+        start_epoch_ms: i64,
+        end_epoch_ms: i64,
         is_paused: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         if is_paused {
-            retry(
-                || {
-                    self.client
-                        .clear_activity()
-                        .map_err(|e| RpcError::ActivityError(format!("{e:?}")))
-                },
-                MAX_RETRIES,
-                RETRY_DELAY,
-            )?;
+            self.client
+                .clear_activity()
+                .map_err(|e| RpcError::ActivityError(format!("{e:?}")))?;
 
-            return Ok(());
+            return Ok(None);
         }
 
-        let now = current_timestamp_ms()?;
-
         let timestamps = Timestamps::new()
-            .start(now - position_ms)
-            .end(now + duration_ms - position_ms);
+            .start(start_epoch_ms)
+            .end(end_epoch_ms);
 
         let mut cover_url = initial_cover_url(song);
 
@@ -141,7 +134,7 @@ impl DiscordRpcClient {
             }
         }
 
-        let final_cover_url = cover_url.unwrap_or_else(|| "album_generic".to_string());
+        let final_cover_url = cover_url.clone().unwrap_or_else(|| "album_generic".to_string());
 
         let assets = Assets::new()
             .large_image(final_cover_url)
@@ -165,17 +158,11 @@ impl DiscordRpcClient {
 
         self.activity = activity.clone();
 
-        retry(
-            || {
-                self.client
-                    .set_activity(activity.clone())
-                    .map_err(|e| RpcError::ActivityError(format!("{:?}", e)))
-            },
-            MAX_RETRIES,
-            RETRY_DELAY,
-        )?;
+        self.client
+            .set_activity(activity)
+            .map_err(|e| RpcError::ActivityError(format!("{e:?}")))?;
 
-        Ok(())
+        Ok(cover_url)
     }
 
     pub fn is_connected(&self) -> bool {
@@ -184,33 +171,20 @@ impl DiscordRpcClient {
 
     pub fn reconnect(&mut self) -> Result<()> {
         if !self.is_connected {
-            // println!("Reconnecting to Discord RPC...");
-            retry(
-                || {
-                    self.client
-                        .connect()
-                        .map_err(|e| RpcError::ConnectError(format!("{:?}", e)))
-                },
-                MAX_RETRIES,
-                RETRY_DELAY,
-            )?;
+            self.client
+                .connect()
+                .map_err(|e| RpcError::ConnectError(format!("{e:?}")))?;
             self.is_connected = true;
-            // println!("Reconnected");
         }
         Ok(())
     }
 }
 
-fn initial_cover_url(song: &Song) -> Option<String> {
-    if let Some(url) = song.external_cover_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        return Some(url.to_string());
-    }
-    if let Some(cover_url) = song.cover_url.as_deref().map(str::trim) {
-        if cover_url.starts_with("https://") || cover_url.starts_with("http://") {
-            return Some(cover_url.to_string());
-        }
-    }
-    None
+pub fn current_timestamp_ms() -> Result<i64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .map_err(|_| RpcError::TimeError)
 }
 
 impl Drop for DiscordRpcClient {
@@ -220,13 +194,6 @@ impl Drop for DiscordRpcClient {
             // println!("Discord RPC connection closed");
         }
     }
-}
-
-fn current_timestamp_ms() -> Result<i64> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .map_err(|_| RpcError::TimeError)
 }
 
 #[cfg(test)]
