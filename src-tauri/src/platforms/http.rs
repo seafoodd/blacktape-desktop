@@ -3,9 +3,10 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::future::Future;
 
-const PAGE_LIMIT: usize = 8 * 1024 * 1024;
+pub(crate) const PAGE_LIMIT: usize = 8 * 1024 * 1024;
 const COVER_LIMIT: usize = 12 * 1024 * 1024;
 
+#[derive(Debug)]
 pub struct Failure {
     pub message: String,
     pub retry: bool,
@@ -128,7 +129,7 @@ pub async fn read_bytes_limited(response: Response, max: usize) -> Result<Vec<u8
     read_bytes(response, max).await.map_err(|failure| failure.message)
 }
 
-async fn read_bytes(mut response: Response, max: usize) -> Result<Vec<u8>, Failure> {
+pub(crate) async fn read_bytes(mut response: Response, max: usize) -> Result<Vec<u8>, Failure> {
     if !response.status().is_success() {
         return Err(Failure::from_response(&response));
     }

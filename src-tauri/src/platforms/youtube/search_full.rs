@@ -189,7 +189,8 @@ async fn request_json(request: reqwest::RequestBuilder, budget: Duration) -> Res
             if !response.status().is_success() {
                 return Err(Failure::from_response(&response));
             }
-            response.json().await.map_err(Failure::from)
+            let body = crate::platforms::http::read_bytes(response, crate::platforms::http::PAGE_LIMIT).await?;
+            serde_json::from_slice(&body).map_err(|_| Failure::fatal("Unexpected YouTube response"))
         }
     }).await
 }
@@ -197,6 +198,10 @@ async fn request_json(request: reqwest::RequestBuilder, budget: Duration) -> Res
 #[cfg(test)]
 #[path = "request_tests.rs"]
 mod request_tests;
+
+#[cfg(test)]
+#[path = "body_tests.rs"]
+mod body_tests;
 
 /// First-page chain (D5): `fetch_page(.., None)`, then follow `next_token` sequentially until `items.len() >= target`
 /// or no token or `MAX_CHAIN_REQUESTS`. If the FIRST request fails -> Err; if a later one fails -> keep what was

@@ -497,12 +497,20 @@ async fn fetch_text(url: &str) -> Result<String, String> {
         if !response.status().is_success() {
             return Err(Failure::from_response(&response));
         }
-        response.text().await.map_err(Failure::from)
+        read_text_response(response).await
     }).await
 }
 
 /// Reads a fresh `client_id` from soundcloud.com: hydration block first, then the app
 /// bundles (the id usually sits in one of the last ones, so they're scanned from the end).
+async fn read_text_response(response: reqwest::Response) -> Result<String, crate::platforms::http::Failure> {
+    let body = crate::platforms::http::read_bytes(response, crate::platforms::http::PAGE_LIMIT).await?;
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+#[cfg(test)]
+mod body_tests;
+
 async fn fetch_client_id() -> Result<String, String> {
     let html = fetch_text(HOME_URL).await?;
     if let Some(id) = extract_client_id_from_hydration(&html) {
@@ -570,7 +578,7 @@ pub async fn api_get<T: DeserializeOwned>(path: &str, params: &[(&str, String)])
                     failure.message = describe_status(status);
                     return Err(failure);
                 }
-                let body = response.text().await?;
+                let body = read_text_response(response).await?;
                 let value = serde_json::from_str::<T>(&body)
                     .map_err(|_| Failure::fatal("Unexpected SoundCloud response"))?;
                 Ok((status, Some(value)))
