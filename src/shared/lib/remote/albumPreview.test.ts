@@ -317,8 +317,8 @@ describe("trackTaskStates", () => {
         { "task-1": { status: "downloading", overallPercent: 40 } },
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", taskId: "task-1", percent: 40 },
-      [u(1)]: { phase: "running", taskId: "task-1", percent: 40 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 40 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 40 },
     });
   });
 
@@ -328,7 +328,7 @@ describe("trackTaskStates", () => {
   ])("treats status %s as running", (status, percent) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status, overallPercent: percent } })[u(0)],
-    ).toEqual({ phase: "running", taskId: "t", percent });
+    ).toEqual({ phase: "running", taskId: "t", trackIndex: 0, percent });
   });
 
   it.each([
@@ -339,7 +339,7 @@ describe("trackTaskStates", () => {
   ])("clamps the percent %s to %s", (raw, expected) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status: "downloading", overallPercent: raw } })[u(0)],
-    ).toEqual({ phase: "running", taskId: "t", percent: expected });
+    ).toEqual({ phase: "running", taskId: "t", trackIndex: 0, percent: expected });
   });
 
   it("reports a completed task as done", () => {
@@ -381,9 +381,33 @@ describe("trackTaskStates", () => {
         previewTracks,
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", taskId: "task-1", percent: 100 },
-      [u(1)]: { phase: "running", taskId: "task-1", percent: 45 },
-      [u(2)]: { phase: "running", taskId: "task-1", percent: 0 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 45 },
+      [u(2)]: { phase: "running", taskId: "task-1", trackIndex: 2, percent: 0 },
+    });
+  });
+
+  it("omits individually cancelled tracks so their download button is restored", () => {
+    const previewTracks = [
+      track(0, { title: "Track One", track_number: 1 }),
+      track(1, { title: "Track Two", track_number: 2 }),
+    ];
+    const task = {
+      status: "downloading",
+      overallPercent: 25,
+      tracks: [
+        { title: "Track One", percent: 50, status: "downloading", trackNumber: 1 },
+        { title: "Track Two", percent: 0, status: "cancelled", trackNumber: 2 },
+      ],
+    };
+    expect(
+      trackTaskStates(
+        { "task-1": [u(0), u(1)] },
+        { "task-1": task },
+        previewTracks,
+      ),
+    ).toEqual({
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 50 },
     });
   });
 
@@ -405,8 +429,8 @@ describe("trackTaskStates", () => {
     expect(
       trackTaskStates({}, { "task-1": task }, previewTracks, albumUrl),
     ).toEqual({
-      [u(0)]: { phase: "running", taskId: "task-1", percent: 100 },
-      [u(1)]: { phase: "running", taskId: "task-1", percent: 15 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 15 },
     });
   });
 });

@@ -4,8 +4,9 @@ import { isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import styles from "@/shared/ui/track-download-progress/track-download-progress.module.css";
 
-export const TrackDownloadProgress = ({ taskId, percent, finished = false }: {
+export const TrackDownloadProgress = ({ taskId, trackIndex, percent, finished = false }: {
   taskId?: string;
+  trackIndex?: number;
   percent: number;
   finished?: boolean;
 }) => {
@@ -16,7 +17,7 @@ export const TrackDownloadProgress = ({ taskId, percent, finished = false }: {
       <span className={clsx(styles.percentage, percent >= 100 ? styles.completed : percent > 0 ? styles.active : styles.pending)} aria-live="polite">
         {percent}%
       </span>
-      {cancellable && taskId && <CancelDownloadButton taskId={taskId} />}
+      {cancellable && taskId && <CancelDownloadButton taskId={taskId} trackIndex={trackIndex} />}
     </span>
   );
 };

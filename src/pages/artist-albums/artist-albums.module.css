@@ -58,7 +58,7 @@
 
 .trackPercentage {
     font-size: var(--font-md, 14px);
-    font-weight: 600;
+    font-weight: 400;
     min-width: 48px;
     text-align: right;
 }

@@ -54,4 +54,25 @@ describe("cancellation while downloads are active", () => {
     await pending;
     expect(Object.keys(useDownloadStore.getState().activeDownloads)).toEqual(["other"]);
   });
+
+  it("cancels an individual track, keeps other tracks active, and remains retryable on failure", async () => {
+    let reject!: (error: Error) => void;
+    vi.mocked(invoke).mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+    const first = useDownloadStore.getState().cancelTrackDownload("album", 1);
+    expect(useDownloadStore.getState().cancellingTracks["album:1"]).toBe(true);
+    reject(new Error("RPC failed"));
+    await expect(first).rejects.toThrow("RPC failed");
+    expect(useDownloadStore.getState().cancellingTracks["album:1"]).toBeUndefined();
+    expect(useDownloadStore.getState().activeDownloads.album.tracks[1].status).toBe("downloading");
+
+    vi.mocked(invoke).mockResolvedValueOnce("cancelled");
+    const outcome = await useDownloadStore.getState().cancelTrackDownload("album", 1);
+    expect(outcome).toBe("cancelled");
+    expect(invoke).toHaveBeenLastCalledWith("cancel_download_track", { taskId: "album", trackIndex: 1 });
+    expect(useDownloadStore.getState().activeDownloads.album.tracks[1]).toMatchObject({
+      status: "cancelled",
+      percent: 0,
+    });
+    expect(useDownloadStore.getState().activeDownloads.album.tracks[0].status).toBe("completed");
+  });
 });

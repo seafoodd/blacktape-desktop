@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { reduceDownloadEvent, type DownloadEvent } from "@/shared/store/downloadEvents.ts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { getArtistAlbums } from "@/shared/lib/audio.ts";
+import { cancelDownloadTrack, getArtistAlbums, type CancelTrackOutcome } from "@/shared/lib/audio.ts";
 import { type Platform, type Song } from "@/shared/types.ts";
 import type { AudioCandidate } from "@/shared/types/canonical.ts";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
@@ -20,7 +20,7 @@ export type DownloadStatus =
 export interface TrackDownloadProgress {
   title: string;
   percent: number;
-  status: "pending" | "downloading" | "completed" | "failed";
+  status: "pending" | "downloading" | "completed" | "failed" | "cancelled";
   trackNumber?: number;
   discNumber?: number;
 }
@@ -109,6 +109,7 @@ export interface TrackPlacement {
 
 interface DownloadState {
   activeDownloads: Record<string, DownloadProgress>;
+  cancellingTracks: Record<string, true>;
   _listenersInitialized: boolean;
   initDownloadListeners: () => Promise<void>;
   startDownload: (
@@ -117,6 +118,7 @@ interface DownloadState {
     url?: string,
   ) => Promise<void>;
   cancelDownload: (taskId: string) => Promise<void>;
+  cancelTrackDownload: (taskId: string, trackIndex: number) => Promise<CancelTrackOutcome | undefined>;
   dismissDownload: (taskId: string) => void;
 }
 
@@ -127,6 +129,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
 
   return {
     activeDownloads: {},
+    cancellingTracks: {},
     _listenersInitialized: false,
 
     initDownloadListeners: async () => {
@@ -274,6 +277,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
         await subscribe<{ task_id: string }>("download-task-cancelled", (event) => {
           applyEvent({ type: "cancelled", ...event.payload });
         });
+
+        await subscribe<{ task_id: string; track_index: number }>(
+          "download-track-cancelled",
+          (event) => {
+            applyEvent({ type: "track-cancelled", ...event.payload });
+          },
+        );
         try {
           const activeList = await invoke<
             {
@@ -365,12 +375,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
       const overrides = isObject ? paramsOrPlatform.overrides : undefined;
       const replaceSongId = isObject ? paramsOrPlatform.replaceSongId : undefined;
 
-      // A second click while the same songs are still downloading would queue them again.
-      if (isRunning(findDownload(get().activeDownloads, { url, trackUrls }))) return;
-
-      const taskId = crypto.randomUUID();
       const isSingleTrack =
         downloadType === ItemType.Track || downloadType === "Track";
+      const trackTitle =
+        placement?.title ??
+        (overrides?.tracks?.length === 1 ? overrides.tracks[0]?.title : undefined) ??
+        (isSingleTrack ? title : undefined);
+
+      // A second click while the same songs are still downloading would queue them again.
+      if (isRunning(findDownload(get().activeDownloads, { url, trackUrls, trackTitle }))) return;
+
+      const taskId = crypto.randomUUID();
 
       set((state) => ({
         activeDownloads: {
@@ -470,6 +485,32 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
         delete activeDownloads[taskId];
         return { activeDownloads };
       });
+    },
+
+    cancelTrackDownload: async (taskId: string, trackIndex: number) => {
+      const task = get().activeDownloads[taskId];
+      const key = `${taskId}:${trackIndex}`;
+      if (!task || get().cancellingTracks[key]) return undefined;
+      set((state) => ({
+        cancellingTracks: { ...state.cancellingTracks, [key]: true },
+      }));
+      try {
+        const outcome = await cancelDownloadTrack(taskId, trackIndex);
+        if (outcome === "cancelled" || outcome === "already_cancelled") {
+          applyEvent({ type: "track-cancelled", task_id: taskId, track_index: trackIndex });
+        }
+        return outcome;
+      } catch (e) {
+        console.error("Cancel track download invoke failed:", e);
+        captureFrontendError(e, "downloadStore.cancelTrackDownload");
+        throw e;
+      } finally {
+        set((state) => {
+          const cancellingTracks = { ...state.cancellingTracks };
+          delete cancellingTracks[key];
+          return { cancellingTracks };
+        });
+      }
     },
 
     dismissDownload: (taskId: string) => {

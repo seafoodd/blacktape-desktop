@@ -43,4 +43,24 @@ describe("download event state transitions", () => {
     expect(active.task).toBeUndefined();
     expect(active.unrelated).toBe(failed.unrelated);
   });
+
+  it("treats track-cancelled as terminal and ignores late progress or saved events", () => {
+    const initial: DownloadProgress = {
+      id: "task", url: "https://example.com/album", status: "downloading", current: 0,
+      total: 2, message: "", artistName: "Artist", albumTitle: "Album", itemType: ItemType.Album,
+      platform: "bandcamp", overallPercent: 0,
+      tracks: [
+        { title: "A", percent: 50, status: "downloading", trackNumber: 1 },
+        { title: "B", percent: 40, status: "downloading", trackNumber: 2 },
+      ],
+    };
+    let active: Record<string, DownloadProgress> = { task: initial };
+    active = reduceDownloadEvent(active, { type: "track-cancelled", task_id: "task", track_index: 1 });
+    expect(active.task.tracks[1]).toMatchObject({ status: "cancelled", percent: 0 });
+    active = reduceDownloadEvent(active, { type: "track-progress", task_id: "task", track_index: 1, track_title: "B", percent: 90 });
+    expect(active.task.tracks[1]).toMatchObject({ status: "cancelled", percent: 0 });
+    active = reduceDownloadEvent(active, { type: "saved", task_id: "task", track_index: 1, song: { title: "B" } as Song });
+    expect(active.task.tracks[1]).toMatchObject({ status: "cancelled", percent: 0 });
+    expect(active.task.tracks[0]).toMatchObject({ status: "downloading", percent: 50 });
+  });
 });

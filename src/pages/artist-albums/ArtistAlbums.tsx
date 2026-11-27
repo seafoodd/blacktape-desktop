@@ -770,11 +770,13 @@ const ArtistAlbums = () => {
 
       if (d.replaceSongId !== undefined) {
         const tr = d.tracks[0];
-        map.set(d.replaceSongId, {
-          taskId: d.id,
-          percent: tr?.percent ?? d.overallPercent ?? 0,
-          done: tr?.status === "completed" || d.overallPercent >= 100,
-        });
+        if (tr?.status !== "cancelled") {
+          map.set(d.replaceSongId, {
+            taskId: d.id,
+            percent: tr?.percent ?? d.overallPercent ?? 0,
+            done: tr?.status === "completed" || d.overallPercent >= 100,
+          });
+        }
       }
       if (d.trackUrls && d.trackUrls.length > 0) {
         d.trackUrls.forEach((tu, idx) => {
@@ -782,6 +784,7 @@ const ArtistAlbums = () => {
           if (!match) return;
           const songId = Number(match[1]);
           const tr = d.tracks[idx];
+          if (tr?.status === "cancelled") return;
           map.set(songId, {
             taskId: d.id,
             percent: tr?.percent ?? 0,
@@ -1011,7 +1014,7 @@ const ArtistAlbums = () => {
                             </div>
                             <div className={styles.songRight}>
                               <div className={styles.trackPercentage}>
-                                <TrackDownloadProgress taskId={download.id} percent={track.percent} finished={track.status === "completed" || track.status === "failed"} />
+                                <TrackDownloadProgress taskId={download.id} trackIndex={trackIdx} percent={track.percent} finished={track.status === "completed" || track.status === "failed" || track.status === "cancelled"} />
                               </div>
                             </div>
                           </li>

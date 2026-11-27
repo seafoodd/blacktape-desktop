@@ -368,7 +368,9 @@ export function albumLibraryState(
 }
 
 /** Progress of a download task that serves some rows of this page. */
-export type TrackTaskState = { phase: "running"; percent: number; taskId?: string } | { phase: "done" };
+export type TrackTaskState =
+  | { phase: "running"; percent: number; taskId?: string; trackIndex?: number }
+  | { phase: "done" };
 
 /** Download task statuses that still do work (the library keeps other tasks only as history). */
 const RUNNING_STATUSES: ReadonlySet<string> = new Set(["idle", "downloading", "processing"]);
@@ -423,31 +425,36 @@ export function trackTaskStates(
 
     if (!RUNNING_STATUSES.has(task.status)) continue;
 
-    for (const url of urls) {
+    for (const [urlIdx, url] of urls.entries()) {
       if (task.tracks && task.tracks.length > 0 && previewTracks) {
         const pTrack = previewTracks.find((t) => t.url === url);
         if (pTrack) {
           const title = pTrack.title.trim().toLowerCase();
           const num = pTrack.track_number ?? pTrack.index + 1;
-          const found =
-            task.tracks.find((t) => t.title.trim().toLowerCase() === title) ??
-            task.tracks.find((t) => t.trackNumber === num);
-          if (found) {
+          let foundIdx = task.tracks.findIndex((t) => t.title.trim().toLowerCase() === title);
+          if (foundIdx < 0) {
+            foundIdx = task.tracks.findIndex((t) => t.trackNumber === num);
+          }
+          if (foundIdx >= 0) {
+            const found = task.tracks[foundIdx];
+            if (found.status === "cancelled") {
+              continue;
+            }
             if (found.status === "completed" || found.percent >= 100) {
-              out[url] = { phase: "running", taskId, percent: 100 };
+              out[url] = { phase: "running", taskId, trackIndex: foundIdx, percent: 100 };
             } else {
-              out[url] = { phase: "running", taskId, percent: clampPercent(found.percent) };
+              out[url] = { phase: "running", taskId, trackIndex: foundIdx, percent: clampPercent(found.percent) };
             }
             continue;
           } else {
             // Track belongs to the download but hasn't started yet
-            out[url] = { phase: "running", taskId, percent: 0 };
+            out[url] = { phase: "running", taskId, trackIndex: urlIdx, percent: 0 };
             continue;
           }
         }
       }
 
-      out[url] = { phase: "running", taskId, percent: clampPercent(task.overallPercent) };
+      out[url] = { phase: "running", taskId, trackIndex: urlIdx, percent: clampPercent(task.overallPercent) };
     }
   }
 

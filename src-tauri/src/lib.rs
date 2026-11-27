@@ -913,6 +913,27 @@ async fn get_album_preview(
 }
 
 #[command]
+async fn cancel_download_track(
+    app_handle: AppHandle,
+    task_registry: State<'_, TaskRegistry>,
+    task_id: String,
+    track_index: usize,
+) -> Result<crate::download::queue::CancelTrackOutcome, String> {
+    tracing::info!(task_id = %task_id, track_index = track_index, "Cancelling track in download task");
+    let outcome = task_registry.cancel_track(&task_id, track_index).await;
+    if outcome == crate::download::queue::CancelTrackOutcome::Cancelled {
+        let _ = app_handle.emit(
+            "download-track-cancelled",
+            serde_json::json!({
+                "task_id": task_id,
+                "track_index": track_index,
+            }),
+        );
+    }
+    Ok(outcome)
+}
+
+#[command]
 async fn cancel_download(
     app_handle: AppHandle,
     task_registry: State<'_, TaskRegistry>,
@@ -1324,6 +1345,7 @@ pub fn run() {
             download::quality::get_expected_quality,
             download::quality::probe_audio_formats,
             cancel_download,
+            cancel_download_track,
             get_active_downloads,
             // Auth
             launch_youtube_login,

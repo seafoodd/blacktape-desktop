@@ -26,7 +26,7 @@ pub async fn save_downloaded_track<R: tauri::Runtime>(
 ) -> Result<Song, String> {
     // Let a save already moving files and updating the DB finish before cancellation.
     let _saving = match app_handle.try_state::<crate::download::TaskRegistry>() {
-        Some(registry) => registry.begin_save(task_id).await?,
+        Some(registry) => Some(registry.begin_track_save(task_id, track_index).await?),
         None => None,
     };
     let replace_song_id = app_handle
@@ -532,13 +532,20 @@ async fn finish_task(app: &AppHandle, task_id: &str, error: Option<&str>) -> Res
     let state = registry.finish_download(task_id, error).await
         .ok_or_else(|| "Download task is no longer active".to_string())?;
     let success = state.status == "completed";
-    let event = if success { "download-task-completed" } else { "download-task-failed" };
+    let cancelled = state.status == "cancelled";
+    let event = if cancelled {
+        "download-task-cancelled"
+    } else if success {
+        "download-task-completed"
+    } else {
+        "download-task-failed"
+    };
     let _ = app.emit(event, serde_json::json!({
         "task_id": task_id,
         "message": state.message,
         "tracks": state.tracks,
     }));
-    if success { Ok(()) } else { Err(state.message) }
+    if success || cancelled { Ok(()) } else { Err(state.message) }
 }
 
 /// A failed download needs the user's decision, so a window that is in the background (or minimized) asks for

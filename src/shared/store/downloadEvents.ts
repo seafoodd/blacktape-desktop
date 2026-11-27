@@ -17,6 +17,7 @@ export type DownloadEvent =
   | ({ type: "started" } & Outcome)
   | ({ type: "completed" | "failed" } & Outcome)
   | { type: "cancelled"; task_id: string }
+  | { type: "track-cancelled"; task_id: string; track_index: number }
   | {
     type: "metadata";
     task_id: string;
@@ -67,6 +68,30 @@ export function reduceDownloadEvent(
         })),
       };
       break;
+    case "track-cancelled": {
+      const tracks = [...task.tracks];
+      while (tracks.length <= event.track_index) {
+        tracks.push({
+          title: `Track ${tracks.length + 1}`,
+          percent: 0,
+          status: "pending",
+          trackNumber: tracks.length + 1,
+        });
+      }
+      const previous = tracks[event.track_index];
+      if (previous.status === "completed") return active;
+      tracks[event.track_index] = {
+        ...previous,
+        percent: 0,
+        status: "cancelled",
+      };
+      updated = {
+        ...task,
+        tracks,
+        overallPercent: Math.round(tracks.reduce((sum, track) => sum + track.percent, 0) / tracks.length),
+      };
+      break;
+    }
     case "track-progress":
     case "saved": {
       const tracks = [...task.tracks];
@@ -80,6 +105,7 @@ export function reduceDownloadEvent(
         });
       }
       const previous = tracks[event.track_index];
+      if (previous.status === "cancelled") return active;
       const saved = event.type === "saved" || previous.status === "completed";
       const percent = event.type === "track-progress" ? event.percent : 100;
       tracks[event.track_index] = {

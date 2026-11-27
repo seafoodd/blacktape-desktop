@@ -595,10 +595,11 @@ async fn download_track_internal(
         }
     };
 
+    let track_index = track.source_track_index.unwrap_or(track_num - 1);
     let pid = child.id();
     if let (Some(registry), Some(p)) = (ctx.app.try_state::<crate::download::TaskRegistry>(), pid) {
-        registry.register_pid(&ctx.task_id, p).await;
-        if registry.is_cancelled(&ctx.task_id).await {
+        registry.register_track_pid(&ctx.task_id, track_index, p).await;
+        if registry.is_track_cancelled(&ctx.task_id, track_index).await {
             let _ = child.kill().await;
             return None;
         }
@@ -609,7 +610,6 @@ async fn download_track_internal(
     let app_handle = ctx.app.clone();
     let task_id = ctx.task_id.clone();
     let track_title = track.title.clone();
-    let track_index = track_num - 1;
 
     let stdout_task = tokio::spawn(async move {
         let mut lines_acc = Vec::new();
@@ -625,6 +625,9 @@ async fn download_track_internal(
                             if let Some(registry) =
                                 app_handle.try_state::<crate::download::TaskRegistry>()
                             {
+                                if registry.is_track_cancelled(&task_id, track_index).await {
+                                    continue;
+                                }
                                 registry
                                     .update_track_progress(
                                         &task_id,
@@ -668,7 +671,7 @@ async fn download_track_internal(
             if let (Some(registry), Some(p)) =
                 (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
             {
-                registry.unregister_pid(&ctx.task_id, p).await;
+                registry.unregister_track_pid(&ctx.task_id, track_index, p).await;
             }
             s
         }
@@ -676,7 +679,7 @@ async fn download_track_internal(
             if let (Some(registry), Some(p)) =
                 (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
             {
-                registry.unregister_pid(&ctx.task_id, p).await;
+                registry.unregister_track_pid(&ctx.task_id, track_index, p).await;
             }
             tracing::error!(
                 session = %ctx.session_id,
@@ -870,10 +873,12 @@ pub async fn download_batch_streaming(
         let ctx = Arc::clone(&ctx);
         let task_id = task_id.to_string();
         let track_sender = track_sender.clone();
+        let emit_index = track.source_track_index.unwrap_or(index);
 
-        join_set.spawn(async move {
+        let task_id_outer = task_id.clone();
+        let abort_handle = join_set.spawn(async move {
             if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
-                if registry.is_cancelled(&task_id).await {
+                if registry.is_track_cancelled(&task_id, emit_index).await {
                     return None;
                 }
             }
@@ -884,10 +889,29 @@ pub async fn download_batch_streaming(
 
             let downloaded = download_with_fallbacks(&track, |candidate| {
                 let ctx = Arc::clone(&ctx);
-                async move { download_track_internal(&ctx, &candidate, track_num, total_tracks).await }
+                let app_handle = app_handle.clone();
+                let task_id = task_id.clone();
+                async move {
+                    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                        if registry.is_track_cancelled(&task_id, emit_index).await {
+                            return None;
+                        }
+                    }
+                    download_track_internal(&ctx, &candidate, track_num, total_tracks).await
+                }
             }).await;
 
+            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                registry.clear_track_abort_handle(&task_id, emit_index).await;
+            }
+
             if let Some((path, track)) = downloaded {
+                if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                    if registry.is_track_cancelled(&task_id, emit_index).await {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return None;
+                    }
+                }
                 let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
                 let emit_index = track.source_track_index.unwrap_or(index);
                 tracing::info!(
@@ -954,6 +978,9 @@ pub async fn download_batch_streaming(
                 None
             }
         });
+        if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
+            registry.set_track_abort_handle(&task_id_outer, emit_index, abort_handle).await;
+        }
     }
 
     drop(track_sender);

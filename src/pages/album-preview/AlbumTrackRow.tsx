@@ -397,7 +397,7 @@ export const AlbumTrackRow = ({
                 {status.percent}%
               </span>
               {task?.phase === "running" && task.taskId && (
-                <CancelDownloadButton taskId={task.taskId} />
+                <CancelDownloadButton taskId={task.taskId} trackIndex={task.trackIndex} />
               )}
             </span>
           )}

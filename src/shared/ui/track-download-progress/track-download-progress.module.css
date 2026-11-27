@@ -14,7 +14,7 @@
 .percentage {
     min-width: 36px;
     text-align: center;
-    font-weight: 700;
+    font-weight: 400;
     font-variant-numeric: tabular-nums;
     pointer-events: none;
 }

@@ -187,15 +187,23 @@ export const PlayerControls = () => {
   // The download of this song started from anywhere (here, a menu, the album page), if any.
   const download = useDownloadStore((s) => {
     if (!downloadParams || !streamTrack) return undefined;
-    const direct = findDownload(s.activeDownloads, downloadParams);
+    const streamTitle = streamTrack.title ?? currentSong?.title;
+    const direct = findDownload(s.activeDownloads, {
+      ...downloadParams,
+      trackTitle: streamTitle,
+    });
     if (direct) return direct;
-    const matched = Object.values(s.activeDownloads).filter(
-      (d) =>
-        d.status !== "failed" &&
-        d.status !== "cancelled" &&
-        (sameUrl(d.url, streamTrack.url) ||
-          (d.trackUrls?.some((u) => sameUrl(u, streamTrack.url)) ?? false)),
-    );
+    const normTitle = streamTitle?.trim().toLowerCase() ?? "";
+    const matched = Object.values(s.activeDownloads).filter((d) => {
+      if (d.status === "failed" || d.status === "cancelled") return false;
+      const urlMatches =
+        sameUrl(d.url, streamTrack.url) ||
+        (d.trackUrls?.some((u) => sameUrl(u, streamTrack.url)) ?? false);
+      if (!urlMatches) return false;
+      if (!normTitle) return true;
+      const track = d.tracks?.find((t) => t.title.trim().toLowerCase() === normTitle);
+      return track?.status !== "cancelled";
+    });
     return matched.find(isRunning) ?? matched[0];
   });
   const downloading = isRunning(download);

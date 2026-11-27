@@ -37,6 +37,22 @@ pub struct ActiveDownloadState {
     pub tracks: Vec<TrackProgressState>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelTrackOutcome {
+    Cancelled,
+    AlreadySaved,
+    TooLateSaving,
+    AlreadyCancelled,
+    NotFound,
+}
+
+struct TorrentTrackSelection {
+    session: Arc<librqbit::Session>,
+    handle: Arc<librqbit::ManagedTorrent>,
+    track_to_file: HashMap<usize, usize>,
+}
+
 pub struct ActiveTaskInfo {
     pub abort_handle: Option<AbortHandle>,
     saving_track: Arc<Mutex<()>>,
@@ -56,6 +72,11 @@ pub struct ActiveTaskInfo {
     pub replace_song_ids: HashMap<usize, i64>,
     pub state: ActiveDownloadState,
     saved_tracks: HashSet<usize>,
+    cancelled_tracks: HashSet<usize>,
+    track_abort_handles: HashMap<usize, AbortHandle>,
+    track_pids: HashMap<usize, Vec<u32>>,
+    track_save_locks: HashMap<usize, Arc<Mutex<()>>>,
+    torrent_selections: Vec<TorrentTrackSelection>,
 }
 
 #[derive(Clone, Default)]
@@ -97,18 +118,28 @@ impl TaskRegistry {
             .lock()
             .await
             .insert(task_id.to_string());
-        let (pids, handle, saving_track) = {
+        let (pids, handle, track_handles, saving_track) = {
             let mut tasks = self.tasks.lock().await;
             match tasks.get_mut(task_id) {
                 Some(info) => {
                     info.is_cancelled = true;
+                    let mut all_pids = std::mem::take(&mut info.child_pids);
+                    for (_, tpids) in info.track_pids.drain() {
+                        all_pids.extend(tpids);
+                    }
+                    let thandles: Vec<AbortHandle> = info
+                        .track_abort_handles
+                        .drain()
+                        .map(|(_, h)| h)
+                        .collect();
                     (
-                        std::mem::take(&mut info.child_pids),
+                        all_pids,
                         info.abort_handle.clone(),
+                        thandles,
                         Some(info.saving_track.clone()),
                     )
                 }
-                None => (Vec::new(), None, None),
+                None => (Vec::new(), None, Vec::new(), None),
             }
         };
 
@@ -128,6 +159,9 @@ impl TaskRegistry {
             Some(lock) => Some(lock.lock_owned().await),
             None => None,
         };
+        for th in track_handles {
+            th.abort();
+        }
         if let Some(handle) = handle {
             handle.abort();
             while !handle.is_finished() {
@@ -136,16 +170,118 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) async fn begin_save(&self, task_id: &str) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, String> {
-        let lock = self.tasks.lock().await.get(task_id).map(|task| task.saving_track.clone());
-        let guard = match lock {
-            Some(lock) => Some(lock.lock_owned().await),
-            None => None,
+    pub(super) async fn begin_track_save(
+        &self,
+        task_id: &str,
+        track_index: usize,
+    ) -> Result<(Option<tokio::sync::OwnedMutexGuard<()>>, Option<tokio::sync::OwnedMutexGuard<()>>), String> {
+        let (task_lock, track_lock) = {
+            let mut tasks = self.tasks.lock().await;
+            let Some(info) = tasks.get_mut(task_id) else {
+                return Ok((None, None));
+            };
+            if info.is_cancelled {
+                return Err("Task cancelled".into());
+            }
+            if info.cancelled_tracks.contains(&track_index) {
+                return Err("Track cancelled".into());
+            }
+            let track_lock = Arc::clone(
+                info.track_save_locks
+                    .entry(track_index)
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            );
+            (info.saving_track.clone(), track_lock)
         };
+
+        let task_guard = task_lock.lock_owned().await;
+        let track_guard = track_lock.lock_owned().await;
         if self.is_cancelled(task_id).await {
             return Err("Task cancelled".into());
         }
-        Ok(guard)
+        if self.is_track_cancelled(task_id, track_index).await {
+            return Err("Track cancelled".into());
+        }
+        Ok((Some(task_guard), Some(track_guard)))
+    }
+
+    pub async fn is_track_cancelled(&self, task_id: &str, track_index: usize) -> bool {
+        if self.cancelled_tasks.lock().await.contains(task_id) {
+            return true;
+        }
+        let tasks = self.tasks.lock().await;
+        tasks
+            .get(task_id)
+            .is_some_and(|t| t.is_cancelled || t.cancelled_tracks.contains(&track_index))
+    }
+
+    pub async fn cancel_track(&self, task_id: &str, track_index: usize) -> CancelTrackOutcome {
+        let (pids, abort_handle, torrent_updates) = {
+            let mut tasks = self.tasks.lock().await;
+            let Some(info) = tasks.get_mut(task_id) else {
+                return CancelTrackOutcome::NotFound;
+            };
+            let track_count = info.state.total.max(info.state.tracks.len());
+            if track_index >= track_count {
+                return CancelTrackOutcome::NotFound;
+            }
+            if info.saved_tracks.contains(&track_index) {
+                return CancelTrackOutcome::AlreadySaved;
+            }
+            if info.is_cancelled || info.cancelled_tracks.contains(&track_index) {
+                return CancelTrackOutcome::AlreadyCancelled;
+            }
+            if let Some(lock) = info.track_save_locks.get(&track_index) {
+                if lock.try_lock().is_err() {
+                    return CancelTrackOutcome::TooLateSaving;
+                }
+            }
+
+            info.cancelled_tracks.insert(track_index);
+            if let Some(track) = info.state.tracks.get_mut(track_index) {
+                track.status = "cancelled".to_string();
+                track.percent = 0;
+            }
+            let count = info.state.tracks.len();
+            if count > 0 {
+                let sum: i32 = info.state.tracks.iter().map(|t| t.percent).sum();
+                info.state.overall_percent = sum / (count as i32);
+            }
+
+            let pids = info.track_pids.remove(&track_index).unwrap_or_default();
+            let abort_handle = info.track_abort_handles.remove(&track_index);
+            let torrent_updates: Vec<(Arc<librqbit::Session>, Arc<librqbit::ManagedTorrent>, HashSet<usize>)> = info
+                .torrent_selections
+                .iter()
+                .filter(|sel| sel.track_to_file.contains_key(&track_index))
+                .map(|sel| {
+                    let remaining: HashSet<usize> = sel
+                        .track_to_file
+                        .iter()
+                        .filter(|(t_idx, _)| !info.cancelled_tracks.contains(t_idx))
+                        .map(|(_, f_idx)| *f_idx)
+                        .collect();
+                    (Arc::clone(&sel.session), Arc::clone(&sel.handle), remaining)
+                })
+                .collect();
+            (pids, abort_handle, torrent_updates)
+        };
+
+        if !pids.is_empty() {
+            let _ = tokio::task::spawn_blocking(move || {
+                for pid in pids {
+                    Self::kill_pid(pid);
+                }
+            })
+            .await;
+        }
+        if let Some(handle) = abort_handle {
+            handle.abort();
+        }
+        for (session, handle, remaining) in torrent_updates {
+            let _ = session.update_only_files(&handle, &remaining).await;
+        }
+        CancelTrackOutcome::Cancelled
     }
 
     pub async fn is_cancelled(&self, task_id: &str) -> bool {
@@ -175,8 +311,82 @@ impl TaskRegistry {
                 replace_song_ids: HashMap::new(),
                 state,
                 saved_tracks: HashSet::new(),
+                cancelled_tracks: HashSet::new(),
+                track_abort_handles: HashMap::new(),
+                track_pids: HashMap::new(),
+                track_save_locks: HashMap::new(),
+                torrent_selections: Vec::new(),
             },
         );
+    }
+
+    pub async fn register_track_pid(&self, task_id: &str, track_index: usize, pid: u32) {
+        if self.is_track_cancelled(task_id, track_index).await {
+            Self::kill_pid(pid);
+            return;
+        }
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            if info.is_cancelled || info.cancelled_tracks.contains(&track_index) {
+                drop(tasks);
+                Self::kill_pid(pid);
+                return;
+            }
+            let pids = info.track_pids.entry(track_index).or_default();
+            if !pids.contains(&pid) {
+                pids.push(pid);
+            }
+        }
+    }
+
+    pub async fn unregister_track_pid(&self, task_id: &str, track_index: usize, pid: u32) {
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            if let Some(pids) = info.track_pids.get_mut(&track_index) {
+                pids.retain(|&p| p != pid);
+            }
+        }
+    }
+
+    pub async fn set_track_abort_handle(
+        &self,
+        task_id: &str,
+        track_index: usize,
+        handle: AbortHandle,
+    ) {
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            if info.is_cancelled || info.cancelled_tracks.contains(&track_index) {
+                handle.abort();
+            } else {
+                info.track_abort_handles.insert(track_index, handle);
+            }
+        } else {
+            handle.abort();
+        }
+    }
+
+    pub async fn clear_track_abort_handle(&self, task_id: &str, track_index: usize) {
+        if let Some(info) = self.tasks.lock().await.get_mut(task_id) {
+            info.track_abort_handles.remove(&track_index);
+        }
+    }
+
+    pub async fn register_torrent_selection(
+        &self,
+        task_id: &str,
+        session: Arc<librqbit::Session>,
+        handle: Arc<librqbit::ManagedTorrent>,
+        track_to_file: HashMap<usize, usize>,
+    ) {
+        let mut tasks = self.tasks.lock().await;
+        if let Some(info) = tasks.get_mut(task_id) {
+            info.torrent_selections.push(TorrentTrackSelection {
+                session,
+                handle,
+                track_to_file,
+            });
+        }
     }
 
     pub async fn register_pid(&self, task_id: &str, pid: u32) {
@@ -334,12 +544,21 @@ impl TaskRegistry {
                 info.state.tracks = tracks
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, (t_title, t_num, d_num))| TrackProgressState {
-                        title: t_title,
-                        track_number: t_num.or(Some((idx + 1) as i32)),
-                        disc_number: d_num,
-                        percent: 0,
-                        status: "pending".to_string(),
+                    .map(|(idx, (t_title, t_num, d_num))| {
+                        let status = if info.saved_tracks.contains(&idx) {
+                            "completed"
+                        } else if info.cancelled_tracks.contains(&idx) {
+                            "cancelled"
+                        } else {
+                            "pending"
+                        };
+                        TrackProgressState {
+                            title: t_title,
+                            track_number: t_num.or(Some((idx + 1) as i32)),
+                            disc_number: d_num,
+                            percent: if status == "completed" { 100 } else { 0 },
+                            status: status.to_string(),
+                        }
                     })
                     .collect();
             }
@@ -355,6 +574,9 @@ impl TaskRegistry {
     ) {
         let mut tasks = self.tasks.lock().await;
         if let Some(info) = tasks.get_mut(task_id) {
+            if info.is_cancelled || info.cancelled_tracks.contains(&track_index) {
+                return;
+            }
             while info.state.tracks.len() <= track_index {
                 let idx = info.state.tracks.len();
                 info.state.tracks.push(TrackProgressState {
@@ -413,6 +635,9 @@ impl TaskRegistry {
         self.update_track_progress(task_id, index, title, 100).await;
         let mut tasks = self.tasks.lock().await;
         if let Some(info) = tasks.get_mut(task_id) {
+            if info.cancelled_tracks.contains(&index) {
+                return;
+            }
             info.saved_tracks.insert(index);
             info.state.tracks[index].status = "completed".into();
         }
@@ -424,16 +649,49 @@ impl TaskRegistry {
         let info = tasks.get_mut(task_id)?;
         let total = info.state.total.max(info.state.tracks.len());
         let saved = info.saved_tracks.len();
-        let success = error.is_none() && saved >= total;
-        info.state.status = if success { "completed" } else { "failed" }.into();
-        info.state.current = saved;
-        info.state.message = if success {
-            "Pipeline complete".into()
+        let cancelled = info
+            .cancelled_tracks
+            .iter()
+            .filter(|idx| !info.saved_tracks.contains(idx))
+            .count();
+        let failed = total.saturating_sub(saved + cancelled);
+        let all_cancelled = total > 0 && cancelled >= total;
+        let success = error.is_none() && failed == 0 && !all_cancelled;
+        info.state.status = if all_cancelled {
+            "cancelled"
+        } else if success {
+            "completed"
         } else {
-            format!("Saved {saved} of {total} tracks. {}", error.unwrap_or("Some tracks could not be downloaded or saved."))
+            "failed"
+        }
+        .into();
+        info.state.current = saved;
+        info.state.message = if all_cancelled {
+            "Download cancelled".into()
+        } else if success && cancelled > 0 {
+            format!("Saved {saved} of {total} tracks ({cancelled} cancelled)")
+        } else if success {
+            "Pipeline complete".into()
+        } else if cancelled > 0 {
+            format!(
+                "Saved {saved} of {total} tracks ({cancelled} cancelled). {}",
+                error.unwrap_or("Some tracks could not be downloaded or saved.")
+            )
+        } else {
+            format!(
+                "Saved {saved} of {total} tracks. {}",
+                error.unwrap_or("Some tracks could not be downloaded or saved.")
+            )
         };
         for (index, track) in info.state.tracks.iter_mut().enumerate() {
-            track.status = if info.saved_tracks.contains(&index) { "completed" } else { "failed" }.into();
+            track.status = if info.saved_tracks.contains(&index) {
+                "completed"
+            } else if info.cancelled_tracks.contains(&index) {
+                "cancelled"
+            } else {
+                "failed"
+            }
+            .into();
         }
         Some(info.state.clone())
     }
@@ -607,7 +865,7 @@ mod tests {
     async fn cancellation_waits_for_a_track_commit_and_rejects_new_saves() {
         let registry = TaskRegistry::default();
         registry.register_task(make_state("saving")).await;
-        let save = registry.begin_save("saving").await.unwrap().unwrap();
+        let save = registry.begin_track_save("saving", 0).await.unwrap();
         let other = registry.clone();
         let stop = tokio::spawn(async move { other.mark_cancelled("saving").await });
         while !registry.is_cancelled("saving").await {
@@ -616,7 +874,7 @@ mod tests {
         assert!(!stop.is_finished());
         drop(save);
         stop.await.unwrap();
-        assert!(registry.begin_save("saving").await.is_err());
+        assert!(registry.begin_track_save("saving", 0).await.is_err());
     }
 
     #[tokio::test]
@@ -684,5 +942,99 @@ mod tests {
 
         assert_eq!(registry.format("missing").await, None);
         assert!(registry.tasks.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_track_keeps_other_tracks_running_and_ignores_late_progress() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("album-1")).await;
+        registry
+            .update_metadata(
+                "album-1",
+                "Album",
+                "Artist",
+                None,
+                None,
+                vec![
+                    ("A".into(), Some(1), None),
+                    ("B".into(), Some(2), None),
+                    ("C".into(), Some(3), None),
+                ],
+            )
+            .await;
+
+        assert_eq!(registry.cancel_track("album-1", 1).await, CancelTrackOutcome::Cancelled);
+        assert_eq!(registry.cancel_track("album-1", 1).await, CancelTrackOutcome::AlreadyCancelled);
+        assert!(!registry.is_cancelled("album-1").await);
+        assert!(registry.is_track_cancelled("album-1", 1).await);
+
+        // Late progress for cancelled track B must be ignored.
+        registry.update_track_progress("album-1", 1, "B", 85).await;
+        registry.record_saved_track("album-1", 0, "A").await;
+        registry.record_saved_track("album-1", 2, "C").await;
+
+        let state = registry.finish_download("album-1", None).await.unwrap();
+        assert_eq!(state.status, "completed");
+        assert_eq!(state.current, 2);
+        assert!(state.message.contains("Saved 2 of 3 tracks (1 cancelled)"));
+        assert_eq!(state.tracks[0].status, "completed");
+        assert_eq!(state.tracks[1].status, "cancelled");
+        assert_eq!(state.tracks[1].percent, 0);
+        assert_eq!(state.tracks[2].status, "completed");
+    }
+
+    #[tokio::test]
+    async fn cancel_track_respects_save_boundary_and_invalid_targets() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("album-2")).await;
+        registry
+            .update_metadata(
+                "album-2",
+                "Album",
+                "Artist",
+                None,
+                None,
+                vec![("A".into(), Some(1), None), ("B".into(), Some(2), None)],
+            )
+            .await;
+
+        // Invalid targets never cancel the whole task.
+        assert_eq!(registry.cancel_track("album-2", 99).await, CancelTrackOutcome::NotFound);
+        assert_eq!(registry.cancel_track("missing", 0).await, CancelTrackOutcome::NotFound);
+        assert!(!registry.is_cancelled("album-2").await);
+
+        // Hold save lock on track 0 -> cancel_track returns TooLateSaving.
+        let save_guard = registry.begin_track_save("album-2", 0).await.unwrap();
+        assert_eq!(registry.cancel_track("album-2", 0).await, CancelTrackOutcome::TooLateSaving);
+        registry.record_saved_track("album-2", 0, "A").await;
+        drop(save_guard);
+        assert_eq!(registry.cancel_track("album-2", 0).await, CancelTrackOutcome::AlreadySaved);
+
+        // Cancel track 1 before save starts -> begin_track_save rejects.
+        assert_eq!(registry.cancel_track("album-2", 1).await, CancelTrackOutcome::Cancelled);
+        assert!(registry.begin_track_save("album-2", 1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelling_all_tracks_marks_task_cancelled() {
+        let registry = TaskRegistry::default();
+        registry.register_task(make_state("album-3")).await;
+        registry
+            .update_metadata(
+                "album-3",
+                "Album",
+                "Artist",
+                None,
+                None,
+                vec![("A".into(), Some(1), None), ("B".into(), Some(2), None)],
+            )
+            .await;
+
+        assert_eq!(registry.cancel_track("album-3", 0).await, CancelTrackOutcome::Cancelled);
+        assert_eq!(registry.cancel_track("album-3", 1).await, CancelTrackOutcome::Cancelled);
+        let state = registry.finish_download("album-3", None).await.unwrap();
+        assert_eq!(state.status, "cancelled");
+        assert_eq!(state.tracks[0].status, "cancelled");
+        assert_eq!(state.tracks[1].status, "cancelled");
     }
 }

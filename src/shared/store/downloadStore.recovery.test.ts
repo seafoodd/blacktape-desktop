@@ -43,7 +43,7 @@ describe("download recovery while events arrive", () => {
     const initializing = useDownloadStore.getState().initDownloadListeners();
     // The snapshot must be requested only after every listener is attached.
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("get_active_downloads"));
-    expect(handlers.size).toBe(8);
+    expect(handlers.size).toBe(9);
     handlers.get(`download-task-${outcome}`)!({ payload: {
       task_id: "task", message: outcome,
       tracks: [{ title: "Song", percent: 100, status: outcome === "completed" ? "completed" : "failed" }],

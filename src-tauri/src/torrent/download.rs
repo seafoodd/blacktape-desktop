@@ -586,10 +586,15 @@ async fn download_archive_seed(
         let locator = locator.to_owned();
         let app_handle = app.cloned();
         let task_id = task_id.to_owned();
-        join_set.spawn(async move {
+        let track_index = request.track_index;
+        let task_id_outer = task_id.clone();
+        let abort_handle = join_set.spawn(async move {
             let _guard = permit.acquire().await.map_err(|_| (request.track_index, request.track.clone(), "Task cancelled".to_string()))?;
             if is_task_cancelled(app_handle.as_ref(), &task_id).await {
                 return Err((request.track_index, request.track.clone(), "Task cancelled".to_string()));
+            }
+            if is_track_cancelled(app_handle.as_ref(), &task_id, request.track_index).await {
+                return Err((request.track_index, request.track.clone(), "Track cancelled".to_string()));
             }
             let source = request.track.torrent_target.as_ref()
                 .and_then(|target| std::iter::once(target).chain(&target.alternatives).find(|source| source.magnet_uri == locator));
@@ -606,19 +611,36 @@ async fn download_archive_seed(
                 let task_p = task_for_progress.clone();
                 let title_p = track_title.clone();
                 async move {
-                    if is_task_cancelled(app_p.as_ref(), &task_p).await { return false; }
+                    if is_track_cancelled(app_p.as_ref(), &task_p, track_index).await { return false; }
                     emit_track_progress(app_p.as_ref(), &task_p, track_index, &title_p, percent).await;
                     true
                 }
             }).await;
+            if let Some(registry) = app_handle.as_ref().and_then(|a| a.try_state::<crate::download::TaskRegistry>()) {
+                registry.clear_track_abort_handle(&task_id, track_index).await;
+            }
             match result {
-                Ok(()) => Ok((path, request.track, request.track_index)),
+                Ok(()) => {
+                    if is_track_cancelled(app_handle.as_ref(), &task_id, request.track_index).await {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        Err((request.track_index, request.track, "Track cancelled".to_string()))
+                    } else {
+                        Ok((path, request.track, request.track_index))
+                    }
+                }
                 Err(error) => {
                     let _ = tokio::fs::remove_file(&path).await;
-                    Err((request.track_index, request.track, error))
+                    if is_track_cancelled(app_handle.as_ref(), &task_id, request.track_index).await {
+                        Err((request.track_index, request.track, "Track cancelled".to_string()))
+                    } else {
+                        Err((request.track_index, request.track, error))
+                    }
                 }
             }
         });
+        if let Some(registry) = app.and_then(|a| a.try_state::<crate::download::TaskRegistry>()) {
+            registry.set_track_abort_handle(&task_id_outer, track_index, abort_handle).await;
+        }
     }
 
     let mut completed: Vec<(PathBuf, TrackDownload, usize)> = Vec::new();
@@ -640,14 +662,17 @@ async fn download_archive_seed(
                 cancelled = true;
                 join_set.abort_all();
             }
+            Ok(Err((_, _, error))) if error == "Track cancelled" => {}
             Ok(Err((index, track, error))) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
+                if !is_track_cancelled(app, task_id, index).await {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                    failed_tracks.push((index, track));
                 }
-                failed_tracks.push((index, track));
             }
             Err(join_err) => {
-                if first_error.is_none() {
+                if !join_err.is_cancelled() && first_error.is_none() {
                     first_error = Some(format!("Web seed worker failed: {join_err}"));
                 }
             }
@@ -758,7 +783,7 @@ async fn transfer_attempt(
             return Err(start_failure(lane, error));
         }
     };
-    job.torrent = Some((session, handle.id()));
+    job.torrent = Some((Arc::clone(&session), handle.id()));
     let hash = handle.info_hash().as_string();
     if requests.iter().filter_map(|request| target_for_request(request, locator))
         .any(|target| !target.info_hash.eq_ignore_ascii_case(&hash))
@@ -801,6 +826,21 @@ async fn transfer_attempt(
     if let Err(msg) = init_res {
         job.clean().await;
         return Err(start_failure(lane, msg));
+    }
+
+    if let Some(registry) = app.and_then(|a| a.try_state::<crate::download::TaskRegistry>()) {
+        let track_to_file: HashMap<usize, usize> = requests
+            .iter()
+            .map(|r| (r.track_index, r.file_index))
+            .collect();
+        registry
+            .register_torrent_selection(
+                task_id,
+                Arc::clone(&session),
+                Arc::clone(&handle),
+                track_to_file,
+            )
+            .await;
     }
 
     if lane == Lane::Patient {
@@ -914,6 +954,10 @@ async fn transfer_attempt(
 
         for req in requests {
             if done_indices.contains(&req.track_index) {
+                continue;
+            }
+            if is_track_cancelled(app, task_id, req.track_index).await {
+                done_indices.insert(req.track_index);
                 continue;
             }
             let Some((rel_path, meta_len)) = file_rel_paths.get(&req.file_index) else {
@@ -1174,6 +1218,14 @@ async fn emit_task_progress(
 async fn is_task_cancelled(app: Option<&AppHandle>, task_id: &str) -> bool {
     if let Some(registry) = app.and_then(|app| app.try_state::<crate::download::TaskRegistry>()) {
         registry.is_cancelled(task_id).await
+    } else {
+        false
+    }
+}
+
+async fn is_track_cancelled(app: Option<&AppHandle>, task_id: &str, track_index: usize) -> bool {
+    if let Some(registry) = app.and_then(|app| app.try_state::<crate::download::TaskRegistry>()) {
+        registry.is_track_cancelled(task_id, track_index).await
     } else {
         false
     }

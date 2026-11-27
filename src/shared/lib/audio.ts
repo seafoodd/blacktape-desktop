@@ -153,6 +153,19 @@ export function resolveTorrentAlbum(
 export const cancelTorrentInspection = (requestId: string): Promise<void> =>
   invoke("plugin:torrent|cancel_torrent_inspection", { requestId });
 
+export type CancelTrackOutcome =
+  | "cancelled"
+  | "already_saved"
+  | "too_late_saving"
+  | "already_cancelled"
+  | "not_found";
+
+export const cancelDownloadTrack = (
+  taskId: string,
+  trackIndex: number,
+): Promise<CancelTrackOutcome> =>
+  invoke<CancelTrackOutcome>("cancel_download_track", { taskId, trackIndex });
+
 export const scanMusic = (dir: string): Promise<Song[]> =>
   invoke<Song[]>("scan_music", { dir });
 

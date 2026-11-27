@@ -117,7 +117,7 @@ export interface IntegratedDownloadingTrack {
   trackNumber: number;
   discNumber: number;
   percent: number;
-  status: "pending" | "idle" | "downloading" | "completed" | "failed";
+  status: "pending" | "idle" | "downloading" | "completed" | "failed" | "cancelled";
 }
 
 export function unifiedAlbumKey(artist: string, albumTitle: string): string {
@@ -151,6 +151,7 @@ export function extraDownloadingTracksForAlbum(
   for (const d of downloadsForAlbum) {
     if (d.tracks && d.tracks.length > 0) {
       d.tracks.forEach((tr, idx) => {
+        if (tr.status === "cancelled") return;
         const key = normalizeAlbumTitle(tr.title);
         if (!key || existingTitles.has(key) || seenDownloading.has(key)) return;
         seenDownloading.add(key);

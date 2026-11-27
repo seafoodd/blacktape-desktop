@@ -97,4 +97,31 @@ describe("isRunning", () => {
   it.each(["completed", "failed", "cancelled"] as const)("is false for %s", (status) => {
     expect(isRunning({ status })).toBe(false);
   });
+
+  it("findDownload skips an active album task when the requested track is cancelled", () => {
+    const active = {
+      album: {
+        url: "https://example.com/album",
+        status: "downloading" as const,
+        tracks: [
+          { title: "Track A", percent: 50, status: "downloading" as const },
+          { title: "Track B", percent: 0, status: "cancelled" as const },
+        ],
+      },
+    };
+    expect(
+      findDownload(active, {
+        url: "https://example.com/album",
+        trackUrls: ["https://example.com/track/b"],
+        trackTitle: "Track B",
+      }),
+    ).toBeUndefined();
+    expect(
+      findDownload(active, {
+        url: "https://example.com/album",
+        trackUrls: ["https://example.com/track/a"],
+        trackTitle: "Track A",
+      }),
+    ).toBe(active.album);
+  });
 });
