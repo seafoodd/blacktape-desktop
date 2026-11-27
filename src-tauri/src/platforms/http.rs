@@ -86,6 +86,10 @@ where F: FnMut() -> Fut, Fut: Future<Output = Result<T, Failure>> {
 #[path = "retry_tests.rs"]
 mod retry_tests;
 
+#[cfg(test)]
+#[path = "request_tests.rs"]
+mod request_tests;
+
 /// Custom artist domains are supported, but local addresses and embedded credentials are rejected.
 pub fn checked_public_url(raw: &str) -> Result<url::Url, String> {
     let url = url::Url::parse(raw.trim()).map_err(|_| "Invalid page URL".to_string())?;
@@ -120,17 +124,21 @@ pub fn client() -> Result<&'static Client, String> {
 }
 
 /// Status and size checks are shared by page, image and lyrics readers.
-pub async fn read_bytes_limited(mut response: Response, max: usize) -> Result<Vec<u8>, String> {
+pub async fn read_bytes_limited(response: Response, max: usize) -> Result<Vec<u8>, String> {
+    read_bytes(response, max).await.map_err(|failure| failure.message)
+}
+
+async fn read_bytes(mut response: Response, max: usize) -> Result<Vec<u8>, Failure> {
     if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
+        return Err(Failure::from_response(&response));
     }
     if response.content_length().is_some_and(|length| length > max as u64) {
-        return Err("response too large".into());
+        return Err(Failure::fatal("response too large"));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| error.without_url().to_string())? {
+    while let Some(chunk) = response.chunk().await? {
         if body.len().saturating_add(chunk.len()) > max {
-            return Err("response too large".into());
+            return Err(Failure::fatal("response too large"));
         }
         body.extend_from_slice(&chunk);
     }
@@ -139,15 +147,33 @@ pub async fn read_bytes_limited(mut response: Response, max: usize) -> Result<Ve
 
 pub async fn get_page(raw: &str) -> Result<String, String> {
     let url = checked_public_url(raw)?;
-    let response = client()?.get(url).send().await.map_err(|error| error.without_url().to_string())?;
-    let bytes = read_bytes_limited(response, PAGE_LIMIT).await?;
+    let client = client()?;
+    let bytes = request_bytes(|| client.get(url.clone()), Duration::from_secs(6), PAGE_LIMIT).await?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub async fn post_page_json<T: serde::Serialize>(raw: &str, body: &T) -> Result<String, String> {
+    let url = checked_public_url(raw)?;
+    let client = client()?;
+    let bytes = request_bytes(|| client.post(url.clone()).json(body), Duration::from_secs(6), PAGE_LIMIT).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+async fn request_bytes(
+    mut request: impl FnMut() -> reqwest::RequestBuilder,
+    budget: Duration,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    retrying_for(budget, 2, backoff, || {
+        let request = request();
+        async move { read_bytes(request.send().await?, max).await }
+    }).await
 }
 
 pub async fn get_cover(raw: &str) -> Result<Vec<u8>, String> {
     let url = checked_public_url(raw)?;
-    let response = client()?.get(url).send().await.map_err(|error| error.without_url().to_string())?;
-    read_bytes_limited(response, COVER_LIMIT).await
+    let client = client()?;
+    request_bytes(|| client.get(url.clone()), Duration::from_secs(10), COVER_LIMIT).await
 }
 
 #[cfg(test)]

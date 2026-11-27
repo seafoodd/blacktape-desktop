@@ -271,50 +271,7 @@ pub fn parse_bandcamp_stream(html: &str) -> Option<(String, Option<u64>)> {
 }
 
 pub(crate) async fn resolve_bandcamp(url: &str) -> Result<StreamInfo, String> {
-    let host_ok = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_lowercase))
-        .is_some_and(|h| h == "bandcamp.com" || h.ends_with(".bandcamp.com"));
-    if !host_ok {
-        return Err("not a Bandcamp url".to_string());
-    }
-
-    let mut html_opt: Option<String> = None;
-    let mut last_err = String::new();
-    for attempt in 0..3usize {
-        if attempt > 0 {
-            tokio::time::sleep(Duration::from_millis(400 * attempt as u64)).await;
-        }
-        match http_client().get(url).send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                if status.is_success() {
-                    match resp.text().await {
-                        Ok(body) => {
-                            html_opt = Some(body);
-                            break;
-                        }
-                        Err(e) => {
-                            last_err = format!("Bandcamp page could not be read: {e}");
-                            break;
-                        }
-                    }
-                }
-                last_err = format!("Bandcamp request failed: HTTP {status}");
-                if status != reqwest::StatusCode::TOO_MANY_REQUESTS && !status.is_server_error() {
-                    break;
-                }
-            }
-            Err(e) => {
-                last_err = format!("Bandcamp request failed: {e}");
-                if !e.is_timeout() && !e.is_connect() {
-                    break;
-                }
-            }
-        }
-    }
-
-    let html = html_opt.ok_or(last_err)?;
+    let html = crate::platforms::http::get_page(url).await?;
     let (stream_url, duration_ms) =
         parse_bandcamp_stream(&html).ok_or("no streamable audio found on the Bandcamp page")?;
     Ok(StreamInfo {

@@ -1,10 +1,7 @@
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::OnceLock;
-use std::time::Duration;
 
 #[derive(Serialize)]
 struct SearchRequest {
@@ -81,18 +78,6 @@ impl From<BandcampResult> for SearchSuggestion {
     }
 }
 
-/// One client, so searches reuse the connection; the timeout keeps a stalled request from holding up the rest.
-fn http_client() -> &'static Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        Client::builder()
-            .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(5))
-            .build()
-            .unwrap_or_default()
-    })
-}
-
 fn parse_response(body: &str) -> Result<Vec<SearchSuggestion>, String> {
     let parsed: BandcampSearchResponse = serde_json::from_str(body)
         .map_err(|_| "Bandcamp returned an invalid search response".to_string())?;
@@ -107,7 +92,6 @@ fn parse_response(body: &str) -> Result<Vec<SearchSuggestion>, String> {
 mod tests;
 
 pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
-    let client = http_client();
     let url = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic";
 
     let request_body = SearchRequest {
@@ -116,12 +100,6 @@ pub async fn search(query: &str) -> Result<Vec<SearchSuggestion>, Box<dyn Error 
         full_page: false,
     };
 
-    let response = client.post(url).json(&request_body).send().await?;
-
-    if response.status().is_success() {
-        let body_text = response.text().await?;
-        parse_response(&body_text).map_err(Into::into)
-    } else {
-        Err(format!("Bandcamp API error: {}", response.status()).into())
-    }
+    let body = crate::platforms::http::post_page_json(url, &request_body).await?;
+    parse_response(&body).map_err(Into::into)
 }

@@ -24,16 +24,9 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::error::Error;
 use std::sync::OnceLock;
-use std::time::Duration;
 use url::Url;
 
 const SEARCH_URL: &str = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic";
-/// Timeout of one filtered search request (D18).
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(4);
-/// Timeout of the artist page request.
-const PROFILE_TIMEOUT: Duration = Duration::from_secs(5);
-
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 /// Lazily compiled static regex.
 macro_rules! regex {
@@ -128,39 +121,16 @@ fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|text| !text.trim().is_empty())
 }
 
-fn http_client() -> &'static reqwest::Client {
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(2))
-            .pool_idle_timeout(Duration::from_secs(60))
-            // Redirects may only stay on Bandcamp hosts, at most 3 hops.
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 3 {
-                    attempt.error("too many redirects")
-                } else if attempt.url().host_str().is_some_and(is_bandcamp_host) {
-                    attempt.follow()
-                } else {
-                    attempt.stop()
-                }
-            }))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    })
-}
-
 /// One filtered request (timeout 4 s; own static reqwest client). Err on network/non-2xx.
 pub async fn search_page(
     query: &str,
     kind: SearchKind,
 ) -> Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>> {
-    let response = http_client()
-        .post(SEARCH_URL)
-        .json(&build_request_body(query, kind))
-        .timeout(SEARCH_TIMEOUT)
-        .send()
-        .await?
-        .error_for_status()?;
-    let body = response.text().await?;
+    let body = crate::platforms::http::post_page_json(SEARCH_URL, &build_request_body(query, kind)).await?;
+    if serde_json::from_str::<Value>(&body).ok()
+        .and_then(|value| value.pointer("/auto/results").and_then(Value::as_array).map(Vec::len)).is_none() {
+        return Err("Unexpected Bandcamp search response".into());
+    }
     Ok(parse_results(&body, kind))
 }
 
@@ -187,13 +157,7 @@ pub fn site_root(url: &str) -> Option<String> {
 /// (for example a bot-challenge page).
 pub async fn artist_profile(url: &str) -> Result<ArtistProfile, Box<dyn Error + Send + Sync>> {
     let root = site_root(url).ok_or("not a Bandcamp artist url")?;
-    let response = http_client()
-        .get(format!("{root}/music"))
-        .timeout(PROFILE_TIMEOUT)
-        .send()
-        .await?
-        .error_for_status()?;
-    let html = response.text().await?;
+    let html = crate::platforms::http::get_page(&format!("{root}/music")).await?;
     let profile = parse_artist_page(&html, &root);
     if profile.name.is_empty() {
         return Err("Bandcamp artist page had no name".into());
