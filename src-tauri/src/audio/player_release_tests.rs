@@ -33,8 +33,8 @@ impl Source for FailingSeekSource {
     }
 
     fn try_seek(&mut self, _pos: Duration) -> Result<(), rodio::source::SeekError> {
-        Err(rodio::source::SeekError::Unsupported {
-            underlying_source: "test source rejects seek".into(),
+        Err(rodio::source::SeekError::NotSupported {
+            underlying_source: "test source rejects seek",
         })
     }
 }
