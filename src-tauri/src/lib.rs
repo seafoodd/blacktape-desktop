@@ -1195,7 +1195,54 @@ pub fn run() {
 
             let db_path = db_file_path(&config_dir);
             let db_path_str = db_path.to_str().expect("path is not valid utf-8");
-            let db = tauri::async_runtime::block_on(async { Database::new(db_path_str).await });
+            let db = match tauri::async_runtime::block_on(Database::try_new(db_path_str)) {
+                Ok(db) => db,
+                Err(err) => {
+                    tracing::error!("Failed to initialize database at {db_path_str}: {err}");
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                    let should_reset = app
+                        .dialog()
+                        .message(
+                            "Blacktape had trouble opening its song list, so it needs to rebuild it.\n\n\
+                             Don't worry — all of your music files are completely safe and won't be touched.\n\n\
+                             Click \"Rebuild Song List\" to fix this automatically and open Blacktape.",
+                        )
+                        .title("Blacktape Needs a Quick Refresh")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Rebuild Song List".to_string(),
+                            "Quit".to_string(),
+                        ))
+                        .blocking_show();
+
+                    if !should_reset {
+                        return Err(err.into());
+                    }
+
+                    if let Err(reset_err) = Database::backup_and_reset_db(&db_path) {
+                        tracing::error!("Failed to reset database at {db_path_str}: {reset_err}");
+                        app.dialog()
+                            .message(format!("Could not reset the database:\n\n{reset_err}"))
+                            .title("Blacktape — Database Error")
+                            .kind(MessageDialogKind::Error)
+                            .blocking_show();
+                        return Err(reset_err.into());
+                    }
+
+                    match tauri::async_runtime::block_on(Database::try_new(db_path_str)) {
+                        Ok(db) => db,
+                        Err(retry_err) => {
+                            tracing::error!("Failed to recreate database at {db_path_str}: {retry_err}");
+                            app.dialog()
+                                .message(format!("Could not create a new database:\n\n{retry_err}"))
+                                .title("Blacktape — Database Error")
+                                .kind(MessageDialogKind::Error)
+                                .blocking_show();
+                            return Err(retry_err.into());
+                        }
+                    }
+                }
+            };
 
             let telemetry_enabled = tauri::async_runtime::block_on(async {
                 db.get_app_setting(telemetry::TELEMETRY_SETTING_KEY)

@@ -48,7 +48,29 @@ pub async fn run_migrations(pool: &SqlitePool, migrations: &[Migration]) -> Resu
             let start = std::time::Instant::now();
             let mut tx = pool.begin().await?;
 
-            sqlx::raw_sql(m.sql).execute(&mut *tx).await?;
+            for stmt in m.sql.split(';') {
+                let stmt = stmt.trim();
+                if stmt.is_empty() {
+                    continue;
+                }
+                if let Err(e) = sqlx::raw_sql(stmt).execute(&mut *tx).await {
+                    let is_duplicate_add_column = matches!(
+                        &e,
+                        sqlx::Error::Database(db_err)
+                            if db_err.message().contains("duplicate column name:")
+                    ) && stmt.to_ascii_lowercase().contains("add column");
+
+                    if is_duplicate_add_column {
+                        tracing::warn!(
+                            "Skipping already-applied column in migration {}: {}",
+                            m.version,
+                            e
+                        );
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
 
             let elapsed_nanos = start.elapsed().as_nanos() as i64;
             sqlx::query(
@@ -328,5 +350,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(applied, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn run_migrations_skips_duplicate_add_column_and_records_version() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        // Run migrations 1..=8, then manually add `disc_number` without recording version 9.
+        let migrations = get_migrations();
+        run_migrations(&pool, &migrations[..8]).await.unwrap();
+        sqlx::raw_sql("ALTER TABLE songs ADD COLUMN disc_number INTEGER;")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Running all migrations (including 9: add disc_number) must succeed without panicking.
+        run_migrations(&pool, &migrations).await.unwrap();
+
+        let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[tokio::test]
+    async fn run_migrations_skips_duplicate_column_in_multi_statement_migration() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        let step1 = vec![Migration {
+            version: 1,
+            description: "create items",
+            sql: "CREATE TABLE items (id INTEGER PRIMARY KEY, existing_col TEXT);",
+        }];
+        run_migrations(&pool, &step1).await.unwrap();
+
+        let step2 = vec![Migration {
+            version: 2,
+            description: "add existing and new columns",
+            sql: "
+                ALTER TABLE items ADD COLUMN existing_col TEXT;
+                ALTER TABLE items ADD COLUMN new_col INTEGER DEFAULT 42;
+            ",
+        }];
+        run_migrations(&pool, &step2).await.unwrap();
+
+        sqlx::raw_sql("INSERT INTO items (id, existing_col) VALUES (1, 'ok');")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let val: i64 = sqlx::query_scalar("SELECT new_col FROM items WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(val, 42);
     }
 }

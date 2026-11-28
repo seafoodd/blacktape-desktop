@@ -75,6 +75,10 @@ opt-level = 0      # fastest compile
 debug = 2          # keep debug info if needed
 incremental = true # default, keeps previous build artifacts
 
+# Strip heavy variable/type debug symbols from third-party crates while keeping line numbers for panics
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
 # Image decoding/resizing is unusably slow at opt-level 0 (cover thumbnails took seconds each),
 # so optimize just the image stack even in dev builds.
 [profile.dev.package.image]
