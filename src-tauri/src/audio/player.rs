@@ -230,6 +230,222 @@ pub enum RepeatMode {
 
 pub type BoxedSource = Box<dyn Source<Item = f32> + Send>;
 
+/// A `BoxedSource` whose first chunk of PCM samples has already been decoded into RAM on a background
+/// thread, so appending it to `rodio::Player` transitions with zero decoder/HTTP latency on the audio thread.
+struct PrimedSource {
+    head: std::vec::IntoIter<f32>,
+    tail: BoxedSource,
+    channels: std::num::NonZero<u16>,
+    sample_rate: std::num::NonZero<u32>,
+    total_duration: Option<Duration>,
+}
+
+impl PrimedSource {
+    fn prime(mut tail: BoxedSource, max_samples: usize, trim_leading_silence_samples: usize) -> BoxedSource {
+        let channels = tail.channels();
+        let sample_rate = tail.sample_rate();
+        let total_duration = tail.total_duration();
+        let ch = channels.get() as usize;
+        let max_trim_frames = trim_leading_silence_samples / ch.max(1);
+        let mut head = Vec::with_capacity(max_samples.min(65_536));
+        let mut trimmed_frames = 0usize;
+        let mut skipping = max_trim_frames > 0;
+
+        while head.len() < max_samples {
+            let mut frame = Vec::with_capacity(ch);
+            for _ in 0..ch {
+                let Some(sample) = tail.next() else { break };
+                frame.push(sample);
+            }
+            if frame.is_empty() {
+                break;
+            }
+            if skipping
+                && frame.len() == ch
+                && trimmed_frames < max_trim_frames
+                && frame.iter().all(|s| s.abs() < 0.0002)
+            {
+                trimmed_frames += 1;
+                continue;
+            }
+            skipping = false;
+            head.extend(frame);
+        }
+        Box::new(Self {
+            head: head.into_iter(),
+            tail,
+            channels,
+            sample_rate,
+            total_duration,
+        })
+    }
+}
+
+impl Iterator for PrimedSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.head.next().or_else(|| self.tail.next())
+    }
+}
+
+impl Source for PrimedSource {
+    fn current_span_len(&self) -> Option<usize> {
+        if self.head.len() > 0 {
+            Some(self.head.len())
+        } else {
+            self.tail.current_span_len()
+        }
+    }
+
+    fn channels(&self) -> std::num::NonZero<u16> {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.total_duration
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.tail.try_seek(pos)?;
+        self.head = Vec::new().into_iter();
+        Ok(())
+    }
+}
+
+fn prime_stream_source(source: BoxedSource) -> BoxedSource {
+    let rate_ch = (source.sample_rate().get() as usize).saturating_mul(source.channels().get() as usize);
+    let half_second = (rate_ch / 2).max(2048);
+    // YouTube .m4a (AAC-LC) streams carry ~35-50 ms of encoder priming silence at the start and
+    // ~23-46 ms of trailing padding at the end that symphonia's MP4 demuxer does not trim via `elst`.
+    let max_trim = (rate_ch * 60) / 1000;
+    let tail_trimmed = TailTrimSource::new(source, max_trim);
+    PrimedSource::prime(tail_trimmed, half_second, max_trim)
+}
+
+/// Wraps a `BoxedSource` with a tiny (<= 60 ms) lookahead ring buffer so trailing AAC encoder padding
+/// frames at EOF can be trimmed without buffering the track.
+struct TailTrimSource {
+    inner: BoxedSource,
+    buf: std::collections::VecDeque<f32>,
+    max_samples: usize,
+    ended: bool,
+    channels: std::num::NonZero<u16>,
+    sample_rate: std::num::NonZero<u32>,
+    total_duration: Option<Duration>,
+}
+
+impl TailTrimSource {
+    fn new(inner: BoxedSource, max_trim_samples: usize) -> BoxedSource {
+        let channels = inner.channels();
+        let sample_rate = inner.sample_rate();
+        let total_duration = inner.total_duration();
+        let ch = (channels.get() as usize).max(1);
+        let max_samples = (max_trim_samples / ch) * ch;
+        if max_samples == 0 {
+            return inner;
+        }
+        Box::new(Self {
+            inner,
+            buf: std::collections::VecDeque::with_capacity(max_samples),
+            max_samples,
+            ended: false,
+            channels,
+            sample_rate,
+            total_duration,
+        })
+    }
+
+    fn trim_trailing_silence(&mut self) {
+        let ch = (self.channels.get() as usize).max(1);
+        while self.buf.len() >= ch {
+            let start = self.buf.len() - ch;
+            let silent = (start..self.buf.len()).all(|i| self.buf[i].abs() < 0.0002);
+            if !silent {
+                break;
+            }
+            for _ in 0..ch {
+                self.buf.pop_back();
+            }
+        }
+    }
+
+    fn fill_lookahead(&mut self) {
+        let ch = (self.channels.get() as usize).max(1);
+        while !self.ended && self.buf.len() < self.max_samples {
+            let mut pushed = 0;
+            for _ in 0..ch {
+                match self.inner.next() {
+                    Some(s) => {
+                        self.buf.push_back(s);
+                        pushed += 1;
+                    }
+                    None => {
+                        self.ended = true;
+                        break;
+                    }
+                }
+            }
+            if self.ended {
+                if pushed > 0 && pushed < ch {
+                    // Drop incomplete trailing partial frame if any.
+                    for _ in 0..pushed {
+                        self.buf.pop_back();
+                    }
+                }
+                self.trim_trailing_silence();
+                break;
+            }
+        }
+    }
+}
+
+impl Iterator for TailTrimSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.ended {
+            self.fill_lookahead();
+        }
+        self.buf.pop_front()
+    }
+}
+
+impl Source for TailTrimSource {
+    fn current_span_len(&self) -> Option<usize> {
+        if self.ended {
+            Some(self.buf.len())
+        } else {
+            self.inner
+                .current_span_len()
+                .map(|n| n.saturating_add(self.buf.len()))
+        }
+    }
+
+    fn channels(&self) -> std::num::NonZero<u16> {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.total_duration
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)?;
+        self.buf.clear();
+        self.ended = false;
+        Ok(())
+    }
+}
+
 pub struct AudioPlayer {
     output: AudioOutput,
     player: Player,
@@ -252,6 +468,8 @@ pub struct AudioPlayer {
     prepared: Option<(String, BoxedSource, Option<Duration>)>,
     /// Url of the stream song being prepared in the background.
     preparing: Option<String>,
+    /// Bumped whenever the prepared/preparing next stream is replaced or cleared.
+    prepare_generation: u64,
     /// The next song, appended to `player` for a gapless transition (see `audio::transition`).
     pending_next: Option<PendingNext>,
     /// Bumped whenever the audio in `player` is replaced; a background decode only applies to the audio it was
@@ -298,6 +516,14 @@ struct BufferJob {
     path: String,
 }
 
+fn next_stream_prepare_url<'a>(next: Option<&'a Song>, pending_key: Option<&SongKey>) -> Option<&'a str> {
+    let song = next.filter(|s| is_stream_song(s))?;
+    if pending_key.is_some_and(|key| *key == song_key(song)) {
+        return None;
+    }
+    song.source_url.as_deref().filter(|url| !url.is_empty())
+}
+
 impl AudioPlayer {
     pub fn new(media_controls: MediaControls, handle: AppHandle) -> Self {
         let output = AudioOutput::open_default_or_null();
@@ -328,6 +554,7 @@ impl AudioPlayer {
             stream_generation: 0,
             prepared: None,
             preparing: None,
+            prepare_generation: 0,
             pending_next: None,
             audio_generation: 0,
             buffering: false,
@@ -459,7 +686,9 @@ impl AudioPlayer {
     fn commit_transition(&mut self) {
         let Some(pending) = self.pending_next.take() else { return };
         let expected = self.get_next_cursor().and_then(|c| self.song_at(c).map(|s| (c, song_key(&s))));
-        match resolve_transition(&pending.key, expected.as_ref().map(|(c, k)| (*c, k))) {
+        let decision = resolve_transition(&pending.key, expected.as_ref().map(|(c, k)| (*c, k)));
+        tracing::info!(decision = ?decision, "Committing gapless transition");
+        match decision {
             Transition::Adopt(cursor) => {
                 let Some(song) = self.song_at(cursor) else { return self.stop() };
                 self.cursor = Some(cursor);
@@ -481,7 +710,14 @@ impl AudioPlayer {
 
     /// The current song ended by itself: plays what the queue has next, or stops at the end of the queue.
     fn advance_after_end(&mut self) {
-        match self.get_next_cursor() {
+        let next = self.get_next_cursor();
+        tracing::info!(
+            next_cursor = ?next,
+            current_cursor = ?self.cursor,
+            player_len = self.player.len(),
+            "Stream/track ended, advancing"
+        );
+        match next {
             Some(cursor) => self.play_at(cursor),
             None => self.stop(),
         }
@@ -728,6 +964,7 @@ impl AudioPlayer {
             match removal.cursor {
                 Some(cursor) => return self.play_at(cursor),
                 None => {
+                    self.clear_prepared();
                     self.stop();
                     self.current_song = None;
                     self.cursor = None;
@@ -787,6 +1024,7 @@ impl AudioPlayer {
     /// on, the chosen song plays first and the rest is shuffled. An empty list stops playback and clears the queue.
     pub fn start_playback(&mut self, songs: Vec<Song>, current_index: usize) {
         let Some(start) = queue_ops::clamp_start(songs.len(), current_index) else {
+            self.clear_prepared();
             self.stop();
             self.queue.clear();
             self.play_order = None;
@@ -825,6 +1063,7 @@ impl AudioPlayer {
             None => self.queue.get(start).cloned(),
         };
         self.player.pause();
+        self.prepare_next();
         self.emit_state();
         self.update_current_metadata();
     }
@@ -1438,6 +1677,7 @@ impl AudioPlayer {
             }
         }
         if swapped > 0 {
+            self.prepare_next();
             self.emit_state();
         }
         swapped
@@ -1466,7 +1706,15 @@ impl AudioPlayer {
         let handle = self.handle.clone();
         let platform = song.source;
         tauri::async_runtime::spawn(async move {
-            let result = crate::preview::commands::open_stream(&handle, platform, &url).await;
+            let result = match crate::preview::commands::open_stream(&handle, platform, &url).await {
+                Ok((source, duration)) => {
+                    let primed = tokio::task::spawn_blocking(move || prime_stream_source(source))
+                        .await
+                        .map_err(|e| e.to_string());
+                    primed.map(|s| (s, duration))
+                }
+                Err(e) => Err(e),
+            };
             let state = handle.state::<Mutex<AudioPlayer>>();
             let mut player = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             player.on_stream_opened(generation, &url, result);
@@ -1550,30 +1798,52 @@ impl AudioPlayer {
         }
     }
 
+    fn clear_prepared(&mut self) {
+        self.prepared = None;
+        self.preparing = None;
+        self.prepare_generation = self.prepare_generation.wrapping_add(1);
+    }
+
     /// Opens the next song of the queue in the background when it is a stream, so the transition has no
     /// network delay. Only one song is kept prepared.
     fn prepare_next(&mut self) {
-        let Some(next) = self.get_next_cursor().and_then(|c| self.song_at(c)) else {
+        let Some(cursor) = self.get_next_cursor() else {
+            self.clear_prepared();
             return;
         };
-        if !is_stream_song(&next) {
+        self.stream_missing_file_at(cursor);
+        let next = self.song_at(cursor);
+        let pending_key = self.pending_next.as_ref().map(|p| &p.key);
+        let Some(url) = next_stream_prepare_url(next.as_ref(), pending_key).map(str::to_string) else {
+            self.clear_prepared();
             return;
-        }
-        let url = next.source_url.clone().unwrap_or_default();
+        };
+        let platform = next
+            .as_ref()
+            .map(|s| s.source)
+            .unwrap_or(crate::types::Platform::Local);
         let already = self.prepared.as_ref().is_some_and(|(u, _, _)| *u == url)
             || self.preparing.as_deref() == Some(url.as_str());
         if already {
             return;
         }
-        self.prepared = None;
+        self.clear_prepared();
         self.preparing = Some(url.clone());
+        let generation = self.prepare_generation;
         let handle = self.handle.clone();
-        let platform = next.source;
         tauri::async_runtime::spawn(async move {
-            let result = crate::preview::commands::open_stream(&handle, platform, &url).await;
+            let result = match crate::preview::commands::open_stream(&handle, platform, &url).await {
+                Ok((source, duration)) => {
+                    let primed = tokio::task::spawn_blocking(move || prime_stream_source(source))
+                        .await
+                        .map_err(|e| e.to_string());
+                    primed.map(|s| (s, duration))
+                }
+                Err(e) => Err(e),
+            };
             let state = handle.state::<Mutex<AudioPlayer>>();
             let mut player = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if player.preparing.as_deref() != Some(url.as_str()) {
+            if player.prepare_generation != generation || player.preparing.as_deref() != Some(url.as_str()) {
                 return;
             }
             player.preparing = None;
@@ -1593,6 +1863,10 @@ impl AudioPlayer {
         self.player.volume()
     }
 }
+
+#[cfg(test)]
+#[path = "player_release_tests.rs"]
+mod release_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2306,5 +2580,101 @@ mod tests {
         order_push(&mut order, &mut cursor, 3);
         assert_eq!(order, Some(vec![0, 1, 2, 3]));
         assert_eq!(cursor, Some(2));
+    }
+
+    #[test]
+    fn next_stream_prepare_url_handles_streams_local_files_and_already_pending() {
+        let mut stream = make_song(None, "Stream");
+        stream.path.clear();
+        stream.source = Platform::Youtube;
+        stream.source_url = Some("https://music.youtube.com/watch?v=xdIGp4Ge8yk".to_string());
+        let local = make_song(Some(1), "Local");
+
+        assert_eq!(
+            super::next_stream_prepare_url(Some(&stream), None),
+            Some("https://music.youtube.com/watch?v=xdIGp4Ge8yk")
+        );
+        assert_eq!(super::next_stream_prepare_url(Some(&local), None), None);
+        assert_eq!(super::next_stream_prepare_url(None, None), None);
+
+        let key = crate::audio::transition::song_key(&stream);
+        assert_eq!(super::next_stream_prepare_url(Some(&stream), Some(&key)), None);
+    }
+
+    #[test]
+    fn primed_source_preserves_all_samples_and_clears_head_on_seek() {
+        struct MockSource {
+            samples: Vec<f32>,
+            pos: usize,
+        }
+        impl Iterator for MockSource {
+            type Item = f32;
+            fn next(&mut self) -> Option<Self::Item> {
+                let s = self.samples.get(self.pos).copied()?;
+                self.pos += 1;
+                Some(s)
+            }
+        }
+        impl Source for MockSource {
+            fn current_span_len(&self) -> Option<usize> {
+                Some(self.samples.len().saturating_sub(self.pos))
+            }
+            fn channels(&self) -> std::num::NonZero<u16> {
+                std::num::NonZero::new(1).unwrap()
+            }
+            fn sample_rate(&self) -> std::num::NonZero<u32> {
+                std::num::NonZero::new(8000).unwrap()
+            }
+            fn total_duration(&self) -> Option<Duration> {
+                Some(Duration::from_secs(1))
+            }
+            fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+                self.pos = (pos.as_secs_f64() * 8000.0) as usize;
+                Ok(())
+            }
+        }
+
+        let expected: Vec<f32> = (0..8000).map(|i| i as f32).collect();
+        let primed = super::PrimedSource::prime(
+            Box::new(MockSource { samples: expected.clone(), pos: 0 }),
+            1000,
+            0,
+        );
+        assert_eq!(primed.channels().get(), 1);
+        assert_eq!(primed.sample_rate().get(), 8000);
+        let actual: Vec<f32> = primed.collect();
+        assert_eq!(actual, expected);
+
+        let trimmed = super::PrimedSource::prime(
+            Box::new(MockSource {
+                samples: [vec![0.0; 200], vec![0.5; 300]].concat(),
+                pos: 0,
+            }),
+            100,
+            150,
+        );
+        let trimmed_out: Vec<f32> = trimmed.collect();
+        assert_eq!(trimmed_out.len(), 350, "trims up to 150 leading silent samples");
+        assert_eq!(trimmed_out[50], 0.5);
+
+        let mut seekable = super::PrimedSource::prime(
+            Box::new(MockSource { samples: expected, pos: 0 }),
+            1000,
+            0,
+        );
+        seekable.try_seek(Duration::from_millis(500)).unwrap();
+        let after_seek: Vec<f32> = seekable.collect();
+        assert_eq!(after_seek.len(), 4000);
+        assert_eq!(after_seek[0], 4000.0);
+
+        let tail_trimmed = super::TailTrimSource::new(
+            Box::new(MockSource {
+                samples: [vec![0.5; 300], vec![0.0; 120]].concat(),
+                pos: 0,
+            }),
+            150,
+        );
+        let out: Vec<f32> = tail_trimmed.collect();
+        assert_eq!(out.len(), 300, "trims trailing silent samples within lookahead");
     }
 }
