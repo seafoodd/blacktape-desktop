@@ -43,7 +43,7 @@ async fn torrent_fixture() -> (tempfile::TempDir, Arc<librqbit::Session>, Arc<li
     for name in ["a.flac", "b.flac", "c.flac"] {
         metadata.extend_from_slice(format!("d6:lengthi3e4:pathl{}:{}ee", name.len(), name).as_bytes());
     }
-    metadata.extend_from_slice(b"e4:name4:album12:piece lengthi16384e6:pieces20:");
+    metadata.extend_from_slice(b"e4:name5:album12:piece lengthi16384e6:pieces20:");
     metadata.extend_from_slice(&[0; 20]);
     metadata.extend_from_slice(b"ee");
 
