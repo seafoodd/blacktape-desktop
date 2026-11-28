@@ -10,6 +10,12 @@ pub struct Database {
 
 impl Database {
     pub async fn new(db_path: &str) -> Self {
+        Self::try_new(db_path)
+            .await
+            .expect("Failed to initialize database")
+    }
+
+    pub async fn try_new(db_path: &str) -> Result<Self, String> {
         let is_memory = db_path == ":memory:" || db_path == "sqlite::memory:";
         if !is_memory {
             let path_to_check = db_path.strip_prefix("sqlite:").unwrap_or(db_path);
@@ -26,24 +32,42 @@ impl Database {
         };
         let pool = SqlitePool::connect(&connect_url)
             .await
-            .expect("Failed to connect to database");
+            .map_err(|e| format!("Failed to connect to database: {e}"))?;
         let db = Self { pool };
 
         crate::db::schema::run_migrations(&db.pool, &crate::db::schema::get_migrations())
             .await
-            .expect("Failed to apply database migrations");
+            .map_err(|e| format!("Failed to apply database migrations: {e}"))?;
 
         // The trash tables must exist before the first scan writes `library_dir`.
         db.ensure_trash_schema()
             .await
-            .expect("Failed to create trash tables");
+            .map_err(|e| format!("Failed to create trash tables: {e}"))?;
         db.ensure_album_sources_schema()
             .await
-            .expect("Failed to create album sources table");
+            .map_err(|e| format!("Failed to create album sources table: {e}"))?;
         db.ensure_favorites_schema()
             .await
-            .expect("Failed to create favorites table");
-        db
+            .map_err(|e| format!("Failed to create favorites table: {e}"))?;
+        Ok(db)
+    }
+
+    /// Renames a broken database file (and its `-wal`/`-shm` sidecars) to `*.bak.<timestamp>`
+    /// so a fresh database can be created without losing the old file.
+    pub fn backup_and_reset_db(db_path: &std::path::Path) -> Result<(), String> {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        for suffix in ["", "-wal", "-shm"] {
+            let src = std::path::PathBuf::from(format!("{}{}", db_path.display(), suffix));
+            if src.exists() {
+                let dst = std::path::PathBuf::from(format!("{}{}.bak.{}", db_path.display(), suffix, ts));
+                std::fs::rename(&src, &dst)
+                    .map_err(|e| format!("Failed to back up {}: {e}", src.display()))?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn get_all_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
