@@ -191,9 +191,11 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
     });
   }, [searchResults, activeCategory, activePlatform]);
 
+  const suggestionsVisible = showDropdown && !modalOpen;
+
   return (
     <div className={clsx(styles.container, className)} {...rootProps}>
-      <div className={styles.searchFieldWrapper}>
+      <div className={clsx(styles.searchFieldWrapper, suggestionsVisible && styles.searchFieldWithSuggestions)}>
         <AiOutlineSearch size={18} className={styles.searchIcon} />
 
         <input
@@ -309,7 +311,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
         )}
       </div>
 
-      {showDropdown && !modalOpen && (
+      {suggestionsVisible && (
         <div className={styles.suggestions}>
           {progressStyle === "dashboard" && searchRun && <SearchProgress run={searchRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />}
           {!showingSkeleton && searchWarning && (

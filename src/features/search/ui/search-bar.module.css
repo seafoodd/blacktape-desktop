@@ -19,6 +19,14 @@
         background-color: var(--bg-background);
         border-color: gray;
     }
+
+    &.searchFieldWithSuggestions {
+        background-color: var(--bg-floating);
+        backdrop-filter: var(--floating-blur);
+        border-color: gray;
+        border-bottom-color: transparent;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
 }
 
 .searchIcon {
@@ -178,12 +186,19 @@
     .suggestions {
         display: none;
     }
+
+    .searchFieldWithSuggestions {
+        background-color: var(--bg-surface);
+        backdrop-filter: none;
+        border-color: rgba(255, 255, 255, 0.2);
+        border-radius: var(--radius-lg);
+    }
 }
 
 .suggestions {
     position: absolute;
-    padding-top: 12px;
-    top: 24px;
+    padding-top: 0;
+    top: 100%;
     left: 0;
     width: 100%;
     background-color: var(--bg-floating);
