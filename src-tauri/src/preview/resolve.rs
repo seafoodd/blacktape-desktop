@@ -15,7 +15,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 /// A direct, streamable audio url.
 #[derive(Debug, Clone, PartialEq)]
@@ -368,32 +368,410 @@ pub fn wait_before_open(info: &StreamInfo, now_unix: f64) -> Duration {
     }
 }
 
-pub(crate) async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
-    // Only a web address reaches yt-dlp (also through the pre-started process's stdin).
-    let url = crate::download::ytdlp::checked_url(url)?;
-    // 1. Fast path: the pre-started yt-dlp process (interpreter already loaded) with the fast client.
-    let fast = match spare::take(app).await {
-        Some(child) => spare::feed(child, url).await,
-        None => run_ytdlp(app, YOUTUBE_FAST_CLIENTS, url).await,
+fn is_age_or_login_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("confirm your age")
+        || lower.contains("login_required")
+        || lower.contains("age-restricted")
+        || lower.contains("use --cookies")
+}
+
+fn age_restricted_message(has_session: bool) -> &'static str {
+    if has_session {
+        "Age-restricted track — please reconnect your YouTube account in Settings → Accounts to listen to it."
+    } else {
+        "Age-restricted track — sign in to your YouTube account in Settings → Accounts to listen to it."
+    }
+}
+
+fn youtube_cookie_args(app: &AppHandle) -> (bool, Vec<String>, Option<crate::download::cookies::CookieCopy>) {
+    let Ok(profile) = crate::auth::youtube::profile_dir(app) else {
+        return (false, Vec::new(), None);
     };
-    spare::refill(app.clone());
+    let source = crate::download::cookies::find(&profile);
+    if matches!(source, crate::download::cookies::CookieSource::None) {
+        return (false, Vec::new(), None);
+    }
+    let copy_path = crate::download::cookies::copies_dir(
+        &app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()),
+    )
+    .join(format!("preview_{}.txt", uuid::Uuid::new_v4().simple()));
+    match source.args(&copy_path) {
+        Ok((args, guard)) => (!args.is_empty(), args, guard),
+        Err(_) => (false, Vec::new(), None),
+    }
+}
+
+pub(crate) async fn resolve_youtube(app: &AppHandle, url: &str) -> Result<StreamInfo, String> {
+    // Only a web address reaches YouTube or yt-dlp (also through the pre-started process's stdin).
+    let url = crate::download::ytdlp::checked_url(url)?;
+    // 1. Fast pure-HTTP InnerTube VISIONOS path (~90 ms warm, full byte-range 206 support, no ad wait).
+    let mut visionos_err = None;
+    if let Some(video_id) = extract_youtube_video_id(url) {
+        match visionos::resolve(&video_id).await {
+            Ok(info) => return Ok(info),
+            Err(err) => {
+                tracing::warn!(video_id = %video_id, error = %err, "VISIONOS YouTube resolve failed, falling back to yt-dlp");
+                visionos_err = Some(err);
+            }
+        }
+    }
+    let (has_session, cookie_args, _cookie_guard) = youtube_cookie_args(app);
+    if !has_session && visionos_err.as_deref().is_some_and(is_age_or_login_error) {
+        return Err(age_restricted_message(false).to_string());
+    }
+    // 2. Fallback: use the connected YouTube session cookies when signed in; otherwise use the spare yt-dlp.
+    let fast = if has_session {
+        run_ytdlp_with_cookies(app, YOUTUBE_FAST_CLIENTS, url, &cookie_args).await
+    } else {
+        let res = match spare::take(app).await {
+            Some(child) => spare::feed(child, url).await,
+            None => run_ytdlp_with_cookies(app, YOUTUBE_FAST_CLIENTS, url, &[]).await,
+        };
+        spare::refill(app.clone());
+        res
+    };
     if let Some(info) = fast.as_deref().ok().and_then(parse_youtube_output) {
         return Ok(info);
     }
-    // 2. The fast client sometimes does not offer the m4a stream: ask the downloader's client set.
-    let output = run_ytdlp(app, YOUTUBE_FALLBACK_CLIENTS, url).await?;
+    // 3. The fast client sometimes does not offer the m4a stream: ask the fallback client set.
+    let output = match run_ytdlp_with_cookies(app, YOUTUBE_FALLBACK_CLIENTS, url, &cookie_args).await {
+        Ok(out) => out,
+        Err(err) => {
+            if is_age_or_login_error(&err) || fast.as_deref().err().is_some_and(|e| is_age_or_login_error(e)) {
+                return Err(age_restricted_message(has_session).to_string());
+            }
+            return Err(err);
+        }
+    };
     parse_youtube_output(&output).ok_or_else(|| {
-        format!(
-            "yt-dlp returned no audio stream{}",
-            fast.err().map(|e| format!(" ({})", e.trim())).unwrap_or_default()
-        )
+        let fast_err = fast.err().unwrap_or_default();
+        if is_age_or_login_error(&fast_err) {
+            age_restricted_message(has_session).to_string()
+        } else {
+            format!(
+                "yt-dlp returned no audio stream{}",
+                if fast_err.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", fast_err.trim())
+                }
+            )
+        }
     })
 }
 
-/// Starts yt-dlp in the background once (e.g. at app start) so the first YouTube stream skips the
-/// interpreter start-up.
-pub fn warm_up(app: AppHandle) {
-    spare::refill(app);
+/// Extracts the YouTube video ID from an HTTP(S) YouTube/YouTube Music/youtu.be URL.
+pub fn extract_youtube_video_id(raw_url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw_url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let candidate = if host == "youtu.be" {
+        parsed.path_segments()?.find(|s| !s.is_empty())?.to_string()
+    } else if matches!(
+        host.as_str(),
+        "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com"
+    ) {
+        if let Some((_, v)) = parsed.query_pairs().find(|(k, _)| k == "v") {
+            v.into_owned()
+        } else {
+            let mut segs = parsed.path_segments()?.filter(|s| !s.is_empty());
+            match segs.next()? {
+                "shorts" | "embed" | "live" => segs.next()?.to_string(),
+                _ => return None,
+            }
+        }
+    } else {
+        return None;
+    };
+    if (10..=16).contains(&candidate.len())
+        && candidate
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+/// Fast pure-HTTP InnerTube VISIONOS extractor (no `yt-dlp` / `deno` subprocess, ~90 ms warm).
+pub(crate) mod visionos {
+    use super::StreamInfo;
+    use serde::Deserialize;
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    const CHROME_UA: &str =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36";
+    const VISIONOS_UA: &str =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+    const SESSION_TTL: Duration = Duration::from_secs(4 * 3600);
+    const DEFAULT_STS: u64 = 20779;
+    const MAX_WATCH_HTML_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_PLAYER_JSON_BYTES: usize = 4 * 1024 * 1024;
+
+    #[derive(Clone)]
+    struct Session {
+        visitor_data: Option<String>,
+        sts: u64,
+        cookie_header: String,
+        fetched_at: Instant,
+    }
+
+    fn http_client() -> Result<&'static reqwest::Client, String> {
+        static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+        CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(|e| format!("failed to build YouTube HTTP client: {e}"))
+            })
+            .as_ref()
+            .map_err(|e| e.clone())
+    }
+
+    fn session_lock() -> &'static tokio::sync::Mutex<Option<Session>> {
+        static SESSION: OnceLock<tokio::sync::Mutex<Option<Session>>> = OnceLock::new();
+        SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
+    }
+
+    async fn read_bounded(mut res: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        while let Some(chunk) = res.chunk().await.map_err(|e| format!("response read error: {e}"))? {
+            if out.len().saturating_add(chunk.len()) > max_bytes {
+                return Err("YouTube response exceeded size limit".to_string());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(out)
+    }
+
+    fn extract_json_str_field(haystack: &str, key: &str) -> Option<String> {
+        let needle = format!("\"{key}\":\"");
+        let start = haystack.find(&needle)? + needle.len();
+        let rest = &haystack[start..];
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+
+    fn extract_json_u64_field(haystack: &str, key: &str) -> Option<u64> {
+        let needle = format!("\"{key}\":");
+        let start = haystack.find(&needle)? + needle.len();
+        let rest = haystack[start..].trim_start();
+        let digits_len = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+        if digits_len == 0 {
+            return None;
+        }
+        rest[..digits_len].parse::<u64>().ok()
+    }
+
+    async fn fetch_session(client: &reqwest::Client) -> Result<Session, String> {
+        let res = client
+            .get("https://www.youtube.com/watch?v=dQw4w9WgXcQ&bpctr=9999999999&has_verified=1")
+            .header("User-Agent", CHROME_UA)
+            .header("Accept-Language", "en-us,en;q=0.5")
+            .header("Cookie", "PREF=hl=en&tz=UTC; SOCS=CAI")
+            .send()
+            .await
+            .map_err(|_| "failed to fetch YouTube session".to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("YouTube session request failed with HTTP {}", res.status()));
+        }
+        let mut cookies = vec!["PREF=hl=en&tz=UTC".to_string(), "SOCS=CAI".to_string()];
+        for val in res.headers().get_all(reqwest::header::SET_COOKIE) {
+            if let Ok(s) = val.to_str() {
+                if let Some(pair) = s.split(';').next() {
+                    let trimmed = pair.trim();
+                    if !trimmed.is_empty() {
+                        cookies.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        let body = read_bounded(res, MAX_WATCH_HTML_BYTES).await?;
+        let html = String::from_utf8_lossy(&body);
+        let visitor_data = extract_json_str_field(&html, "VISITOR_DATA");
+        let sts = extract_json_u64_field(&html, "STS").unwrap_or(DEFAULT_STS);
+        Ok(Session {
+            visitor_data,
+            sts,
+            cookie_header: cookies.join("; "),
+            fetched_at: Instant::now(),
+        })
+    }
+
+    async fn get_session(client: &reqwest::Client, force_refresh: bool) -> Result<Session, String> {
+        let mut guard = session_lock().lock().await;
+        if !force_refresh {
+            if let Some(existing) = guard.as_ref() {
+                if existing.fetched_at.elapsed() < SESSION_TTL {
+                    return Ok(existing.clone());
+                }
+            }
+        }
+        let fresh = fetch_session(client).await?;
+        *guard = Some(fresh.clone());
+        Ok(fresh)
+    }
+
+    pub async fn warm_up() {
+        if let Ok(client) = http_client() {
+            let _ = get_session(client, false).await;
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PlayerResponse {
+        playability_status: Option<PlayabilityStatus>,
+        streaming_data: Option<StreamingData>,
+    }
+
+    #[derive(Deserialize)]
+    struct PlayabilityStatus {
+        status: Option<String>,
+        reason: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StreamingData {
+        #[serde(default)]
+        adaptive_formats: Vec<AdaptiveFormat>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AdaptiveFormat {
+        itag: Option<u32>,
+        url: Option<String>,
+        mime_type: Option<String>,
+        approx_duration_ms: Option<String>,
+    }
+
+    pub(crate) fn parse_player_response(body: &[u8]) -> Result<StreamInfo, (bool, String)> {
+        let parsed: PlayerResponse = serde_json::from_slice(body)
+            .map_err(|e| (false, format!("invalid YouTube player JSON: {e}")))?;
+        let status = parsed
+            .playability_status
+            .as_ref()
+            .and_then(|p| p.status.as_deref())
+            .unwrap_or("");
+        if status != "OK" {
+            let reason = parsed
+                .playability_status
+                .as_ref()
+                .and_then(|p| p.reason.as_deref())
+                .unwrap_or("unplayable");
+            let retryable = matches!(status, "UNPLAYABLE" | "LOGIN_REQUIRED");
+            return Err((retryable, format!("YouTube player status {status}: {reason}")));
+        }
+        let formats = parsed
+            .streaming_data
+            .map(|s| s.adaptive_formats)
+            .unwrap_or_default();
+        let chosen = formats
+            .iter()
+            .find(|f| f.itag == Some(140) && f.url.as_deref().is_some_and(|u| u.starts_with("https://")))
+            .or_else(|| {
+                formats.iter().find(|f| {
+                    f.mime_type
+                        .as_deref()
+                        .is_some_and(|m| m.starts_with("audio/mp4"))
+                        && f.url.as_deref().is_some_and(|u| u.starts_with("https://"))
+                })
+            })
+            .ok_or_else(|| (false, "no direct audio/mp4 stream in VISIONOS response".to_string()))?;
+        let url = chosen.url.clone().ok_or_else(|| (false, "missing stream url".to_string()))?;
+        let duration_ms = chosen
+            .approx_duration_ms
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok());
+        Ok(StreamInfo {
+            url,
+            duration_ms,
+            headers: vec![("User-Agent".to_string(), CHROME_UA.to_string())],
+            hls: None,
+            available_at: None,
+        })
+    }
+
+    async fn request_player(
+        client: &reqwest::Client,
+        session: &Session,
+        video_id: &str,
+    ) -> Result<Vec<u8>, String> {
+        let payload = serde_json::json!({
+            "context": {
+                "client": {
+                    "clientName": "VISIONOS",
+                    "clientVersion": "1.02",
+                    "deviceMake": "Apple",
+                    "deviceModel": "RealityDevice17,1",
+                    "userAgent": VISIONOS_UA,
+                    "osName": "visionOS",
+                    "osVersion": "26.5.23O471",
+                    "hl": "en",
+                    "timeZone": "UTC",
+                    "utcOffsetMinutes": 0
+                }
+            },
+            "videoId": video_id,
+            "playbackContext": {
+                "contentPlaybackContext": {
+                    "html5Preference": "HTML5_PREF_WANTS",
+                    "signatureTimestamp": session.sts
+                }
+            },
+            "contentCheckOk": true,
+            "racyCheckOk": true
+        });
+        let mut req = client
+            .post("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", VISIONOS_UA)
+            .header("X-Youtube-Client-Name", "101")
+            .header("X-Youtube-Client-Version", "1.02")
+            .header("Origin", "https://www.youtube.com")
+            .header("Cookie", &session.cookie_header)
+            .json(&payload);
+        if let Some(visitor) = session.visitor_data.as_deref() {
+            req = req.header("X-Goog-Visitor-Id", visitor);
+        }
+        let res = req
+            .send()
+            .await
+            .map_err(|_| "YouTube player API request failed".to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("YouTube player API HTTP {}", res.status()));
+        }
+        read_bounded(res, MAX_PLAYER_JSON_BYTES).await
+    }
+
+    pub async fn resolve(video_id: &str) -> Result<StreamInfo, String> {
+        let client = http_client()?;
+        let session = get_session(client, false).await?;
+        let body = request_player(client, &session, video_id).await?;
+        match parse_player_response(&body) {
+            Ok(info) => Ok(info),
+            Err((true, _)) => {
+                let refreshed = get_session(client, true).await?;
+                let retry_body = request_player(client, &refreshed, video_id).await?;
+                parse_player_response(&retry_body).map_err(|(_, msg)| msg)
+            }
+            Err((false, msg)) => Err(msg),
+        }
+    }
+}
+
+/// Warms YouTube's session in the background at app start so the first stream skips session setup.
+pub fn warm_up(_app: AppHandle) {
+    tauri::async_runtime::spawn(visionos::warm_up());
 }
 
 /// Replaces the waiting process with one of the yt-dlp now on disk (after an update).
@@ -401,8 +779,14 @@ pub fn restart_spare(app: AppHandle) {
     spare::restart(app);
 }
 
-async fn run_ytdlp(app: &AppHandle, clients: &str, url: &str) -> Result<String, String> {
+async fn run_ytdlp_with_cookies(
+    app: &AppHandle,
+    clients: &str,
+    url: &str,
+    cookie_args: &[String],
+) -> Result<String, String> {
     let mut args = youtube_args(clients);
+    args.extend(cookie_args.iter().cloned());
     args.push("--".to_string());
     args.push(url.to_string());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -615,5 +999,69 @@ https://r/v").unwrap().available_at, None);
         assert!(parse_youtube_output("").is_none());
         assert!(parse_youtube_output("215").is_none());
         assert!(parse_youtube_output("215\nnot a url").is_none());
+    }
+
+    #[test]
+    fn extracts_youtube_video_id_from_allowed_hosts_only() {
+        assert_eq!(
+            extract_youtube_video_id("https://music.youtube.com/watch?v=xdIGp4Ge8yk&list=RD"),
+            Some("xdIGp4Ge8yk".to_string())
+        );
+        assert_eq!(
+            extract_youtube_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            Some("dQw4w9WgXcQ".to_string())
+        );
+        assert_eq!(
+            extract_youtube_video_id("https://youtu.be/FTQbiNvZqaY?t=10"),
+            Some("FTQbiNvZqaY".to_string())
+        );
+        assert_eq!(
+            extract_youtube_video_id("https://www.youtube.com/shorts/8oCoGvy6RK4"),
+            Some("8oCoGvy6RK4".to_string())
+        );
+        assert_eq!(
+            extract_youtube_video_id("https://evil.com/watch?v=xdIGp4Ge8yk"),
+            None
+        );
+        assert_eq!(
+            extract_youtube_video_id("https://evil.com/youtube.com/watch?v=xdIGp4Ge8yk"),
+            None
+        );
+        assert_eq!(
+            extract_youtube_video_id("file:///C:/watch?v=xdIGp4Ge8yk"),
+            None
+        );
+    }
+
+    #[test]
+    fn visionos_player_parser_selects_140_and_flags_retryable_errors() {
+        let ok_json = br#"{
+            "playabilityStatus": {"status": "OK"},
+            "streamingData": {
+                "adaptiveFormats": [
+                    {"itag": 139, "url": "https://rr1.googlevideo.com/low", "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"", "approxDurationMs": "231000"},
+                    {"itag": 140, "url": "https://rr1.googlevideo.com/high", "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "approxDurationMs": "231000"}
+                ]
+            }
+        }"#;
+        let info = visionos::parse_player_response(ok_json).expect("valid player json");
+        assert_eq!(info.url, "https://rr1.googlevideo.com/high");
+        assert_eq!(info.duration_ms, Some(231_000));
+        assert_eq!(info.available_at, None);
+
+        let bot_json = br#"{
+            "playabilityStatus": {"status": "UNPLAYABLE", "reason": "Sign in to confirm you're not a bot"}
+        }"#;
+        let err = visionos::parse_player_response(bot_json).unwrap_err();
+        assert!(err.0, "UNPLAYABLE should trigger one session refresh retry");
+    }
+
+    #[test]
+    fn age_gate_errors_suggest_signing_in_or_reconnecting() {
+        assert!(is_age_or_login_error("YouTube player status LOGIN_REQUIRED: Sign in to confirm your age"));
+        assert!(is_age_or_login_error("ERROR: [youtube] LBs6fU8s8vw: Sign in to confirm your age. Use --cookies-from-browser"));
+        assert!(!is_age_or_login_error("Connection timed out"));
+        assert!(age_restricted_message(false).contains("sign in to your YouTube account"));
+        assert!(age_restricted_message(true).contains("reconnect your YouTube account"));
     }
 }

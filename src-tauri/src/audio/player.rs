@@ -1494,7 +1494,7 @@ impl AudioPlayer {
                     "stream-error",
                     serde_json::json!({ "url": url, "message": message }),
                 );
-                self.stop();
+                self.fail_current(song, &message);
             }
         }
     }
