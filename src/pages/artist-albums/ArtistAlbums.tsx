@@ -946,17 +946,22 @@ const ArtistAlbums = () => {
       ))}
       <div className={styles.albums}>
         {/* Downloading Albums (rendered through the same albumBlock layout so transitioning at track 1 is seamless) */}
-        {activeArtistDownloads.map((download) => {
+        {(() => {
+          const seenAlbumKeys = new Set(albums.map((a) => unifiedAlbumKey(selectedTab, a.title)));
+          return activeArtistDownloads.map((download) => {
           const metaLine = downloadingAlbumMetaLine(download);
           const tracks = download.tracks ?? [];
           const hasMultiDiscs = new Set(tracks.map((t) => t.discNumber ?? 1)).size >= 2;
           let lastDisc = 0;
+          const baseKey = unifiedAlbumKey(selectedTab, download.albumTitle);
+          const blockKey = seenAlbumKeys.has(baseKey) ? `${baseKey}::${download.id}` : baseKey;
+          seenAlbumKeys.add(baseKey);
 
           return (
             <section
               className={styles.albumBlock}
               data-album-title={download.albumTitle}
-              key={unifiedAlbumKey(selectedTab, download.albumTitle)}
+              key={blockKey}
               onContextMenu={(e) =>
                 openMenu(e, [
                   {
@@ -1062,7 +1067,8 @@ const ArtistAlbums = () => {
               </div>
             </section>
           );
-        })}
+        });
+        })()}
 
         {/* Existing Downloaded Albums */}
         {albums.map((album, index) => (
