@@ -182,6 +182,7 @@ export function buildDownloadOverrides(preview: AlbumPreview): DownloadOverrides
       return {
         index: track.index,
         title: track.title,
+        original_url: track.url,
         url: chosenUrl || track.url,
         fallback_urls: fallbacks,
         candidates: cands.length > 0 ? cands : undefined,

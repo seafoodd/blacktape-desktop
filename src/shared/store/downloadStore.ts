@@ -7,6 +7,7 @@ import { type Platform, type Song } from "@/shared/types.ts";
 import type { AudioCandidate } from "@/shared/types/canonical.ts";
 import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
 import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import { captureFrontendError, isCancellationError } from "@/shared/lib/telemetry.ts";
 
 export type DownloadStatus =
@@ -379,8 +380,18 @@ export const useDownloadStore = create<DownloadState>((set, get) => {
 
       const isSingleTrack =
         downloadType === ItemType.Track || downloadType === "Track";
+      const matchedOverrideTrack =
+        trackUrls?.length === 1
+          ? overrides?.tracks?.find(
+              (t) =>
+                (t.original_url && sameUrl(t.original_url, trackUrls[0])) ||
+                (t.url && sameUrl(t.url, trackUrls[0])) ||
+                t.fallback_urls?.some((fb) => sameUrl(fb, trackUrls[0])),
+            )
+          : undefined;
       const trackTitle =
         placement?.title ??
+        matchedOverrideTrack?.title ??
         (overrides?.tracks?.length === 1 ? overrides.tracks[0]?.title : undefined) ??
         (isSingleTrack ? title : undefined);
 

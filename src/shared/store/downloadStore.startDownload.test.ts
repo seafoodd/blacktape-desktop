@@ -43,6 +43,48 @@ describe("startDownload guard", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it("allows re-downloading a cancelled album track when full album overrides are passed", () => {
+    useDownloadStore.setState({
+      activeDownloads: {
+        "album-task": {
+          id: "album-task",
+          url: ALBUM,
+          status: "downloading",
+          current: 0,
+          total: 2,
+          message: "Downloading...",
+          artistName: "Artist",
+          albumTitle: "Album",
+          itemType: ItemType.Album,
+          platform: "bandcamp",
+          overallPercent: 50,
+          tracks: [
+            { title: "Track One", percent: 50, status: "downloading", trackNumber: 1 },
+            { title: "Track Two", percent: 0, status: "cancelled", trackNumber: 2 },
+          ],
+        },
+      },
+    });
+
+    const { startDownload } = useDownloadStore.getState();
+    void startDownload({
+      platform: "bandcamp",
+      downloadType: ItemType.Album,
+      url: ALBUM,
+      title: "Album",
+      trackUrls: [TRACK_2],
+      overrides: {
+        tracks: [
+          { index: 0, url: TRACK_1, title: "Track One" },
+          { index: 1, url: TRACK_2, title: "Track Two" },
+        ],
+      },
+    });
+
+    expect(Object.keys(useDownloadStore.getState().activeDownloads)).toHaveLength(2);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("adds a second entry for a different track of the same album", () => {
     const { startDownload } = useDownloadStore.getState();
 

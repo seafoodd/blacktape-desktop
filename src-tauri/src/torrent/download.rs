@@ -1284,6 +1284,27 @@ async fn add_torrent(
     .await;
     match added {
         Ok(handle) => Ok((session, handle)),
+        Err(ref error) if error == ALREADY_MANAGED_ERR => {
+            let isolated_dir = job_dir.join(".session");
+            tokio::fs::create_dir_all(&isolated_dir)
+                .await
+                .map_err(|e| format!("Failed creating isolated torrent session dir: {e}"))?;
+            let mut opts = SessionOptions::default();
+            opts.disable_dht = lane == Lane::Quick;
+            opts.disable_dht_persistence = true;
+            opts.fastresume = false;
+            opts.persistence = None;
+            opts.disable_upload = true;
+            let isolated = Session::new_with_opts(isolated_dir, opts)
+                .await
+                .map_err(|e| format!("Failed starting isolated BitTorrent session: {e}"))?;
+            let handle = try_add_torrent(
+                app, task_id, &isolated, locator, None, only_files, job_dir, total_task_tracks, status,
+                lane.start_timeout(),
+            )
+            .await?;
+            Ok((isolated, handle))
+        }
         Err(error) => {
             if error != "Task cancelled" {
                 tracing::warn!(task_id, ?lane, %error, "Failed adding the torrent");
@@ -1320,6 +1341,8 @@ const PUBLIC_TRACKERS: &[&str] = &[
     "udp://tracker.torrent.eu.org:451/announce",
     "udp://exodus.desync.com:6969/announce",
 ];
+
+const ALREADY_MANAGED_ERR: &str = "This torrent is already downloading in this session.";
 
 async fn try_add_torrent(
     app: Option<&AppHandle>,
@@ -1385,7 +1408,7 @@ async fn try_add_torrent(
     match response {
         AddTorrentResponse::Added(_, handle) => Ok(handle),
         AddTorrentResponse::AlreadyManaged(_, _) => {
-            Err("This torrent is already downloading in this session.".into())
+            Err(ALREADY_MANAGED_ERR.into())
         }
         AddTorrentResponse::ListOnly(_) => {
             Err("Torrent metadata list-only returned unexpectedly.".into())

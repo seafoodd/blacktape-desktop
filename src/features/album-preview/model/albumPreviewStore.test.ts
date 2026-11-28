@@ -529,6 +529,7 @@ describe("download formats", () => {
         {
           index: 0,
           title: "Edited Track",
+          original_url: "https://picked/1",
           url: "https://bc/1",
           fallback_urls: ["https://yt/1"],
           candidates: preview.tracks[0].candidates,
