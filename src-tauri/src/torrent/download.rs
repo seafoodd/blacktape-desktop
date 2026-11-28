@@ -1768,10 +1768,6 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let root = tempfile::tempdir().unwrap();
-        let seed_dir = root.path().join("seed");
-        tokio::fs::create_dir(&seed_dir).await.unwrap();
-        tokio::fs::write(seed_dir.join("song.flac"), b"abc").await.unwrap();
-
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let announce = format!("http://{}/announce", listener.local_addr().unwrap());
         let mut metadata = format!(
@@ -1783,19 +1779,55 @@ mod tests {
             0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e,
             0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d,
         ]);
-        metadata.extend_from_slice(b"ee");
+        // Private metadata restricts discovery to this tracker, even when production adds public trackers.
+        metadata.extend_from_slice(b"7:privatei1eee");
         let torrent = librqbit::torrent_from_bytes::<librqbit::ByteBuf>(&metadata).unwrap();
         let locator = format!("magnet:?xt=urn:btih:{}", torrent.info_hash.as_string());
         super::super::inspect::cache_torrent_bytes(&torrent.info_hash.as_string(), &metadata);
 
-        let seed = Session::new_with_opts(seed_dir, SessionOptions {
-            disable_dht: true,
-            listen_port_range: Some(49152..65535),
-            ..Default::default()
-        }).await.unwrap();
-        let port = seed.tcp_listen_port().unwrap().to_be_bytes();
-        // The first announce of both requests finds nobody; only asking again finds the seed.
-        let seed_appears = Instant::now() + Duration::from_secs(10);
+        // Preconfigure both download sessions without DHT, UPnP or incoming peer listeners.
+        // The lane identities still exercise production retry/winner logic.
+        let cache_root = torrent_cache_root(root.path());
+        let mut sessions = Vec::new();
+        for lane in [Lane::Patient, Lane::Quick] {
+            let session = Session::new_with_opts(cache_root.clone(), SessionOptions {
+                disable_dht: true,
+                disable_dht_persistence: true,
+                disable_upload: true,
+                ..Default::default()
+            }).await.unwrap();
+            let config = SessionConfig { cache_root: cache_root.clone(), disable_dht: lane == Lane::Quick };
+            SESSIONS.get_or_init(Default::default).lock().await.insert(config.clone(), session.clone());
+            sessions.push((config, session));
+        }
+
+        // A minimal seed bound only to loopback: handshake, bitfield, unchoke, then the requested block.
+        let peer_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = peer_listener.local_addr().unwrap().port().to_be_bytes();
+        let seed = tokio::spawn(async move {
+            let (mut stream, _) = peer_listener.accept().await.unwrap();
+            let mut handshake = [0; 68];
+            stream.read_exact(&mut handshake).await.unwrap();
+            assert_eq!(&handshake[..20], b"\x13BitTorrent protocol");
+            handshake[20..28].fill(0);
+            handshake[48..].copy_from_slice(b"-BTTEST-000000000000");
+            stream.write_all(&handshake).await.unwrap();
+            stream.write_all(&[0, 0, 0, 2, 5, 0x80, 0, 0, 0, 1, 1]).await.unwrap();
+            loop {
+                let length = stream.read_u32().await.unwrap() as usize;
+                assert!(length <= 16384, "unexpected peer message length: {length}");
+                if length == 0 { continue; }
+                let mut message = vec![0; length];
+                stream.read_exact(&mut message).await.unwrap();
+                if message[0] != 6 { continue; }
+                assert_eq!(&message[1..], &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
+                stream.write_all(&[0, 0, 0, 12, 7, 0, 0, 0, 0, 0, 0, 0, 0, b'a', b'b', b'c']).await.unwrap();
+                return;
+            }
+        });
+        let announces = Arc::new(AtomicUsize::new(0));
+        let tracker_announces = announces.clone();
+        // First announce from each lane finds nobody. Only a new attempt can discover the seed.
         let tracker = tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let mut request = [0; 4096];
@@ -1803,7 +1835,7 @@ mod tests {
                     continue;
                 }
                 let mut body = b"d8:completei1e10:incompletei0e8:intervali3600e5:peers".to_vec();
-                if Instant::now() >= seed_appears {
+                if tracker_announces.fetch_add(1, Ordering::SeqCst) >= 2 {
                     body.extend_from_slice(&[b'6', b':', 127, 0, 0, 1, port[0], port[1]]);
                 } else {
                     body.extend_from_slice(b"0:");
@@ -1815,12 +1847,6 @@ mod tests {
                 }
             }
         });
-        let seeding = seed.add_torrent(AddTorrent::from_bytes(metadata), Some(AddTorrentOptions {
-            overwrite: true,
-            ..Default::default()
-        })).await.unwrap().into_handle().unwrap();
-        tokio::time::timeout(Duration::from_secs(5), seeding.wait_until_completed()).await.unwrap().unwrap();
-
         let requests = [TorrentFileRequest {
             track_index: 7, file_index: 0, file_size: 3,
             track: TrackDownload { title: "Song".into(), ..Default::default() },
@@ -1839,9 +1865,17 @@ mod tests {
             race_lanes(&winner, attempt(Lane::Patient), || attempt(Lane::Quick)),
         ).await;
         tracker.abort();
-        seed.stop().await;
+        let seed_finished = seed.is_finished();
+        if !seed_finished { seed.abort(); }
+        let seed_result = seed.await;
+        for (config, session) in sessions {
+            SESSIONS.get_or_init(Default::default).lock().await.remove(&config);
+            session.stop().await;
+        }
 
         let result = result.unwrap().unwrap();
+        seed_result.unwrap();
+        assert!(announces.load(Ordering::SeqCst) >= 3, "download must announce again before discovering the seed");
         assert_eq!(winner.holder(), Some(Lane::Quick));
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         assert!(result.failed_tracks.is_empty());
