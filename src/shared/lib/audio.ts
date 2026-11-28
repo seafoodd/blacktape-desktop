@@ -61,7 +61,33 @@ export const setTorrentIndexerEnabled = (id: TorrentIndexer["id"], enabled: bool
 export const testTorrentIndexer = (id: TorrentIndexer["id"]): Promise<TorrentIndexerTest> =>
   invoke("plugin:torrent|test_torrent_indexer", { id });
 
+export interface RuTrackerStatus {
+  signedIn: boolean;
+  username: string | null;
+  hasSavedCredentials: boolean;
+}
+
+export interface RuTrackerSignInResult {
+  signedIn: boolean;
+  username: string | null;
+  error: string | null;
+  errorCode: string | null;
+  offerBrowserFallback: boolean;
+}
+
 export const openRuTrackerLogin = (): Promise<void> => invoke("plugin:torrent|open_rutracker_login");
+
+export const getRuTrackerStatus = (): Promise<RuTrackerStatus> =>
+  invoke("plugin:torrent|get_rutracker_status");
+
+export const signInRuTracker = (username: string, password: string): Promise<RuTrackerSignInResult> =>
+  invoke("plugin:torrent|sign_in_rutracker", { username, password });
+
+export const signOutRuTracker = (): Promise<void> =>
+  invoke("plugin:torrent|sign_out_rutracker");
+
+export const isRuTrackerEnabled = (): Promise<boolean> =>
+  invoke("plugin:torrent|is_rutracker_enabled");
 
 export interface InspectedTorrentRelease {
   info_hash: string;

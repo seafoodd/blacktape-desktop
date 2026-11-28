@@ -7,9 +7,11 @@ use tauri::AppHandle;
 #[cfg(not(test))]
 use std::sync::Mutex;
 #[cfg(not(test))]
-use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
+const KEYRING_SERVICE: &str = "blacktape-desktop";
+const KEYRING_USER: &str = "rutracker";
 #[cfg(not(test))]
 const ORIGIN: &str = "https://rutracker.net";
 const OFFICIAL_ORIGINS: [&str; 2] = ["https://rutracker.net", "https://rutracker.org"];
@@ -26,7 +28,104 @@ const QUEUE_TIMEOUT: Duration = Duration::from_secs(60);
 #[cfg(not(test))]
 const CHALLENGE_WAIT: Duration = Duration::from_secs(6);
 #[cfg(not(test))]
+const LOGIN_SUBMIT_WAIT: Duration = Duration::from_secs(12);
+#[cfg(not(test))]
 static BROWSER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Clone, Debug, serde::Serialize, Deserialize, PartialEq, Eq)]
+struct SavedCredentials {
+    username: String,
+    password: String,
+}
+
+#[cfg(not(test))]
+fn save_credentials(username: &str, password: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|_| "Could not access the system credential store.".to_owned())?;
+    let payload = serde_json::to_string(&SavedCredentials {
+        username: username.to_owned(),
+        password: password.to_owned(),
+    })
+    .map_err(|_| "Could not encode RuTracker credentials.".to_owned())?;
+    entry
+        .set_password(&payload)
+        .map_err(|_| "Could not save RuTracker credentials to the system credential store.".to_owned())
+}
+
+fn load_credentials() -> Option<SavedCredentials> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
+    let raw = entry.get_password().ok()?;
+    serde_json::from_str::<SavedCredentials>(&raw).ok().filter(|creds| {
+        !creds.username.trim().is_empty() && !creds.password.is_empty()
+    })
+}
+
+pub(super) fn saved_username() -> Option<String> {
+    load_credentials().map(|creds| creds.username)
+}
+
+pub(super) fn has_saved_credentials() -> bool {
+    load_credentials().is_some()
+}
+
+#[cfg(not(test))]
+fn clear_credentials() {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        let _ = entry.delete_credential();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum AuthFailure {
+    InvalidCredentials,
+    CaptchaRequired,
+    CloudflareChallenge,
+    FormChanged,
+    Timeout,
+    Unavailable,
+}
+
+impl AuthFailure {
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::InvalidCredentials => "invalid_credentials",
+            Self::CaptchaRequired => "captcha_required",
+            Self::CloudflareChallenge => "cloudflare_challenge",
+            Self::FormChanged => "form_changed",
+            Self::Timeout => "timeout",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    pub(super) fn message(self) -> &'static str {
+        match self {
+            Self::InvalidCredentials => "Invalid RuTracker username or password.",
+            Self::CaptchaRequired => "RuTracker asked for a CAPTCHA. Use browser sign-in to complete it.",
+            Self::CloudflareChallenge => "RuTracker stopped at a Cloudflare browser check. Use browser sign-in to complete it.",
+            Self::FormChanged => "Could not find the RuTracker login form. Use browser sign-in instead.",
+            Self::Timeout => "RuTracker sign-in timed out. Try again or use browser sign-in.",
+            Self::Unavailable => "Could not reach RuTracker.",
+        }
+    }
+
+    pub(super) fn should_offer_browser(self) -> bool {
+        matches!(
+            self,
+            Self::CaptchaRequired | Self::CloudflareChallenge | Self::FormChanged | Self::Timeout
+        )
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuTrackerSignInResult {
+    pub signed_in: bool,
+    pub username: Option<String>,
+    pub error: Option<String>,
+    pub error_code: Option<&'static str>,
+    pub offer_browser_fallback: bool,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,13 +191,45 @@ fn browser(app: &AppHandle) -> Result<WebviewWindow, Failure> {
 }
 
 #[cfg(not(test))]
+fn spawn_login_watcher(app: AppHandle, window: WebviewWindow) {
+    tauri::async_runtime::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            if !window.is_visible().unwrap_or(false) {
+                break;
+            }
+            let Ok(_guard) = BROWSER.try_lock() else {
+                continue;
+            };
+            let Ok(Some(username)) = evaluate::<Option<String>>(&window, logged_in_username_script()).await else {
+                continue;
+            };
+            let username = username.trim().to_owned();
+            if username.is_empty() {
+                continue;
+            }
+            let _ = window.hide();
+            super::commands::record_rutracker_login(&app, &username).await;
+            let _ = app.emit("rutracker-status-changed", ());
+            let _ = app.emit("torrent-indexers-changed", ());
+            break;
+        }
+    });
+}
+
+#[cfg(not(test))]
 pub(super) async fn open_login(app: &AppHandle) -> Result<(), String> {
-    let _guard = BROWSER.lock().await;
-    let window = browser(app).map_err(|error| error.message())?;
-    let url = Url::parse(&format!("{ORIGIN}/forum/login.php")).map_err(|_| Failure::Unavailable.message())?;
-    window.navigate(url).map_err(|_| Failure::Unavailable.message())?;
-    window.show().map_err(|_| Failure::Unavailable.message())?;
-    window.set_focus().map_err(|_| Failure::Unavailable.message())?;
+    let window = {
+        let _guard = BROWSER.lock().await;
+        let window = browser(app).map_err(|error| error.message())?;
+        let url = Url::parse(&format!("{ORIGIN}/forum/login.php")).map_err(|_| Failure::Unavailable.message())?;
+        window.navigate(url).map_err(|_| Failure::Unavailable.message())?;
+        window.show().map_err(|_| Failure::Unavailable.message())?;
+        window.set_focus().map_err(|_| Failure::Unavailable.message())?;
+        window
+    };
+    spawn_login_watcher(app.clone(), window);
     Ok(())
 }
 
@@ -202,6 +333,166 @@ async fn request<T: DeserializeOwned>(app: &AppHandle, path: String, kind: &str)
     }).await
 }
 
+#[cfg(not(test))]
+fn logged_in_username_script() -> String {
+    "(() => document.querySelector('#logged-in-username')?.textContent?.trim() || null)()".into()
+}
+
+fn login_submit_script(username: &str, password: &str) -> Result<String, AuthFailure> {
+    let user_json = serde_json::to_string(username).map_err(|_| AuthFailure::Unavailable)?;
+    let pass_json = serde_json::to_string(password).map_err(|_| AuthFailure::Unavailable)?;
+    Ok(format!(
+        "(() => {{
+            const loggedIn = document.querySelector('#logged-in-username')?.textContent?.trim();
+            if (loggedIn) return {{ status: 'signed_in', username: loggedIn }};
+            if (document.querySelector('img[src*=\"captcha\"], input[name=\"cap_code\"], [name=\"cf-turnstile-response\"]')) {{
+                return {{ status: 'captcha_required' }};
+            }}
+            const form = document.querySelector('form[action*=\"login.php\"]');
+            const userInput = form?.querySelector('input[name=\"login_username\"]');
+            const passInput = form?.querySelector('input[name=\"login_password\"]');
+            if (!form || !userInput || !passInput) return {{ status: 'form_changed' }};
+            userInput.value = {user_json};
+            passInput.value = {pass_json};
+            userInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            passInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            const submit = form.querySelector('input[name=\"login\"], input[type=\"submit\"], button[type=\"submit\"]');
+            if (submit) submit.click();
+            else form.submit();
+            return {{ status: 'submitted' }};
+        }})()"
+    ))
+}
+
+fn login_outcome_script() -> String {
+    "(() => {
+        const loggedIn = document.querySelector('#logged-in-username')?.textContent?.trim();
+        if (loggedIn) return { status: 'signed_in', username: loggedIn };
+        if (document.querySelector('img[src*=\"captcha\"], input[name=\"cap_code\"], [name=\"cf-turnstile-response\"]')) {
+            return { status: 'captcha_required' };
+        }
+        const form = document.querySelector('form[action*=\"login.php\"]');
+        if (form && (document.querySelector('.mrg_16, .warnColor1, #error-msg') || location.pathname.includes('login.php'))) {
+            return { status: 'invalid_credentials' };
+        }
+        return { status: 'pending' };
+    })()".into()
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum LoginDomState {
+    SignedIn { username: String },
+    Submitted,
+    CaptchaRequired,
+    FormChanged,
+    InvalidCredentials,
+    Pending,
+}
+
+#[cfg(not(test))]
+fn map_wait_failure(error: Failure) -> AuthFailure {
+    match error {
+        Failure::CloudflareChallenge => AuthFailure::CloudflareChallenge,
+        Failure::Timeout => AuthFailure::Timeout,
+        _ => AuthFailure::Unavailable,
+    }
+}
+
+#[cfg(not(test))]
+async fn perform_browser_login(app: &AppHandle, username: &str, password: &str) -> Result<String, AuthFailure> {
+    let script = login_submit_script(username, password)?;
+    let _guard = tokio::time::timeout(QUEUE_TIMEOUT, BROWSER.lock())
+        .await
+        .map_err(|_| AuthFailure::Timeout)?;
+    let window = browser(app).map_err(|_| AuthFailure::Unavailable)?;
+    let url = Url::parse(&format!("{ORIGIN}/forum/login.php")).map_err(|_| AuthFailure::Unavailable)?;
+    window.navigate(url).map_err(|_| AuthFailure::Unavailable)?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    wait_until_ready(&window).await.map_err(map_wait_failure)?;
+
+    match evaluate::<LoginDomState>(&window, script)
+        .await
+        .map_err(|_| AuthFailure::Unavailable)?
+    {
+        LoginDomState::SignedIn { username } => return Ok(username),
+        LoginDomState::CaptchaRequired => return Err(AuthFailure::CaptchaRequired),
+        LoginDomState::FormChanged => return Err(AuthFailure::FormChanged),
+        LoginDomState::Submitted => {}
+        LoginDomState::InvalidCredentials => return Err(AuthFailure::InvalidCredentials),
+        LoginDomState::Pending => {}
+    }
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let deadline = tokio::time::Instant::now() + LOGIN_SUBMIT_WAIT;
+    loop {
+        wait_until_ready(&window).await.map_err(map_wait_failure)?;
+        match evaluate::<LoginDomState>(&window, login_outcome_script())
+            .await
+            .map_err(|_| AuthFailure::Unavailable)?
+        {
+            LoginDomState::SignedIn { username } => return Ok(username),
+            LoginDomState::CaptchaRequired => return Err(AuthFailure::CaptchaRequired),
+            LoginDomState::InvalidCredentials => return Err(AuthFailure::InvalidCredentials),
+            LoginDomState::FormChanged => return Err(AuthFailure::FormChanged),
+            LoginDomState::Pending | LoginDomState::Submitted => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(AuthFailure::Timeout);
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(super) async fn sign_in_with_credentials(
+    app: &AppHandle,
+    username: &str,
+    password: &str,
+) -> Result<String, AuthFailure> {
+    let trimmed_user = username.trim();
+    if trimmed_user.is_empty() || password.is_empty() {
+        return Err(AuthFailure::InvalidCredentials);
+    }
+    let logged_in_user = perform_browser_login(app, trimmed_user, password).await?;
+    if let Err(err) = save_credentials(trimmed_user, password) {
+        tracing::warn!("RuTracker login succeeded but credential save failed: {err}");
+    }
+    Ok(logged_in_user)
+}
+
+#[cfg(not(test))]
+pub(super) async fn sign_out(app: &AppHandle) {
+    clear_credentials();
+    let _guard = BROWSER.lock().await;
+    if let Some(window) = app.get_webview_window(WINDOW) {
+        let _ = window.hide();
+        let _ = window.eval("document.querySelector('#logged-in-username')?.remove()");
+        let _ = window.clear_all_browsing_data();
+        if let Ok(url) = Url::parse(&format!("{ORIGIN}/forum/login.php")) {
+            let _ = window.navigate(url);
+        }
+    } else if let Ok(data_dir) = app.path().app_data_dir() {
+        let profile = data_dir.join("rutracker-profile");
+        if profile.exists() {
+            let _ = std::fs::remove_dir_all(profile);
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(super) async fn live_session_username(app: &AppHandle) -> Option<String> {
+    let window = app.get_webview_window(WINDOW)?;
+    let _guard = BROWSER.try_lock().ok()?;
+    evaluate::<Option<String>>(&window, logged_in_username_script())
+        .await
+        .ok()
+        .flatten()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
 // Desktop webviews need the Windows application manifest, which the unit-test runner lacks.
 #[cfg(test)]
 async fn request<T: DeserializeOwned>(_app: &AppHandle, _path: String, _kind: &str) -> Result<T, Failure> {
@@ -211,6 +502,23 @@ async fn request<T: DeserializeOwned>(_app: &AppHandle, _path: String, _kind: &s
 #[cfg(test)]
 pub(super) async fn open_login(_app: &AppHandle) -> Result<(), String> {
     Err(Failure::Unavailable.message().into())
+}
+
+#[cfg(test)]
+pub(super) async fn sign_in_with_credentials(
+    _app: &AppHandle,
+    _username: &str,
+    _password: &str,
+) -> Result<String, AuthFailure> {
+    Err(AuthFailure::Unavailable)
+}
+
+#[cfg(test)]
+pub(super) async fn sign_out(_app: &AppHandle) {}
+
+#[cfg(test)]
+pub(super) async fn live_session_username(_app: &AppHandle) -> Option<String> {
+    None
 }
 
 #[cfg(not(test))]
@@ -241,8 +549,39 @@ fn search_path(query: &str) -> String {
     format!("{}?{}", url.path(), url.query().unwrap_or_default())
 }
 
+#[cfg(not(test))]
+async fn try_silent_relogin(app: &AppHandle) -> Result<(), Failure> {
+    let creds = load_credentials().ok_or(Failure::SignIn)?;
+    match perform_browser_login(app, &creds.username, &creds.password).await {
+        Ok(username) => {
+            super::commands::record_rutracker_login(app, &username).await;
+            Ok(())
+        }
+        Err(AuthFailure::InvalidCredentials) => {
+            clear_credentials();
+            Err(Failure::SignIn)
+        }
+        Err(AuthFailure::CaptchaRequired | AuthFailure::CloudflareChallenge) => {
+            Err(Failure::CloudflareChallenge)
+        }
+        Err(_) => Err(Failure::SignIn),
+    }
+}
+
+#[cfg(test)]
+async fn try_silent_relogin(_app: &AppHandle) -> Result<(), Failure> {
+    Err(Failure::SignIn)
+}
+
 pub(super) async fn search(app: &AppHandle, query: &str) -> Result<Vec<Row>, Failure> {
-    request(app, search_path(query), "search").await
+    let path = search_path(query);
+    match request(app, path.clone(), "search").await {
+        Err(Failure::SignIn) => {
+            try_silent_relogin(app).await?;
+            request(app, path, "search").await
+        }
+        other => other,
+    }
 }
 
 pub(super) fn topic_from_link(link: &str) -> Option<u64> {
@@ -288,7 +627,14 @@ fn prepare_torrent(bytes: &[u8], expected: Option<&str>) -> Result<(InspectedRel
 }
 
 pub(super) async fn torrent(app: &AppHandle, topic: u64, expected: Option<&str>) -> Result<(InspectedRelease, Vec<u8>), String> {
-    let encoded: String = request(app, format!("/forum/dl.php?t={topic}"), "torrent").await.map_err(Failure::message)?;
+    let path = format!("/forum/dl.php?t={topic}");
+    let encoded: String = match request(app, path.clone(), "torrent").await {
+        Err(Failure::SignIn) => {
+            try_silent_relogin(app).await.map_err(Failure::message)?;
+            request(app, path, "torrent").await.map_err(Failure::message)?
+        }
+        other => other.map_err(Failure::message)?,
+    };
     if encoded.len() > LIMIT.div_ceil(3) * 4 { return Err(Failure::ResponseTooLarge.message().into()); }
     let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| "Invalid RuTracker torrent response.")?;
     prepare_torrent(&bytes, expected)
@@ -386,5 +732,33 @@ mod tests {
         assert_eq!(serde_json::from_str::<PageState>("\"loading\"").unwrap(), PageState::Loading);
         assert_eq!(serde_json::from_str::<PageState>("\"challenge\"").unwrap(), PageState::Challenge);
         assert_eq!(serde_json::from_str::<PageState>("\"ready\"").unwrap(), PageState::Ready);
+    }
+
+    #[test]
+    fn login_submit_script_escapes_credentials_and_checks_captcha_and_form() {
+        let script = login_submit_script("user\"name", "p@ss'\\word").unwrap();
+        assert!(script.contains("\"user\\\"name\""));
+        assert!(script.contains("\"p@ss'\\\\word\""));
+        assert!(script.contains("login_username"));
+        assert!(script.contains("login_password"));
+        assert!(script.contains("captcha_required"));
+        assert!(script.contains("form_changed"));
+        let outcome = login_outcome_script();
+        assert!(outcome.contains("invalid_credentials"));
+        assert_eq!(
+            serde_json::from_str::<LoginDomState>(r#"{"status":"signed_in","username":"alice"}"#).unwrap(),
+            LoginDomState::SignedIn { username: "alice".into() }
+        );
+    }
+
+    #[test]
+    fn auth_failure_browser_fallback_flags_match_expected_cases() {
+        assert!(!AuthFailure::InvalidCredentials.should_offer_browser());
+        assert!(!AuthFailure::Unavailable.should_offer_browser());
+        assert!(AuthFailure::CaptchaRequired.should_offer_browser());
+        assert!(AuthFailure::CloudflareChallenge.should_offer_browser());
+        assert!(AuthFailure::FormChanged.should_offer_browser());
+        assert!(AuthFailure::Timeout.should_offer_browser());
+        assert_eq!(AuthFailure::CaptchaRequired.code(), "captcha_required");
     }
 }

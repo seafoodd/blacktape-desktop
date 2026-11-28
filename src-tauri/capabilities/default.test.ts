@@ -25,6 +25,7 @@ describe("torrent capability", () => {
       "torrent:allow-inspect-torrent-release",
       "torrent:allow-resolve-torrent-album",
       "torrent:allow-cancel-torrent-inspection",
+      "torrent:allow-is-rutracker-enabled",
     ]);
     expect(settings.windows).toEqual(["settings"]);
     expect(settings.permissions).toEqual([
@@ -32,6 +33,9 @@ describe("torrent capability", () => {
       "torrent:allow-set-torrent-indexer-enabled",
       "torrent:allow-test-torrent-indexer",
       "torrent:allow-open-rutracker-login",
+      "torrent:allow-get-rutracker-status",
+      "torrent:allow-sign-in-rutracker",
+      "torrent:allow-sign-out-rutracker",
     ]);
     expect([...capability.permissions, ...settings.permissions].sort()).toEqual(invokes.sort());
   });

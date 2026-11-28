@@ -1162,6 +1162,10 @@ pub fn run() {
                     torrent::commands::set_torrent_indexer_enabled,
                     torrent::commands::test_torrent_indexer,
                     torrent::commands::open_rutracker_login,
+                    torrent::commands::get_rutracker_status,
+                    torrent::commands::sign_in_rutracker,
+                    torrent::commands::sign_out_rutracker,
+                    torrent::commands::is_rutracker_enabled,
                 ])
                 .build(),
         )

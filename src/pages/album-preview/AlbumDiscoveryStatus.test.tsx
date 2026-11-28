@@ -31,5 +31,20 @@ describe("album discovery status", () => {
     );
     expect(html).toContain("No matching torrent sources found · Unavailable indexes: Knaben");
     expect(html).not.toContain("MusicBrainz");
+    expect(html).not.toContain("Sign in to RuTracker");
+  });
+
+  it("offers a RuTracker sign-in shortcut when RuTracker is unavailable", () => {
+    const html = renderToStaticMarkup(
+      <AlbumDiscoveryStatus
+        tracks={[]}
+        loadingEditions={false}
+        resolvingCandidates={false}
+        switchingRelease={false}
+        torrent={{ phase: "done", resolutions: [], unavailableProviders: ["RuTracker"] }}
+      />,
+    );
+    expect(html).toContain("Unavailable indexes: RuTracker");
+    expect(html).toContain("Sign in to RuTracker");
   });
 });

@@ -1,6 +1,12 @@
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { TorrentDiscovery } from "@/features/download-quality/lib/useTorrentDiscovery.ts";
+import { focusOrOpenSettingsWindow } from "@/layouts/settingsWindow.ts";
+import { isRuTrackerEnabled } from "@/shared/lib/audio.ts";
 import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 import styles from "./album-preview.module.css";
+
+const DISMISSED_KEY = "rutracker_discovery_dismissed";
 
 export function AlbumDiscoveryStatus({
   loadingEditions, switchingRelease, resolvingCandidates, tracks, torrent,
@@ -11,6 +17,34 @@ export function AlbumDiscoveryStatus({
   tracks: readonly AlbumTrackInfo[];
   torrent: TorrentDiscovery;
 }) {
+  const [ruTrackerEnabled, setRuTrackerEnabled] = useState<boolean>();
+  const [dismissed, setDismissed] = useState(() =>
+    typeof window !== "undefined" && window.localStorage?.getItem(DISMISSED_KEY) === "1",
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    const load = () => {
+      isRuTrackerEnabled()
+        .then((enabled) => {
+          if (!disposed) setRuTrackerEnabled(enabled);
+        })
+        .catch(() => {});
+    };
+    load();
+    let unlisten: (() => void) | undefined;
+    void listen("torrent-indexers-changed", load)
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const status: { text: string; busy: boolean }[] = [];
   if (loadingEditions) {
     status.push({ text: "Looking up editions on MusicBrainz and other platforms…", busy: true });
@@ -33,8 +67,12 @@ export function AlbumDiscoveryStatus({
         : "Searching torrent indexes…";
     status.push({ text, busy: true });
   }
+  let coveredCount = 0;
+  let ruTrackerUnavailable = false;
   if (torrent.phase === "done") {
     const covered = new Set(torrent.resolutions.flatMap((release) => release.tracks.map((track) => track.expected_index)));
+    coveredCount = covered.size;
+    ruTrackerUnavailable = Boolean(torrent.unavailableProviders?.includes("RuTracker"));
     const result = torrent.failed
       ? "Torrent search failed"
       : covered.size > 0
@@ -43,6 +81,14 @@ export function AlbumDiscoveryStatus({
     const unavailable = torrent.unavailableProviders?.join(", ");
     status.push({ text: unavailable ? `${result} · Unavailable indexes: ${unavailable}` : result, busy: false });
   }
+
+  const showConnectHint =
+    torrent.phase === "done" &&
+    ruTrackerEnabled === false &&
+    !dismissed &&
+    !ruTrackerUnavailable &&
+    coveredCount < tracks.length;
+
   return (
     <div className={styles.discoveryStatus} aria-live="polite">
       {status.map(({ text, busy }) => (
@@ -51,6 +97,40 @@ export function AlbumDiscoveryStatus({
           {text}
         </span>
       ))}
+      {ruTrackerUnavailable && (
+        <span className={styles.discoveryStep}>
+          <button
+            type="button"
+            className={styles.discoveryLink}
+            onClick={() => void focusOrOpenSettingsWindow("downloader")}
+          >
+            Sign in to RuTracker
+          </button>
+        </span>
+      )}
+      {showConnectHint && (
+        <span className={styles.discoveryStep}>
+          <span>Want more lossless sources?</span>
+          <button
+            type="button"
+            className={styles.discoveryLink}
+            onClick={() => void focusOrOpenSettingsWindow("downloader")}
+          >
+            Connect RuTracker
+          </button>
+          <button
+            type="button"
+            className={styles.discoveryDismiss}
+            aria-label="Dismiss RuTracker hint"
+            onClick={() => {
+              setDismissed(true);
+              window.localStorage?.setItem(DISMISSED_KEY, "1");
+            }}
+          >
+            ×
+          </button>
+        </span>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DefaultQualityDescription, DefaultQualitySelect } from "@/features/download-quality/ui/DefaultQualitySelect.tsx";
+import { DefaultQualitySelect } from "@/features/download-quality/ui/DefaultQualitySelect.tsx";
 import {
   getDefaultDownloadQuality,
   setDefaultDownloadQuality,
@@ -10,7 +10,6 @@ import {
   anyFailed,
   TOOL_LABELS,
   TOOL_NAMES,
-  TOOL_PURPOSE,
   toolDetails,
   toolStatusText,
 } from "../model/toolsStatus.ts";
@@ -58,11 +57,10 @@ export const DownloaderSettings = ({
     <>
       <div className={rowClassName}>
         <label htmlFor="default-download-quality-select" className={styles.toolName}>
-          <span>Default Download Quality Tier</span>
+          <span>Default Download Quality</span>
           <span className={mutedClassName}>
             Used by Quick Download across available sources.
           </span>
-          <DefaultQualityDescription className={mutedClassName} />
         </label>
         <DefaultQualitySelect id="default-download-quality-select" className={selectClassName}
           value={defaultQuality} onChange={(quality) => void handleQualityChange(quality)} />
@@ -77,7 +75,6 @@ export const DownloaderSettings = ({
                 {TOOL_LABELS[name]}
                 {details && <span className={mutedClassName}> {details}</span>}
               </span>
-              <span className={mutedClassName}>{TOOL_PURPOSE[name]}</span>
             </span>
             <span
               className={tool?.phase === "failed" ? styles.toolFailed : `${mutedClassName} ${styles.toolStatus}`}
@@ -90,7 +87,7 @@ export const DownloaderSettings = ({
       })}
       <div className={rowClassName}>
         <span className={mutedClassName}>
-          yt-dlp is checked for updates daily, Deno and FFmpeg weekly. If Deno or FFmpeg is already installed on your system, Blacktape uses it.
+          Tools update automatically in the background.
         </span>
         <button
           className={buttonClassName}

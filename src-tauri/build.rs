@@ -25,6 +25,10 @@ fn main() {
             "set_torrent_indexer_enabled",
             "test_torrent_indexer",
             "open_rutracker_login",
+            "get_rutracker_status",
+            "sign_in_rutracker",
+            "sign_out_rutracker",
+            "is_rutracker_enabled",
         ]),
     ))
     .expect("failed to build Tauri application metadata");

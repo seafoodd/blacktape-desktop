@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-export async function focusOrOpenSettingsWindow(): Promise<void> {
+export async function focusOrOpenSettingsWindow(tab?: string): Promise<void> {
   const existingWindow = await WebviewWindow.getByLabel("settings");
 
   if (existingWindow) {
@@ -9,6 +9,9 @@ export async function focusOrOpenSettingsWindow(): Promise<void> {
       await existingWindow.unminimize();
       await existingWindow.show();
       await existingWindow.setFocus();
+      if (tab) {
+        await existingWindow.emit("settings-select-tab", tab);
+      }
     } catch (err) {
       console.error("Failed to focus settings window:", err);
     }
@@ -26,7 +29,7 @@ export async function focusOrOpenSettingsWindow(): Promise<void> {
   const y = position.y + Math.round((size.height - height) / 2);
 
   new WebviewWindow("settings", {
-    url: "/settings",
+    url: tab ? `/settings?tab=${encodeURIComponent(tab)}` : "/settings",
     title: "Settings",
     width,
     height,

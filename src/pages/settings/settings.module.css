@@ -159,6 +159,85 @@
     margin-left: 12px;
 }
 
+.indexerCard {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background-color: var(--bg-background-light);
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+}
+
+.indexerHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.rutrackerForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+}
+
+.rutrackerInputs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.textInput {
+    flex: 1;
+    min-width: 140px;
+    background-color: var(--bg-background);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-md);
+    outline: none;
+
+    &:focus {
+        border-color: var(--color-info);
+    }
+}
+
+.rutrackerFormActions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.linkButton {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    text-decoration: underline;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+        color: var(--color-text);
+    }
+
+    &:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+}
+
+.errorText {
+    color: var(--color-error, #e06c75);
+    font-size: var(--font-md);
+    margin: 0;
+}
+
 .libraryPath {
     color: var(--color-muted);
     font-size: var(--font-md);

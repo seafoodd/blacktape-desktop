@@ -7,6 +7,7 @@
     "torrent:allow-search-torrent-releases",
     "torrent:allow-inspect-torrent-release",
     "torrent:allow-resolve-torrent-album",
-    "torrent:allow-cancel-torrent-inspection"
+    "torrent:allow-cancel-torrent-inspection",
+    "torrent:allow-is-rutracker-enabled"
   ]
 }

@@ -53,7 +53,32 @@ export const Settings = () => {
   const { fetchTabs } = useLibraryStore();
   const progressStyle = useSearchProgressStyle();
   useChromeHeight(SETTINGS_HEADER_HEIGHT);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const param = new URLSearchParams(window.location.search).get("tab");
+    const valid: SettingsTab[] = ["appearance", "playback", "keymaps", "library", "downloader", "accounts", "about"];
+    return valid.includes(param as SettingsTab) ? (param as SettingsTab) : "appearance";
+  });
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("settings-select-tab", (event) => {
+        if (disposed) return;
+        const valid: SettingsTab[] = ["appearance", "playback", "keymaps", "library", "downloader", "accounts", "about"];
+        if (valid.includes(event.payload as SettingsTab)) {
+          setActiveTab(event.payload as SettingsTab);
+        }
+      }),
+    ).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const [libraryDir, setLibraryDir] = useState<string>(() => {
     return localStorage.getItem("library_dir") || "Not set";

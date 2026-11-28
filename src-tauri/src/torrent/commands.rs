@@ -13,6 +13,7 @@ use uuid::Uuid;
 type DbLock = tokio::sync::Mutex<Database>;
 const DISABLED_INDEXERS_KEY: &str = "disabled_torrent_indexers";
 const RUTRACKER_ENABLED_KEY: &str = "rutracker_enabled";
+const RUTRACKER_USERNAME_KEY: &str = "rutracker_username";
 
 #[derive(Serialize)]
 pub(crate) struct TorrentIndexer {
@@ -219,6 +220,111 @@ pub(crate) async fn test_torrent_indexer(
         let _ = window.emit_to("main", "torrent-indexers-changed", ());
     }
     Ok(TorrentIndexerTest { hits: report.hits.len(), error: report.error })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuTrackerStatus {
+    signed_in: bool,
+    username: Option<String>,
+    has_saved_credentials: bool,
+}
+
+#[cfg(not(test))]
+pub(crate) async fn record_rutracker_login(app: &tauri::AppHandle, username: &str) {
+    let Some(db) = app.try_state::<DbLock>() else { return };
+    let db = db.lock().await;
+    let _ = db.set_app_setting(RUTRACKER_ENABLED_KEY, "true").await;
+    let _ = db.set_app_setting(RUTRACKER_USERNAME_KEY, username).await;
+}
+
+#[tauri::command]
+pub(crate) async fn get_rutracker_status(
+    window: WebviewWindow,
+    db: State<'_, DbLock>,
+) -> Result<RuTrackerStatus, String> {
+    require_settings_window(window.label())?;
+    let live_username = super::rutracker::live_session_username(window.app_handle()).await;
+    let saved_username = super::rutracker::saved_username();
+    let has_saved_credentials = super::rutracker::has_saved_credentials();
+    let stored_username = {
+        let db = db.lock().await;
+        if let Some(ref name) = live_username {
+            let _ = db.set_app_setting(RUTRACKER_USERNAME_KEY, name).await;
+        }
+        db.get_app_setting(RUTRACKER_USERNAME_KEY)
+            .await
+            .map_err(|_| "Could not load RuTracker status.")?
+            .filter(|name| !name.trim().is_empty())
+    };
+    let username = live_username.or(saved_username).or(stored_username);
+    let signed_in = username.is_some();
+    Ok(RuTrackerStatus {
+        signed_in,
+        username,
+        has_saved_credentials,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn sign_in_rutracker(
+    window: WebviewWindow,
+    db: State<'_, DbLock>,
+    username: String,
+    password: String,
+) -> Result<super::rutracker::RuTrackerSignInResult, String> {
+    require_settings_window(window.label())?;
+    match super::rutracker::sign_in_with_credentials(window.app_handle(), &username, &password).await {
+        Ok(logged_in_user) => {
+            {
+                let db = db.lock().await;
+                let _ = db.set_app_setting(RUTRACKER_ENABLED_KEY, "true").await;
+                let _ = db.set_app_setting(RUTRACKER_USERNAME_KEY, &logged_in_user).await;
+            }
+            let _ = window.emit_to("main", "torrent-indexers-changed", ());
+            Ok(super::rutracker::RuTrackerSignInResult {
+                signed_in: true,
+                username: Some(logged_in_user),
+                error: None,
+                error_code: None,
+                offer_browser_fallback: false,
+            })
+        }
+        Err(failure) => Ok(super::rutracker::RuTrackerSignInResult {
+            signed_in: false,
+            username: None,
+            error: Some(failure.message().into()),
+            error_code: Some(failure.code()),
+            offer_browser_fallback: failure.should_offer_browser(),
+        }),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn sign_out_rutracker(
+    window: WebviewWindow,
+    db: State<'_, DbLock>,
+) -> Result<(), String> {
+    require_settings_window(window.label())?;
+    super::rutracker::sign_out(window.app_handle()).await;
+    {
+        let db = db.lock().await;
+        let _ = db.set_app_setting(RUTRACKER_ENABLED_KEY, "false").await;
+        let _ = db.set_app_setting(RUTRACKER_USERNAME_KEY, "").await;
+    }
+    let _ = window.emit_to("main", "torrent-indexers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn is_rutracker_enabled(db: State<'_, DbLock>) -> Result<bool, String> {
+    let db = db.lock().await;
+    Ok(db
+        .get_app_setting(RUTRACKER_ENABLED_KEY)
+        .await
+        .map_err(|_| "Could not load RuTracker settings.")?
+        .as_deref()
+        == Some("true"))
 }
 
 #[tauri::command]
