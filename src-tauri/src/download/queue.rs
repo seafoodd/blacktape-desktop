@@ -79,6 +79,7 @@ pub struct ActiveTaskInfo {
     track_pids: HashMap<usize, Vec<u32>>,
     track_save_locks: HashMap<usize, Arc<Mutex<()>>>,
     torrent_selections: Vec<TorrentTrackSelection>,
+    torrent_selection_sync: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Default)]
@@ -218,7 +219,7 @@ impl TaskRegistry {
     }
 
     pub async fn cancel_track(&self, task_id: &str, track_index: usize) -> CancelTrackOutcome {
-        let (pids, abort_handle, torrent_updates) = {
+        let (pids, abort_handle) = {
             let mut tasks = self.tasks.lock().await;
             let Some(info) = tasks.get_mut(task_id) else {
                 return CancelTrackOutcome::NotFound;
@@ -252,21 +253,7 @@ impl TaskRegistry {
 
             let pids = info.track_pids.remove(&track_index).unwrap_or_default();
             let abort_handle = info.track_abort_handles.remove(&track_index);
-            let torrent_updates: Vec<(Arc<librqbit::Session>, Arc<librqbit::ManagedTorrent>, HashSet<usize>)> = info
-                .torrent_selections
-                .iter()
-                .filter(|sel| sel.track_to_file.contains_key(&track_index))
-                .map(|sel| {
-                    let remaining: HashSet<usize> = sel
-                        .track_to_file
-                        .iter()
-                        .filter(|(t_idx, _)| !info.cancelled_tracks.contains(t_idx))
-                        .map(|(_, f_idx)| *f_idx)
-                        .collect();
-                    (Arc::clone(&sel.session), Arc::clone(&sel.handle), remaining)
-                })
-                .collect();
-            (pids, abort_handle, torrent_updates)
+            (pids, abort_handle)
         };
 
         if !pids.is_empty() {
@@ -280,9 +267,7 @@ impl TaskRegistry {
         if let Some(handle) = abort_handle {
             handle.abort();
         }
-        for (session, handle, remaining) in torrent_updates {
-            let _ = session.update_only_files(&handle, &remaining).await;
-        }
+        self.sync_torrent_selections(task_id).await;
         CancelTrackOutcome::Cancelled
     }
 
@@ -318,6 +303,7 @@ impl TaskRegistry {
                 track_pids: HashMap::new(),
                 track_save_locks: HashMap::new(),
                 torrent_selections: Vec::new(),
+                torrent_selection_sync: Arc::new(Mutex::new(())),
             },
         );
     }
@@ -381,13 +367,43 @@ impl TaskRegistry {
         handle: Arc<librqbit::ManagedTorrent>,
         track_to_file: HashMap<usize, usize>,
     ) {
-        let mut tasks = self.tasks.lock().await;
-        if let Some(info) = tasks.get_mut(task_id) {
-            info.torrent_selections.push(TorrentTrackSelection {
-                session,
-                handle,
-                track_to_file,
-            });
+        {
+            let mut tasks = self.tasks.lock().await;
+            if let Some(info) = tasks.get_mut(task_id) {
+                info.torrent_selections.push(TorrentTrackSelection {
+                    session,
+                    handle,
+                    track_to_file,
+                });
+            }
+        }
+        self.sync_torrent_selections(task_id).await;
+    }
+
+    async fn sync_torrent_selections(&self, task_id: &str) {
+        let sync = {
+            let tasks = self.tasks.lock().await;
+            let Some(info) = tasks.get(task_id) else { return };
+            Arc::clone(&info.torrent_selection_sync)
+        };
+        // Serialize updates, then read the latest cancellations so an older update cannot
+        // reselect a file cancelled by a concurrent request or before registration.
+        let _guard = sync.lock().await;
+        let updates: Vec<_> = {
+            let tasks = self.tasks.lock().await;
+            let Some(info) = tasks.get(task_id) else { return };
+            info.torrent_selections.iter().map(|selection| {
+                let remaining: HashSet<usize> = selection.track_to_file.iter()
+                    .filter(|(index, _)| !info.is_cancelled && !info.cancelled_tracks.contains(index))
+                    .map(|(_, file)| *file)
+                    .collect();
+                (Arc::clone(&selection.session), Arc::clone(&selection.handle), remaining)
+            }).collect()
+        };
+        for (session, handle, remaining) in updates {
+            if session.update_only_files(&handle, &remaining).await.is_err() {
+                tracing::warn!(task_id, "Could not update cancelled torrent file selection");
+            }
         }
     }
 
@@ -772,6 +788,10 @@ pub fn init_queue_worker(app: AppHandle) -> mpsc::UnboundedSender<DownloadTask> 
 
     tx
 }
+
+#[cfg(test)]
+#[path = "queue_selection_tests.rs"]
+mod queue_selection_tests;
 
 #[cfg(test)]
 mod tests {
