@@ -129,11 +129,7 @@ pub async fn parse_album(browse_url: &str) -> Result<AlbumDownload, String> {
 }
 
 async fn parse_album_innertube(browse_id: &str) -> Result<AlbumDownload, String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(4))
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = crate::platforms::http::client()?;
     let body = serde_json::json!({
         "context": {
             "client": {
@@ -156,10 +152,9 @@ async fn parse_album_innertube(browse_id: &str) -> Result<AlbumDownload, String>
         .json(&body)
         .send()
         .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        .map_err(|e| e.without_url().to_string())?;
+    let bytes = crate::platforms::http::read_bytes_limited(resp, crate::platforms::http::PAGE_LIMIT).await?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     parse_innertube_album_json(&json)
 }
 
@@ -180,9 +175,14 @@ fn parse_duration_ms_str(s: &str) -> Option<u64> {
     let mut parts = s.trim().split(':').rev();
     let secs = parts.next()?.parse::<u64>().ok()?;
     let mins = parts.next()?.parse::<u64>().ok()?;
-    let hours = parts.next().and_then(|h| h.parse::<u64>().ok()).unwrap_or(0);
-    let total = hours * 3600 + mins * 60 + secs;
-    (total > 0).then_some(total * 1000)
+    let hours = match parts.next() {
+        Some(hours) => hours.parse::<u64>().ok()?,
+        None => 0,
+    };
+    if parts.next().is_some() { return None; }
+    let total = hours.checked_mul(3600)?.checked_add(mins.checked_mul(60)?)?.checked_add(secs)?;
+    if total == 0 { return None; }
+    total.checked_mul(1000)
 }
 
 fn parse_innertube_album_json(json: &serde_json::Value) -> Result<AlbumDownload, String> {
@@ -414,6 +414,10 @@ fn extract_browse_id(browse_url: &str) -> Result<&str, String> {
         Ok(browse_url)
     }
 }
+
+#[cfg(test)]
+#[path = "download_release_tests.rs"]
+mod release_tests;
 
 #[cfg(test)]
 mod tests {
