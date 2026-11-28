@@ -14,7 +14,7 @@ const TORRENT_QUICK_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long the patient request waits for anyone to be found.
 const TORRENT_NO_PEERS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Peers were found, but none accepted a connection within this window.
-const TORRENT_UNCONNECTED_PEERS_TIMEOUT: Duration = Duration::from_secs(15);
+const TORRENT_UNCONNECTED_PEERS_TIMEOUT: Duration = Duration::from_secs(18);
 /// Peers are connected but nothing has arrived: restarting would only throw them away, so they get longer.
 const TORRENT_SILENT_PEERS_TIMEOUT: Duration = Duration::from_secs(60);
 const TORRENT_STALL_TIMEOUT: Duration = Duration::from_secs(45);
