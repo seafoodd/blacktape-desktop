@@ -66,13 +66,19 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     try {
       if (libraryDir) {
         localStorage.setItem("library_dir", libraryDir);
-        await scanMusic(libraryDir);
-        await useLibraryStore.getState().fetchTabs();
       }
       await setTelemetryEnabled(telemetryEnabled);
       await setDefaultDownloadQuality(downloadQuality);
       await setOnboardingCompleted(true);
       useModalStore.getState().closeModal();
+
+      if (libraryDir) {
+        void scanMusic(libraryDir)
+          .then(() => useLibraryStore.getState().fetchTabs())
+          .catch((err) => {
+            console.error("Failed to scan onboarding library:", err);
+          });
+      }
     } catch (err) {
       console.error("Failed to complete onboarding:", err);
     } finally {
