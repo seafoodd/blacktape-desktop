@@ -159,6 +159,22 @@ describe("buildRemoteTrackMenu", () => {
     expect(actions.download).not.toHaveBeenCalled();
   });
 
+  it("lets a missing row route Download as through its tracked download callback", () => {
+    const onDownloadAs = vi.fn();
+    const actions = makeActions();
+    buildRemoteTrackMenu(track(), { onDownloadAs }, actions)[1].action?.();
+    expect(onDownloadAs).toHaveBeenCalledOnce();
+    expect(actions.downloadAs).not.toHaveBeenCalled();
+  });
+
+  it("lets a missing row start a tracked quick download from the context menu", () => {
+    const onDownload = vi.fn();
+    const actions = makeActions();
+    buildRemoteTrackMenu(track(), { onDownload }, actions)[0].action?.();
+    expect(onDownload).toHaveBeenCalledOnce();
+    expect(actions.download).not.toHaveBeenCalled();
+  });
+
   it("Download as… is left out of a downloaded track, which has only the disabled Downloaded item", () => {
     const labels = buildRemoteTrackMenu(track(), { downloadState: "downloaded" }, makeActions()).map((i) => i.label);
     expect(labels).not.toContain("Download as…");

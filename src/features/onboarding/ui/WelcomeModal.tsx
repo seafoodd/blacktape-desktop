@@ -1,4 +1,5 @@
 import { pickFolder } from "@/shared/lib/ui/dialog.ts";
+import { DefaultQualityDescription, DefaultQualitySelect } from "@/features/download-quality/ui/DefaultQualitySelect.tsx";
 import { useOnboardingStore } from "../model/onboardingStore.ts";
 import {
   PRIVACY_BULLETS,
@@ -15,9 +16,11 @@ export const WelcomeModal = () => {
     step,
     libraryDir,
     telemetryEnabled,
+    downloadQuality,
     isSaving,
     setLibraryDir,
     setTelemetryEnabled,
+    setDownloadQuality,
     nextStep,
     prevStep,
     finishOnboarding,
@@ -107,6 +110,14 @@ export const WelcomeModal = () => {
             </label>
           </>
         )}
+        {step === 3 && (
+          <div className={styles.privacyCard}>
+            <label htmlFor="welcome-download-quality" className={styles.toggleTitle}>Default Download Quality Tier</label>
+            <DefaultQualitySelect id="welcome-download-quality" className={styles.chooseButton}
+              value={downloadQuality} onChange={setDownloadQuality} />
+            <DefaultQualityDescription className={styles.hintText} />
+          </div>
+        )}
       </div>
 
       <footer className={styles.footer}>
@@ -132,7 +143,7 @@ export const WelcomeModal = () => {
         </div>
 
         <div className={styles.footerRight}>
-          {step === 1 ? (
+          {step < 3 ? (
             <button
               type="button"
               className={styles.primaryButton}

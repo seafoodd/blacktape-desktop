@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ItemType, SearchSuggestion } from "@/shared/store/libraryStore.ts";
 import type { Platform } from "@/shared/types.ts";
+import type { SearchSource } from "@/shared/lib/search/searchProgress.ts";
 
 /** Kind of a `search_full` request. Same strings as the Rust `SearchKind` / `ItemType` enum values. */
 export type SearchKind = ItemType.Track | ItemType.Album | ItemType.Artist;
@@ -19,6 +20,7 @@ export interface SearchCursor {
 
 export interface PlatformWarning {
   platform: Platform;
+  source?: SearchSource;
   message: string;
 }
 
@@ -63,11 +65,14 @@ export interface ArtistProfile {
 }
 
 export interface SearchFullArgs {
+  sources?: SearchSource[];
   query: string;
   kind: SearchKind;
   platforms: Platform[];
   /** `null`/omitted = first page; otherwise `next_cursor` of the previous page of the same kind. */
   cursor?: SearchCursor | null;
+  /** Asks for `search-full-progress` events about this call, marked with this id. */
+  requestId?: number;
 }
 
 /** First page (no cursor) or "Show more" page (cursor) of one kind. Rejects with a message string. */
@@ -76,8 +81,10 @@ export const searchFull = ({
   kind,
   platforms,
   cursor = null,
+  requestId,
+  sources,
 }: SearchFullArgs): Promise<FullSearchPage> =>
-  invoke<FullSearchPage>("search_full", { query, kind, platforms, cursor });
+  invoke<FullSearchPage>("search_full", { query, kind, platforms, cursor, requestId, ...(sources ? { sources } : {}) });
 
 /** Profile of an artist item (`item_url_path` of an Artist `SearchSuggestion`). Rejects when unavailable. */
 export const getArtistProfile = (

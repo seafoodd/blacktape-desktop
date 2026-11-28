@@ -20,4 +20,8 @@ describe("explainFailure", () => {
     expect(e.reason.startsWith("weird")).toBe(true);
     expect(e.reason.length).toBeLessThanOrEqual(240);
   });
+  it("separates an unpunctuated account error from the recovery hint", () => {
+    const error = explainFailure("Could not open the check window: a webview already exists", "YouTube");
+    expect(error.reason).toBe("Could not open the check window: a webview already exists.");
+  });
 });

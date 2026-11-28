@@ -60,30 +60,6 @@ describe("songQuality", () => {
     });
   });
 
-  it("labels a lossless flac as just FLAC", () => {
-    expect(songQuality({ path: "C:\\lib\\A\\01 - x.flac", quality_tier: "lossless" })).toEqual({
-      tier: "lossless",
-      label: "FLAC",
-      title: "Quality: Lossless (FLAC)",
-    });
-  });
-
-  it("labels a lossless m4a as ALAC", () => {
-    expect(songQuality({ path: "/m/a.m4a", quality_tier: "lossless" })).toEqual({
-      tier: "lossless",
-      label: "ALAC",
-      title: "Quality: Lossless (ALAC)",
-    });
-  });
-
-  it("labels a lossless mp4 as ALAC", () => {
-    expect(songQuality({ path: "/m/a.mp4", quality_tier: "lossless" })).toEqual({
-      tier: "lossless",
-      label: "ALAC",
-      title: "Quality: Lossless (ALAC)",
-    });
-  });
-
   it("keeps the M4A label for a high-quality m4a", () => {
     expect(songQuality({ path: "/m/a.m4a", quality_tier: "high" })).toEqual({
       tier: "high",
@@ -92,19 +68,25 @@ describe("songQuality", () => {
     });
   });
 
-  it("keeps the FLAC label for a lossless flac", () => {
-    expect(songQuality({ path: "/m/a.flac", quality_tier: "lossless" })).toEqual({
-      tier: "lossless",
-      label: "FLAC",
-      title: "Quality: Lossless (FLAC)",
-    });
-  });
-
   it("uses only the tier word when the file has no extension", () => {
     expect(songQuality({ path: "/m/song", quality_tier: "high" })).toEqual({
       tier: "high",
       label: "High",
       title: "Quality: High",
+    });
+  });
+
+  it.each([
+    ["C:\\lib\\track.flac", "FLAC"],
+    ["/music/track.WAV", "WAV"],
+    ["/music/track.m4a", "ALAC"],
+    ["/music/track.mp4", "ALAC"],
+    ["/music/track.aiff", "AIFF"],
+  ])("labels %s as %s · Lossless", (path, format) => {
+    expect(songQuality({ path, quality_tier: "lossless" })).toEqual({
+      tier: "lossless",
+      label: `${format} · Lossless`,
+      title: `Quality: Lossless (${format})`,
     });
   });
 

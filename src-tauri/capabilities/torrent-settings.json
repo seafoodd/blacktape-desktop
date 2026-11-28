@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "torrent-settings",
+  "description": "Manage and test torrent indexers from the Settings window",
+  "windows": ["settings"],
+  "permissions": [
+    "torrent:allow-list-torrent-indexers",
+    "torrent:allow-set-torrent-indexer-enabled",
+    "torrent:allow-test-torrent-indexer",
+    "torrent:allow-open-rutracker-login",
+    "torrent:allow-get-rutracker-status",
+    "torrent:allow-sign-in-rutracker",
+    "torrent:allow-sign-out-rutracker"
+  ]
+}

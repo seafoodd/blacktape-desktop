@@ -6,9 +6,15 @@ import {
   albumAction,
   albumInfoLine,
   albumLibraryState,
+  albumMetadataSourceBadge,
   albumMetaLine,
+  candidateMatchWarning,
   downloadLabel,
+  estimatedPlatformQuality,
+  formatEditionSubtext,
   getAlbumPreview,
+  isTrackRowActive,
+  partitionEditions,
   selectableIndexes,
   selectableTracks,
   selectedUrls,
@@ -17,6 +23,8 @@ import {
   trackRefs,
   trackRowStatus,
   trackTaskStates,
+  upgradableAlbumTracks,
+  unverifiedTracksForDownload,
   type AlbumPreview,
   type AlbumTrackInfo,
 } from "./albumPreview.ts";
@@ -233,6 +241,14 @@ describe("trackAsStreamItem", () => {
   it("leaves the duration out when the track has none", () => {
     expect(trackAsStreamItem(base, track(0, { duration_ms: null })).duration).toBeUndefined();
   });
+
+  it("uses the track URL platform instead of preview.platform when playing Bandcamp or SoundCloud inside MusicBrainz albums", () => {
+    const bcTrack = track(0, { url: "https://heavenpierceher.bandcamp.com/track/the-fall" });
+    expect(trackAsStreamItem(base, bcTrack).platform).toBe("bandcamp");
+
+    const scTrack = track(1, { url: "https://soundcloud.com/artist/track" });
+    expect(trackAsStreamItem(base, scTrack).platform).toBe("soundcloud");
+  });
 });
 
 describe("trackRefs", () => {
@@ -301,8 +317,8 @@ describe("trackTaskStates", () => {
         { "task-1": { status: "downloading", overallPercent: 40 } },
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 40 },
-      [u(1)]: { phase: "running", percent: 40 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 40 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 40 },
     });
   });
 
@@ -312,7 +328,7 @@ describe("trackTaskStates", () => {
   ])("treats status %s as running", (status, percent) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status, overallPercent: percent } })[u(0)],
-    ).toEqual({ phase: "running", percent });
+    ).toEqual({ phase: "running", taskId: "t", trackIndex: 0, percent });
   });
 
   it.each([
@@ -323,7 +339,7 @@ describe("trackTaskStates", () => {
   ])("clamps the percent %s to %s", (raw, expected) => {
     expect(
       trackTaskStates({ t: [u(0)] }, { t: { status: "downloading", overallPercent: raw } })[u(0)],
-    ).toEqual({ phase: "running", percent: expected });
+    ).toEqual({ phase: "running", taskId: "t", trackIndex: 0, percent: expected });
   });
 
   it("reports a completed task as done", () => {
@@ -365,9 +381,33 @@ describe("trackTaskStates", () => {
         previewTracks,
       ),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 100 },
-      [u(1)]: { phase: "running", percent: 45 },
-      [u(2)]: { phase: "running", percent: 0 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 45 },
+      [u(2)]: { phase: "running", taskId: "task-1", trackIndex: 2, percent: 0 },
+    });
+  });
+
+  it("omits individually cancelled tracks so their download button is restored", () => {
+    const previewTracks = [
+      track(0, { title: "Track One", track_number: 1 }),
+      track(1, { title: "Track Two", track_number: 2 }),
+    ];
+    const task = {
+      status: "downloading",
+      overallPercent: 25,
+      tracks: [
+        { title: "Track One", percent: 50, status: "downloading", trackNumber: 1 },
+        { title: "Track Two", percent: 0, status: "cancelled", trackNumber: 2 },
+      ],
+    };
+    expect(
+      trackTaskStates(
+        { "task-1": [u(0), u(1)] },
+        { "task-1": task },
+        previewTracks,
+      ),
+    ).toEqual({
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 50 },
     });
   });
 
@@ -389,8 +429,8 @@ describe("trackTaskStates", () => {
     expect(
       trackTaskStates({}, { "task-1": task }, previewTracks, albumUrl),
     ).toEqual({
-      [u(0)]: { phase: "running", percent: 100 },
-      [u(1)]: { phase: "running", percent: 15 },
+      [u(0)]: { phase: "running", taskId: "task-1", trackIndex: 0, percent: 100 },
+      [u(1)]: { phase: "running", taskId: "task-1", trackIndex: 1, percent: 15 },
     });
   });
 });
@@ -602,5 +642,194 @@ describe("albumMetaLine", () => {
       { year: 2020, genres: [], total_duration_ms: null },
     );
     expect(albumMetaLine(p)).toBe("2020 · 3 tracks · 1 unavailable");
+  });
+});
+
+describe("albumMetadataSourceBadge and estimatedPlatformQuality", () => {
+  it("maps MusicBrainz and platform metadata sources", () => {
+    expect(albumMetadataSourceBadge({ platform: "youtube", metadata_source: "musicbrainz", url: "canonical:rg:1" }))
+      .toEqual({ label: "MusicBrainz", kind: "musicbrainz" });
+    expect(albumMetadataSourceBadge({ platform: "bandcamp", metadata_source: "bandcamp", url: "https://a.bandcamp.com/album/x" }))
+      .toEqual({ label: "Bandcamp", kind: "bandcamp" });
+    expect(albumMetadataSourceBadge({ platform: "soundcloud", metadata_source: "soundcloud", url: "https://soundcloud.com/a/sets/b" }))
+      .toEqual({ label: "SoundCloud", kind: "soundcloud" });
+  });
+
+  it("estimates lossless only for free Bandcamp albums and Opus High for YouTube", () => {
+    expect(estimatedPlatformQuality({ platform: "youtube" }, "https://youtube.com/watch?v=1"))
+      .toEqual({ label: "~ YT · OPUS (High)", tier: "high" });
+    expect(estimatedPlatformQuality({ platform: "bandcamp", is_free_download: true }, "https://a.bandcamp.com/track/1"))
+      .toEqual({ label: "~ BC · Lossless", tier: "lossless" });
+    expect(estimatedPlatformQuality({ platform: "bandcamp", is_free_download: false }, "https://a.bandcamp.com/track/1"))
+      .toEqual({ label: "~ BC · MP3 128k", tier: "standard" });
+  });
+});
+
+describe("formatEditionSubtext and isTrackRowActive", () => {
+  it("formats edition year, track count, and media format cleanly", () => {
+    expect(
+      formatEditionSubtext({ year: 2001, track_count: 30, format: "Digital Media" }),
+    ).toBe("2001 · 30 tracks · Digital Media");
+    expect(
+      formatEditionSubtext({ year: null, track_count: 1, format: null }),
+    ).toBe("1 track");
+  });
+
+  it("matches only local ID or active track URL, never unselected candidates", () => {
+    const culDeSac = {
+      available: true,
+      title: "Cul-de-sac",
+      url: "https://youtube.com/watch?v=culdesac",
+    };
+    // Playing Track 1 (Coelacanth) must NOT highlight Track 6 even if Coelacanth appeared as an unselected candidate elsewhere.
+    expect(
+      isTrackRowActive(culDeSac, undefined, { id: -1, title: "Coelacanth", album: "Plastic Death", source_url: "https://youtube.com/watch?v=coelacanth" }, "Plastic Death"),
+    ).toBe(false);
+    expect(
+      isTrackRowActive(culDeSac, undefined, { id: -1, source_url: "https://youtube.com/watch?v=culdesac" }),
+    ).toBe(true);
+    expect(
+      isTrackRowActive(culDeSac, 42, { id: 42, source_url: null }),
+    ).toBe(true);
+  });
+
+  it("preserves highlight across release switches via album+track title when candidate matches or URL is still resolving", () => {
+    const resolvingTrack = {
+      available: true,
+      title: "Jynweythek",
+      url: "",
+      candidates: [],
+    };
+    expect(
+      isTrackRowActive(
+        resolvingTrack,
+        undefined,
+        { id: -1, title: "Jynweythek", album: "Drukqs", source_url: "https://youtube.com/watch?v=old-release" },
+        "Drukqs",
+      ),
+    ).toBe(true);
+
+    const switchedTrackWithCandidate = {
+      available: true,
+      title: "Jynweythek",
+      url: "https://bandcamp.com/track/jynweythek",
+      candidates: [
+        { source: { kind: "http_stream" }, url: "https://bandcamp.com/track/jynweythek" },
+        { source: { kind: "http_stream" }, url: "https://youtube.com/watch?v=old-release" },
+      ] as any,
+    };
+    expect(
+      isTrackRowActive(
+        switchedTrackWithCandidate,
+        undefined,
+        { id: -1, title: "Jynweythek", album: "Drukqs", source_url: "https://youtube.com/watch?v=old-release" },
+        "Drukqs",
+      ),
+    ).toBe(true);
+
+    // Different album with same track name should NOT highlight when URL differs
+    expect(
+      isTrackRowActive(
+        resolvingTrack,
+        undefined,
+        { id: -1, title: "Jynweythek", album: "Other Album", source_url: "https://youtube.com/watch?v=other" },
+        "Drukqs",
+      ),
+    ).toBe(false);
+  });
+
+  it("partitions MusicBrainz alternate editions and reveals all when expanded or selected", () => {
+    const editions = [
+      { id: "orig", title: "The Doors", edition_label: "Original edition", year: 1967, track_count: 11, disc_count: 1, format: "CD", is_default: true, is_alternate: false, source_kind: "musicbrainz" },
+      { id: "mono", title: "The Doors", edition_label: "Mono", year: 1967, track_count: 11, disc_count: 1, format: '12" Vinyl', is_default: false, is_alternate: true, source_kind: "musicbrainz" },
+      { id: "4cd", title: "The Doors", edition_label: "50th Anniversary", year: 2017, track_count: 41, disc_count: 4, format: "4×CD", is_default: false, is_alternate: false, source_kind: "musicbrainz" },
+      { id: "yt", title: "The Doors", edition_label: "YouTube Music", year: 1967, track_count: 0, disc_count: 1, format: "Opus High", is_default: false, is_alternate: false, source_kind: "youtube" },
+    ];
+
+    const collapsed = partitionEditions(editions, "orig", false);
+    expect(collapsed.visibleMb.map((e) => e.id)).toEqual(["orig", "4cd"]);
+    expect(collapsed.hiddenMbCount).toBe(1);
+    expect(collapsed.platformEditions.map((e) => e.id)).toEqual(["yt"]);
+
+    const selectedAlt = partitionEditions(editions, "mono", false);
+    expect(selectedAlt.visibleMb.map((e) => e.id)).toEqual(["orig", "mono", "4cd"]);
+    expect(selectedAlt.hiddenMbCount).toBe(0);
+
+    const expanded = partitionEditions(editions, "orig", true);
+    expect(expanded.visibleMb.map((e) => e.id)).toEqual(["orig", "mono", "4cd"]);
+    expect(expanded.hiddenMbCount).toBe(1);
+  });
+
+  it("summarizes mismatch warnings only for non-strict candidates and flags unverified tracks for download", () => {
+    const strictCand = {
+      source: { kind: "http_stream" as const, platform: "youtube", url: "https://yt/exact" },
+      quality_tier: "high_lossy" as const,
+      codec: "Opus",
+      duration_ms: 156_000,
+      match_confidence: 0.99,
+      is_strict_match: true,
+      display_label: "YouTube (Opus 160k)",
+      matched_title: "Wild Child",
+      matched_artist: "The Doors",
+    };
+    const fuzzyCand = {
+      source: { kind: "http_stream" as const, platform: "youtube", url: "https://yt/edit" },
+      quality_tier: "high_lossy" as const,
+      codec: "Opus",
+      duration_ms: 170_000,
+      match_confidence: 0.72,
+      is_strict_match: false,
+      display_label: "YouTube (Opus 160k)",
+      matched_title: "Wild Child (Single Edit)",
+      matched_artist: "The Doors",
+    };
+
+    const t0 = track(0, { title: "Wild Child", duration_ms: 156_000, candidates: [strictCand], selected_candidate_idx: 0 });
+    const t1 = track(1, { title: "Touch Me", duration_ms: 192_000, candidates: [fuzzyCand], selected_candidate_idx: 0 });
+
+    expect(candidateMatchWarning(t0, strictCand)).toBeNull();
+    expect(candidateMatchWarning(t1, fuzzyCand)).toContain("Wild Child (Single Edit)");
+    expect(candidateMatchWarning(t1, fuzzyCand)).toContain("2:50 vs 3:12");
+
+    const p = preview([t0, t1]);
+    const unverified = unverifiedTracksForDownload(p);
+    expect(unverified).toHaveLength(1);
+    expect(unverified[0].track.index).toBe(1);
+    expect(unverifiedTracksForDownload(p, [t0.url])).toEqual([]);
+  });
+
+  it("finds only downloaded tracks whose resolved candidate strictly improves local quality", () => {
+    const losslessCand = {
+      source: { kind: "http_stream" as const, platform: "bandcamp", url: "https://bc.bandcamp.com/track/1" },
+      quality_tier: "lossless" as const,
+      codec: "FLAC",
+      duration_ms: 156_000,
+      match_confidence: 0.99,
+      is_strict_match: true,
+      display_label: "Bandcamp · FLAC",
+    };
+    const highCand = {
+      source: { kind: "http_stream" as const, platform: "youtube", url: "https://yt/exact" },
+      quality_tier: "high_lossy" as const,
+      codec: "Opus",
+      duration_ms: 156_000,
+      match_confidence: 0.99,
+      is_strict_match: true,
+      display_label: "YouTube · Opus 160k",
+    };
+
+    const t0 = track(0, { title: "Track 1", candidates: [losslessCand], selected_candidate_idx: 0 });
+    const t1 = track(1, { title: "Track 2", candidates: [highCand], selected_candidate_idx: 0 });
+    const t2 = track(2, { title: "Track 3", candidates: [losslessCand], selected_candidate_idx: 0 });
+
+    const localTracks = {
+      [t0.url]: { id: 101, quality_tier: "High" as const, path: "/m/1.opus" },
+      [t1.url]: { id: 102, quality_tier: "High" as const, path: "/m/2.opus" },
+      // t2 is not downloaded locally at all -> excluded from upgradableAlbumTracks
+    };
+
+    const upgradable = upgradableAlbumTracks(preview([t0, t1, t2]), localTracks);
+    expect(upgradable.map((x) => x.local.id)).toEqual([101]);
+    expect(upgradable[0].candidate.quality_tier).toBe("lossless");
   });
 });

@@ -12,6 +12,7 @@ import {
   missingTrackNumber,
   missingTrackPercent,
   missingTrackDownloading,
+  missingTrackIndex,
   nextGhosts,
   ghostTrack,
   looseTitle,
@@ -578,6 +579,12 @@ describe("missingAlbumMenuItems linked album entry", () => {
     const a = { ...actions(), find: vi.fn() };
     const labels = missingAlbumMenuItems(source({ platform: "soundcloud", missing: 0 }), false, a).map((i) => i.label);
     expect(labels).toEqual(["", "Linked to SoundCloud", "Change linked album..."]);
+    const canonicalLabels = missingAlbumMenuItems(
+      source({ platform: "youtube", source_url: "canonical:rg:mbid-1", missing: 0 }),
+      false,
+      a,
+    ).map((i) => i.label);
+    expect(canonicalLabels).toEqual(["", "Linked to MusicBrainz", "Change linked album..."]);
   });
 
   it("is shown with find alone, so the link can be changed even when nothing is missing", () => {
@@ -705,5 +712,19 @@ describe("placed single downloads", () => {
   it("does not touch the other songs", () => {
     expect(missingTrackDownloading(download, row("Fill In The Blank", 1, 0))).toBe(false);
     expect(missingTrackPercent(download, row("Fill In The Blank", 1, 0))).toBe(0);
+  });
+
+  it("stops reporting cancelled album tracks as downloading and resolves their trackIndex", () => {
+    const albumDl = {
+      status: "downloading" as const,
+      tracks: [
+        { title: "Track One", percent: 50, status: "downloading" as const, trackNumber: 1 },
+        { title: "Black or White", percent: 0, status: "cancelled" as const, trackNumber: 3 },
+      ],
+    };
+    expect(missingTrackIndex(albumDl, row("Track One", 1, 0))).toBe(0);
+    expect(missingTrackIndex(albumDl, row("Black or White", 3, 2))).toBe(1);
+    expect(missingTrackDownloading(albumDl, row("Track One", 1, 0))).toBe(true);
+    expect(missingTrackDownloading(albumDl, row("Black or White", 3, 2))).toBe(false);
   });
 });

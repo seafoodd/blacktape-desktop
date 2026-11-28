@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
 import styles from "./song-list-item.module.css";
 import { HiDotsHorizontal, HiOutlineMusicNote } from "react-icons/hi";
 import { HiMiniPause } from "react-icons/hi2";
@@ -34,6 +35,8 @@ interface SongListItemProps {
   /** Songs a drag from this row carries: the whole selection if the row is part of it. */
   dragIds: number[];
   index?: number;
+  /** Active upgrade progress for this song (percent 0..100, done flag), if being re-downloaded. */
+  upgradeProgress?: { percent: number; done: boolean; taskId?: string; trackIndex?: number };
 }
 
 const SongListItem = ({
@@ -46,6 +49,7 @@ const SongListItem = ({
   selectedBelow,
   dragIds,
   index,
+  upgradeProgress,
 }: SongListItemProps) => {
   const { currentSong, isPlaying, isStreaming, togglePlay } = useAudioStore();
   const isFav = useFavoritesStore((s) => s.favoriteIds.has(song.id));
@@ -206,8 +210,8 @@ const SongListItem = ({
             )}
           </button>
         </div>
-        <div className={clsx(styles.songTitle, "truncate")}>
-          <span>{song.title}</span>
+        <div className={styles.songTitle}>
+          <span className={styles.songTitleText}>{song.title}</span>
           {shouldShowTrackArtist(song) && (
             <span className={styles.songArtistSuffix}>
               {" · "}{formatTrackArtists(song)}
@@ -230,6 +234,17 @@ const SongListItem = ({
         >
           {isFav ? <MdFavorite size={16} /> : <MdFavoriteBorder size={16} />}
         </button>
+        {upgradeProgress?.done && (
+          <span
+            className={clsx(styles.upgradeBadge, styles.upgradeBadgeDone)}
+            title="Upgraded"
+          >
+            Upgraded
+          </span>
+        )}
+        {upgradeProgress && !upgradeProgress.done && (
+          <TrackDownloadProgress taskId={upgradeProgress.taskId} trackIndex={upgradeProgress.trackIndex} percent={upgradeProgress.percent} />
+        )}
         <QualityBadge song={song} className={styles.qualityBadge} />
         {/* the duration and the "..." button share one cell: hovering swaps them without moving the badge */}
         <div className={styles.endSlot}>

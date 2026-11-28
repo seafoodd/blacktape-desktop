@@ -1,3 +1,4 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { PlayerControls } from "@/features/player";
 import {
@@ -18,13 +19,14 @@ import Trash from "@/pages/trash/Trash.tsx";
 import Favorites from "@/pages/favorites/Favorites.tsx";
 import AlbumPreview from "@/pages/album-preview/AlbumPreview.tsx";
 import { SetupBanner } from "@/features/downloader-setup";
+import { YouTubeDownloadSignIn } from "@/features/accounts/ui/YouTubeDownloadSignIn.tsx";
 import { RemoteTrackMenuHost } from "@/features/remote-track-menu/ui/RemoteTrackMenuHost.tsx";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { WelcomeModal } from "@/features/onboarding";
 import { useOnboardingStore } from "@/features/onboarding/model/onboardingStore.ts";
 import {
-  applyNavEntry,
   initNavigationListener,
+  useNavigationStore,
 } from "@/features/navigation/model/navigationStore.ts";
 import { useGlobalShortcuts } from "@/features/keymaps/lib/useGlobalShortcuts.ts";
 import { initKeymapsSyncListener } from "@/features/keymaps/model/keymapStore.ts";
@@ -36,7 +38,8 @@ import {
 } from "@/features/player/model/playerPersistence.ts";
 
 function PlayerView() {
-  const { activeView, initDownloadListeners } = useLibraryStore();
+  const { activeView } = useLibraryStore();
+  const { initDownloadListeners } = useDownloadStore();
   useGlobalShortcuts();
 
   useEffect(() => {
@@ -58,7 +61,7 @@ function PlayerView() {
 
     const savedNav = loadSavedNavEntry();
     if (savedNav && (savedNav.view !== "ARTIST_ALBUMS" || savedNav.artistName)) {
-      void applyNavEntry(savedNav);
+      void useNavigationStore.getState().restoreSavedNav(savedNav);
     }
 
     useFavoritesStore
@@ -121,6 +124,7 @@ function PlayerView() {
       {activeView === "FAVORITES" && <Favorites />}
     </MainLayout>
     <RemoteTrackMenuHost />
+    <YouTubeDownloadSignIn />
     </>
   );
 }

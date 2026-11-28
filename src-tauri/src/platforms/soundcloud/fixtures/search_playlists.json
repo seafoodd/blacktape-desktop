@@ -1,0 +1,97 @@
+{
+  "collection": [
+    {
+      "artwork_url": "https://i1.sndcdn.com/artworks-000030896212-o16m9v-large.jpg",
+      "created_at": "2012-07-28T17:51:00Z",
+      "description": "",
+      "duration": 1398595,
+      "embeddable_by": "all",
+      "genre": "Indie/pop",
+      "id": 2284613,
+      "kind": "playlist",
+      "label_name": "",
+      "last_modified": "2013-01-18T01:10:57Z",
+      "license": "all-rights-reserved",
+      "likes_count": 482,
+      "managed_by_feeds": false,
+      "permalink": "the-royal-concept-ep",
+      "permalink_url": "https://soundcloud.com/the-concept-band/sets/the-royal-concept-ep",
+      "public": true,
+      "purchase_title": null,
+      "purchase_url": null,
+      "release_date": null,
+      "reposts_count": 99,
+      "secret_token": null,
+      "sharing": "public",
+      "tag_list": "",
+      "title": "The Royal Concept EP",
+      "uri": "https://api.soundcloud.com/playlists/soundcloud%3Aplaylists%3A2284613",
+      "user_id": 9615865,
+      "set_type": "ep",
+      "is_album": true,
+      "published_at": null,
+      "display_date": "2012-07-28T17:51:00Z",
+      "user": {
+        "avatar_url": "https://i1.sndcdn.com/avatars-000473822721-ujh21l-large.jpg",
+        "city": null,
+        "country_code": null,
+        "first_name": "The Royal Concept",
+        "followers_count": 15188,
+        "full_name": "The Royal Concept",
+        "id": 9615865,
+        "kind": "user",
+        "last_name": "",
+        "permalink": "the-concept-band",
+        "permalink_url": "https://soundcloud.com/the-concept-band",
+        "track_count": 71,
+        "uri": "https://api.soundcloud.com/users/soundcloud%3Ausers%3A9615865",
+        "urn": "soundcloud:users:9615865",
+        "username": "The Royal Concept",
+        "verified": true
+      },
+      "tracks": [
+        {
+          "id": 75206121,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "SNIP"
+        },
+        {
+          "id": 47127625,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "ALLOW"
+        },
+        {
+          "id": 47127627,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "SNIP"
+        },
+        {
+          "id": 30510138,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "ALLOW"
+        },
+        {
+          "id": 47127629,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "SNIP"
+        },
+        {
+          "id": 47127631,
+          "kind": "track",
+          "monetization_model": "NOT_APPLICABLE",
+          "policy": "ALLOW"
+        }
+      ],
+      "track_count": 6,
+      "url": "/the-concept-band/sets/the-royal-concept-ep"
+    }
+  ],
+  "total_results": 1,
+  "next_href": null,
+  "query_urn": "soundcloud:search:def"
+}

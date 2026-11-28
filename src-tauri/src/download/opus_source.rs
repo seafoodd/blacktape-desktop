@@ -17,7 +17,7 @@ pub struct OpusSource<R: Read + Seek> {
     buffer: Vec<f32>,
     buffer_idx: usize,
     current_sample: u64,
-    path: PathBuf,
+    _path: PathBuf,
 }
 
 impl OpusSource<BufReader<File>> {
@@ -62,7 +62,7 @@ impl<R: Read + Seek> OpusSource<R> {
             buffer: Vec::new(),
             buffer_idx: 0,
             current_sample: 0,
-            path: path_buf,
+            _path: path_buf,
         })
     }
 }

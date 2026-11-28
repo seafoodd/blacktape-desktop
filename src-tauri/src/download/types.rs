@@ -21,6 +21,8 @@ pub struct TrackMetaItem {
     pub title: String,
     pub track_number: Option<i32>,
     pub disc_number: Option<i32>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,6 +31,7 @@ pub struct AlbumMetaEvent {
     pub title: String,
     pub artist: String,
     pub cover_url: Option<String>,
+    pub release_year: Option<i32>,
     pub tracks: Vec<TrackMetaItem>,
 }
 
@@ -38,6 +41,18 @@ pub struct TrackProgressEvent {
     pub track_index: usize,
     pub track_title: String,
     pub percent: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TorrentTarget {
+    pub info_hash: String,
+    pub magnet_uri: String,
+    pub file_index: usize,
+    pub file_path: String,
+    pub file_size: u64,
+    pub quality_tier: crate::metadata::types::AudioQualityTier,
+    #[serde(default)]
+    pub alternatives: Vec<TorrentTarget>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,6 +70,9 @@ pub struct TrackDownload {
     pub source_item_id: Option<String>,
     /// Length in milliseconds when the platform page/API provides it (parsers fill it; None otherwise).
     pub duration_ms: Option<u64>,
+    pub fallback_urls: Vec<String>,
+    pub torrent_target: Option<TorrentTarget>,
+    pub source_track_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +84,27 @@ pub struct AlbumDownload {
     pub genres: Option<Vec<String>>,
     pub release_year: Option<i32>,
     pub external_cover_url: Option<String>,
+}
+
+/// Staged candidate/title selection for one album track sent from AlbumPreview UI.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct TrackOverride {
+    pub index: Option<usize>,
+    pub original_url: Option<String>,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub fallback_urls: Option<Vec<String>>,
+    pub candidates: Option<Vec<crate::metadata::types::AudioCandidate>>,
+    pub selected_candidate_idx: Option<usize>,
+}
+
+/// User-edited album metadata & per-track candidate choices passed to `download`.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct DownloadOverrides {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub year: Option<i32>,
+    pub tracks: Option<Vec<TrackOverride>>,
 }
 
 /// Where a downloaded single track belongs: the library album and song it stands for (the user picked this
@@ -142,6 +181,8 @@ mod placement_tests {
             release_year: None,
             source_item_id: None,
             duration_ms: None,
+            fallback_urls: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -3,7 +3,7 @@
 
 use crate::db::album_sources::{AlbumSourceRow, NewAlbumSource, SongSourceRef};
 use crate::download::album_preview::{build_preview, AlbumPreview, AlbumTrackInfo};
-use crate::download::soundcloud::SkippedTrack;
+use crate::platforms::soundcloud::download::SkippedTrack;
 use crate::download::AlbumDownload;
 use crate::library_index::normalize::normalize_url_key;
 use crate::library_index::status::{platform_from_str, platform_to_str, LibraryIndex};
@@ -139,6 +139,8 @@ pub fn parse_source_tracks(tracks_json: Option<&str>, track_urls_json: &str) -> 
                 available: true,
                 note: None,
                 duration_ms: None,
+                candidates: Vec::new(),
+                selected_candidate_idx: 0,
             })
             .collect(),
     };
@@ -347,6 +349,8 @@ mod tests {
             available,
             note: None,
             duration_ms: None,
+            candidates: Vec::new(),
+            selected_candidate_idx: 0,
         }
     }
 
@@ -575,6 +579,8 @@ mod tests {
             available: true,
             note: None,
             duration_ms: None,
+            candidates: Vec::new(),
+            selected_candidate_idx: 0,
         }
     }
 
@@ -657,6 +663,8 @@ mod tests {
             available: true,
             note: None,
             duration_ms: None,
+            candidates: Vec::new(),
+            selected_candidate_idx: 0,
         }
     }
 

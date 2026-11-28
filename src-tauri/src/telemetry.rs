@@ -174,6 +174,20 @@ pub fn init() -> Option<ClientInitGuard> {
     Some(guard)
 }
 
+pub fn webview_bridge<R: tauri::Runtime>(dev_url: Option<&url::Url>) -> tauri::plugin::TauriPlugin<R> {
+    use tauri::plugin::{Builder, Plugin};
+
+    let dev_origin = dev_url.map(|url| url.origin().ascii_serialization());
+    let dev_origin = serde_json::json!(dev_origin);
+    let gate = include_str!("telemetry-webview.js");
+    let sdk = tauri_plugin_sentry::Sentry::new();
+    let mut bridge = Builder::new("sentry-webview");
+    if let Some(script) = <tauri_plugin_sentry::Sentry as Plugin<R>>::initialization_script(&sdk) {
+        bridge = bridge.js_init_script(format!("({gate})({dev_origin}, () => {{\n{script}\n}});"));
+    }
+    bridge.build()
+}
+
 /// Classifies a raw download or yt-dlp error string into a normalized category without private URLs or paths.
 pub fn classify_error(message: &str) -> &'static str {
     let lower = message.to_lowercase();

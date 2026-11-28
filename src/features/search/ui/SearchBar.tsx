@@ -1,5 +1,8 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import { coverSrc } from "@/shared/lib/remote/cover";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./search-bar.module.css";
 import { AiOutlineArrowRight, AiOutlineSearch } from "react-icons/ai";
 import { BiFilterAlt, BiInfoCircle } from "react-icons/bi";
@@ -26,10 +29,13 @@ import {
 } from "@/shared/hooks/useDownloadStatus.ts";
 import { DownloadStatusBadge } from "@/shared/ui/download-status-badge/DownloadStatusBadge.tsx";
 import { useSearchPageStore } from "../model/searchPageStore.ts";
+import { SearchProgress, SearchPulse } from "./SearchProgress.tsx";
+import { useSearchProgressStyle } from "../model/searchProgressStyle.ts";
 import { useAlbumPreviewStore } from "@/features/album-preview/model/albumPreviewStore.ts";
-import { searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
+import { buildDownloadMap, searchItemDownloadParams, trackAlbumItem } from "@/pages/search-results/searchResultsFormat.ts";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
+import { useModalStore } from "@/shared/store/modalStore.ts";
 
 const formatSuggestionType = (type: ItemType): string => {
   switch (type) {
@@ -87,19 +93,42 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState<boolean>(false);
   const [showDropdown, setShowDropdown] = useState<boolean>(false);
+  const searchTokenRef = useRef(0);
+  const latestQueryRef = useRef(query);
+  latestQueryRef.current = query;
 
   const {
     searchResults,
+    searchWarning,
+    partialResultsFor,
+    searchRun,
     setSearchQuery,
     executeSearch,
     activeCategory,
     activePlatform,
     setActiveCategory,
     setActivePlatform,
-    startDownload,
-    activeDownloads,
-    initDownloadListeners,
   } = useLibraryStore();
+  const { startDownload, activeDownloads, initDownloadListeners } = useDownloadStore();
+  const downloadMap = useMemo(() => buildDownloadMap(Object.values(activeDownloads)), [activeDownloads]);
+  const modalOpen = useModalStore((s) => s.isOpen);
+  const progressStyle = useSearchProgressStyle();
+  const pulseRun = progressStyle === "pulse" && query.trim() !== "" ? searchRun : null;
+
+  useEffect(() => {
+    if (modalOpen) {
+      setShowDropdown(false);
+      setIsFilterMenuOpen(false);
+    }
+  }, [modalOpen]);
+
+  const dismissDropdownForAction = () => {
+    setShowDropdown(false);
+    setIsFilterMenuOpen(false);
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  };
 
   useEffect(() => {
     initDownloadListeners().catch(console.error);
@@ -128,35 +157,49 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
   }, [query]);
 
   useEffect(() => {
+    const token = ++searchTokenRef.current;
     setSearchQuery(debouncedQuery);
     if (debouncedQuery.trim() === "") {
       setIsSearching(false);
       return;
     }
 
+    setIsSearching(true);
     executeSearch(debouncedQuery).finally(() => {
-      setIsSearching(false);
+      if (
+        searchTokenRef.current === token &&
+        latestQueryRef.current.trim() === debouncedQuery.trim()
+      ) {
+        setIsSearching(false);
+      }
     });
   }, [debouncedQuery, setSearchQuery, executeSearch]);
+
+  const showingSkeleton =
+    (isSearching || (query.trim() !== "" && query.trim() !== debouncedQuery.trim())) &&
+    partialResultsFor !== query.trim().toLowerCase();
 
   const filteredResults = useMemo(() => {
     return searchResults.filter((item) => {
       const matchesCategory =
         activeCategory === "All" ||
         item.item_type.toLowerCase() === activeCategory.toLowerCase();
-      return (
-        matchesCategory && matchesPlatformFilter(item.platform, activePlatform)
-      );
+      const matchesPlatform =
+        item.item_url_path?.startsWith("canonical:") ||
+        matchesPlatformFilter(item.platform, activePlatform);
+      return matchesCategory && matchesPlatform;
     });
   }, [searchResults, activeCategory, activePlatform]);
 
+  const suggestionsVisible = showDropdown && !modalOpen;
+
   return (
     <div className={clsx(styles.container, className)} {...rootProps}>
-      <div className={styles.searchFieldWrapper}>
+      <div className={clsx(styles.searchFieldWrapper, suggestionsVisible && styles.searchFieldWithSuggestions)}>
         <AiOutlineSearch size={18} className={styles.searchIcon} />
 
         <input
-          className={styles.input}
+          className={clsx(styles.input, pulseRun && styles.inputWithPulse)}
           type="text"
           placeholder="Search music..."
           value={query}
@@ -170,6 +213,15 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
           }}
           onFocus={(e) => e.currentTarget.select()}
         />
+
+        {pulseRun && (
+          <div
+            className={styles.pulseIndicators}
+            data-searching={isSearching || pulseRun.finishedAt === null}
+          >
+            <SearchPulse run={pulseRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />
+          </div>
+        )}
 
         <button
           type="button"
@@ -259,10 +311,36 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
         )}
       </div>
 
-      {showDropdown && (
+      {suggestionsVisible && (
         <div className={styles.suggestions}>
+          {progressStyle === "dashboard" && searchRun && <SearchProgress run={searchRun} onRetry={(source) => { void useLibraryStore.getState().retrySearchSource(source); }} />}
+          {!showingSkeleton && searchWarning && (
+            <div className={styles.warningBanner}>
+              <span>{searchWarning}</span>
+              <button
+                type="button"
+                className={styles.warningRetry}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const token = ++searchTokenRef.current;
+                  const targetQ = debouncedQuery || query;
+                  setIsSearching(true);
+                  void executeSearch(targetQ, true).finally(() => {
+                    if (
+                      searchTokenRef.current === token &&
+                      latestQueryRef.current.trim() === targetQ.trim()
+                    ) {
+                      setIsSearching(false);
+                    }
+                  });
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           <div className={styles.suggestionsList}>
-            {isSearching ? (
+            {showingSkeleton ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className={styles.skeletonItem}>
                   <div className={styles.skeletonCover} />
@@ -279,9 +357,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
               </div>
             ) : (
               filteredResults.slice(0, 20).map((suggestion, index) => {
-                const activeDownload = Object.values(activeDownloads).find(
-                  (d) => d.url === suggestion.item_url_path,
-                );
+                const activeDownload = downloadMap.get(suggestion.item_url_path);
 
                 const target = previewTarget(suggestion);
 
@@ -343,10 +419,16 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
                         <span className={styles.type}>
                           {formatSuggestionType(suggestion.item_type)}
                         </span>
-                        {suggestion.platform && (
-                          <span className={styles.badge}>
-                            {suggestion.platform}
+                        {suggestion.item_url_path?.startsWith("canonical:") ? (
+                          <span className={clsx(styles.badge, styles.canonicalBadge)}>
+                            MULTI-SOURCE
                           </span>
+                        ) : (
+                          suggestion.platform && (
+                            <span className={styles.badge}>
+                              {suggestion.platform}
+                            </span>
+                          )
                         )}
                       </div>
                     </div>
@@ -373,12 +455,14 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
                                   const rect =
                                     e.currentTarget.getBoundingClientRect();
                                   flyToLibrary(rect, suggestion.img);
+                                  dismissDropdownForAction();
                                   startDownload(searchItemDownloadParams(suggestion)).catch((err) => {
                                     console.log("Download error: ", err);
                                   });
                                 }}
                                 onChooseQuality={(e) => {
                                   const rect = e.currentTarget.getBoundingClientRect();
+                                  dismissDropdownForAction();
                                   openQualityMenu(searchItemDownloadParams(suggestion), {
                                     onStarted: () => flyToLibrary(rect, suggestion.img),
                                   });
@@ -406,6 +490,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
                                   %
                                 </span>
                               )}
+                              {isRunning(activeDownload) && <CancelDownloadButton taskId={activeDownload.id} />}
                             </div>
                           )}
                                 </>
@@ -421,7 +506,7 @@ export const SearchBar = ({ className, ...rootProps }: SearchBarProps) => {
             )}
           </div>
 
-          {!isSearching && filteredResults.length > 0 && (
+          {!showingSkeleton && filteredResults.length > 0 && (
             <a
               className={styles.browseButton}
               href="#"

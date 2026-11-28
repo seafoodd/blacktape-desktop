@@ -2,6 +2,18 @@ import type { Song } from "@/shared/types.ts";
 import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 import type { AlbumRow } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 
+export function playableRowsFrom<T>(ids: readonly number[], clickedId: number, entryOf: (id: number) => T | undefined) {
+  const entries: T[] = [];
+  let index = -1;
+  for (const id of ids) {
+    const entry = entryOf(id);
+    if (entry === undefined) continue;
+    if (id === clickedId) index = entries.length;
+    entries.push(entry);
+  }
+  return { entries, index };
+}
+
 export function albumHasMultipleDiscs(
   songs: readonly Song[],
   missing?: readonly AlbumTrackInfo[],

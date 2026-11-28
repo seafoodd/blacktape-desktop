@@ -63,8 +63,8 @@ export function buildRemoteTrackMenu(
     ...(downloaded
       ? [{ label: "Downloaded", disabled: true }]
       : [
-          { label: "Download", action: () => actions.download(track) },
-          { label: "Download as…", action: () => actions.downloadAs(track) },
+          { label: "Download", action: options.onDownload ?? (() => actions.download(track)) },
+          { label: "Download as…", action: options.onDownloadAs ?? (() => actions.downloadAs(track)) },
         ]),
     { label: "Add to queue", action: () => actions.addToQueue(track) },
     { label: "Play next", action: () => actions.playNext(track) },

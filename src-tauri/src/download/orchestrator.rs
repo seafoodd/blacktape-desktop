@@ -24,6 +24,35 @@ pub async fn save_downloaded_track<R: tauri::Runtime>(
     task_id: &str,
     track_index: usize,
 ) -> Result<Song, String> {
+    // Let a save already moving files and updating the DB finish before cancellation.
+    let _saving = match app_handle.try_state::<crate::download::TaskRegistry>() {
+        Some(registry) => Some(registry.begin_track_save(task_id, track_index).await?),
+        None => None,
+    };
+    let replace_song_id = app_handle
+        .try_state::<crate::download::TaskRegistry>()
+        .map(|reg| async move { reg.replace_song_id_for(task_id, track_index).await });
+    let replace_song_id = match replace_song_id {
+        Some(fut) => fut.await,
+        None => None,
+    };
+
+    if let Some(old_id) = replace_song_id {
+        return replace_upgraded_track(
+            old_id,
+            temp_file,
+            track,
+            track_target_dir,
+            cover_path,
+            covers_dir,
+            platform,
+            app_handle,
+            task_id,
+            track_index,
+        )
+        .await;
+    }
+
     let _ = fs::create_dir_all(track_target_dir);
 
     let target_cover_path = if let Some(src_cover) = cover_path {
@@ -54,11 +83,162 @@ pub async fn save_downloaded_track<R: tauri::Runtime>(
     if let Some(db_state) = app_handle.try_state::<tokio::sync::Mutex<Database>>() {
         let db = db_state.lock().await;
         tracing::debug!(song = %song.title, "Inserting song to DB");
-        if let Err(e) = db.insert_songs(vec![song.clone()]).await {
-            tracing::error!(error = %e, "DB insertion error");
+        db.insert_songs(vec![song.clone()]).await
+            .map_err(|e| format!("Failed to save track to library: {e}"))?;
+    } else {
+        return Err("Library database is unavailable".into());
+    }
+
+    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+        registry.record_saved_track(task_id, track_index, &song.title).await;
+    }
+    let _ = app_handle.emit(
+        "download-track-saved",
+        serde_json::json!({
+            "task_id": task_id,
+            "track_index": track_index,
+            "song": song,
+        }),
+    );
+
+    Ok(song)
+}
+
+async fn replace_upgraded_track<R: tauri::Runtime>(
+    old_id: i64,
+    temp_file: &Path,
+    track: &TrackDownload,
+    track_target_dir: &Path,
+    cover_path: Option<&Path>,
+    covers_dir: &Path,
+    platform: Platform,
+    app_handle: &AppHandle<R>,
+    task_id: &str,
+    track_index: usize,
+) -> Result<Song, String> {
+    use lofty::file::AudioFile;
+    use lofty::probe::Probe;
+
+    // 1. Verify downloaded staging audio file BEFORE touching old file or DB.
+    if !temp_file.exists() {
+        return Err("Upgraded audio file is missing on disk.".to_string());
+    }
+    let meta = fs::metadata(temp_file).map_err(|e| format!("Failed reading upgraded file: {e}"))?;
+    if meta.len() == 0 {
+        return Err("Upgraded audio file is empty.".to_string());
+    }
+    let probe = Probe::open(temp_file)
+        .map_err(|e| format!("Upgraded file failed probe: {e}"))?
+        .guess_file_type()
+        .map_err(|e| format!("Upgraded file unrecognized audio format: {e}"))?
+        .read()
+        .map_err(|e| format!("Upgraded file failed decode check: {e}"))?;
+    if probe.properties().duration().as_millis() == 0 {
+        return Err("Upgraded audio file has zero duration.".to_string());
+    }
+
+    let db_state = app_handle
+        .try_state::<tokio::sync::Mutex<Database>>()
+        .ok_or_else(|| "Database state unavailable for song upgrade".to_string())?;
+    let old_song = {
+        let db = db_state.lock().await;
+        db.require_song_by_id(old_id).await?
+    };
+
+    // Keep the upgraded file in the same album directory as the original library track when it exists.
+    let effective_dir = Path::new(&old_song.path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty() && p.exists())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| track_target_dir.to_path_buf());
+    let _ = fs::create_dir_all(&effective_dir);
+
+    let target_cover_path = if let Some(src_cover) = cover_path {
+        let dest_cover = effective_dir.join("cover.jpg");
+        if src_cover.exists() && !dest_cover.exists() {
+            let _ = fs::copy(src_cover, &dest_cover);
+        }
+        Some(dest_cover)
+    } else {
+        let existing_cover = effective_dir.join("cover.jpg");
+        if existing_cover.exists() {
+            Some(existing_cover)
+        } else {
+            None
+        }
+    };
+
+    let trashed = crate::trash::move_old_file_for_upgrade(app_handle, &db_state, &old_song).await?;
+
+    let mut song = match process_and_move_track(
+        temp_file,
+        track,
+        &effective_dir,
+        target_cover_path.as_deref(),
+        covers_dir,
+        platform,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            if let Some((_, ref trash_dst, ref orig_path, _, _)) = trashed {
+                crate::trash::rollback_moved_file(trash_dst, Path::new(orig_path)).await;
+            }
+            return Err(e);
+        }
+    };
+
+    song.id = Some(old_id);
+    if song.lyrics.is_none() {
+        song.lyrics = old_song.lyrics.clone();
+        song.lyrics_source = old_song.lyrics_source.clone();
+    }
+    if song.cover_url.is_none() {
+        song.cover_url = old_song.cover_url.clone();
+    }
+    if song.external_cover_url.is_none() {
+        song.external_cover_url = old_song.external_cover_url.clone();
+    }
+
+    if let Some(ref cover_url) = song.cover_url {
+        for dir in crate::asset_scope::cover_dirs(std::iter::once(cover_url.as_str())) {
+            crate::asset_scope::allow_dir(app_handle, &dir, false);
         }
     }
 
+    let trash_strs = trashed.as_ref().map(|(json, dst, orig, sz, ts)| {
+        (
+            json.as_str(),
+            orig.as_str(),
+            dst.to_string_lossy().into_owned(),
+            *sz,
+            *ts,
+        )
+    });
+
+    {
+        let db = db_state.lock().await;
+        let trash_ref = trash_strs
+            .as_ref()
+            .map(|(json, orig, dst, sz, ts)| (*json, *orig, dst.as_str(), *sz, *ts));
+        if let Err(e) = db
+            .replace_song_file_and_record_trash(old_id, &song, trash_ref)
+            .await
+        {
+            drop(db);
+            let _ = fs::remove_file(&song.path);
+            if let Some((_, ref trash_dst, ref orig_path, _, _)) = trashed {
+                crate::trash::rollback_moved_file(trash_dst, Path::new(orig_path)).await;
+            }
+            return Err(format!("Failed updating library database row for upgrade: {e}"));
+        }
+    }
+
+    if trashed.is_some() {
+        let _ = app_handle.emit(crate::trash::TRASH_CHANGED_EVENT, ());
+    }
+    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+        registry.record_saved_track(task_id, track_index, &song.title).await;
+    }
     let _ = app_handle.emit(
         "download-track-saved",
         serde_json::json!({
@@ -128,7 +308,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
         DownloadPayload::TrackURL(url) => {
             // A Bandcamp track of an album goes through the album pipeline: album folder, cover, track number.
             let album_url = if task.platform == crate::types::Platform::Bandcamp {
-                crate::download::bandcamp::find_album_url(&url).await
+                crate::platforms::bandcamp::download::find_album_url(&url).await
             } else {
                 None
             };
@@ -241,7 +421,9 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
             // yt-dlp failures are reported per track with full stderr/stdout in ytdlp.rs.
             // If the failure occurred outside yt-dlp (e.g. metadata parsing, album discovery, cover fetching),
             // report it here with the task's url and track context.
-            if !e.starts_with("ERROR:") && !e.starts_with("[yt-dlp") && !e.contains("No such file or directory") {
+            if e != super::youtube_sign_in::CANCELLED && e != super::track::NO_TRACK_UPGRADE
+                && !super::youtube_sign_in::is_skipped_message(&e)
+                && !e.starts_with("ERROR:") && !e.starts_with("[yt-dlp") && !e.contains("No such file or directory") {
                 crate::telemetry::report_download_error_with_context(
                     &format!("{:?}", task.platform).to_lowercase(),
                     "download",
@@ -251,12 +433,7 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                     None,
                 );
             }
-            emit_event(
-                &app_handle,
-                "download-task-failed",
-                &task_id,
-                &format!("Download failed: {e}"),
-            );
+            let _ = finish_task(&app_handle, &task_id, Some(&e)).await;
             flash_taskbar(&app_handle);
             return Err(e);
         }
@@ -321,13 +498,15 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
                 .join(crate::utils::sanitize_fs(album_dir))
         };
 
+        let actual_platform =
+            crate::download::album::detect_platform_from_url(&track.url, task.platform);
         match save_downloaded_track(
             temp_file,
             track,
             &track_target_dir,
             cover_path.as_deref(),
             &covers_dir,
-            task.platform,
+            actual_platform,
             &app_handle,
             &task_id,
             i,
@@ -345,13 +524,28 @@ pub async fn handle_download_task(task: DownloadTask, app_handle: AppHandle) -> 
 
     cleanup_staging_dir(&downloaded_files);
 
-    emit_event(
-        &app_handle,
-        "download-task-completed",
-        &task_id,
-        "Pipeline complete",
-    );
-    Ok(())
+    finish_task(&app_handle, &task_id, None).await
+}
+
+async fn finish_task(app: &AppHandle, task_id: &str, error: Option<&str>) -> Result<(), String> {
+    let registry = app.state::<crate::download::TaskRegistry>();
+    let state = registry.finish_download(task_id, error).await
+        .ok_or_else(|| "Download task is no longer active".to_string())?;
+    let success = state.status == "completed";
+    let cancelled = state.status == "cancelled";
+    let event = if cancelled {
+        "download-task-cancelled"
+    } else if success {
+        "download-task-completed"
+    } else {
+        "download-task-failed"
+    };
+    let _ = app.emit(event, serde_json::json!({
+        "task_id": task_id,
+        "message": state.message,
+        "tracks": state.tracks,
+    }));
+    if success || cancelled { Ok(()) } else { Err(state.message) }
 }
 
 /// A failed download needs the user's decision, so a window that is in the background (or minimized) asks for

@@ -15,10 +15,11 @@ export function shouldShowEmptyHub(
   tabsCount: number,
   albumsCount: number,
   _selectedTab?: string,
+  hasActiveDownloads = false,
 ): boolean {
   // If there are no artists and no albums, the library is genuinely empty,
-  // regardless of any stale artist name that might be retained in storage.
-  return tabsCount === 0 && albumsCount === 0;
+  // unless a download is currently running.
+  return tabsCount === 0 && albumsCount === 0 && !hasActiveDownloads;
 }
 
 export function formatFolderScanningLabel(

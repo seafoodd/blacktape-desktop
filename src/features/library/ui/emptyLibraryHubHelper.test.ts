@@ -35,6 +35,11 @@ describe("emptyLibraryHubHelper", () => {
       expect(shouldShowEmptyHub(0, 2, "")).toBe(false);
       expect(shouldShowEmptyHub(0, 2, "Radiohead")).toBe(false);
     });
+
+    it("returns false while an album or track download is active", () => {
+      expect(shouldShowEmptyHub(0, 0, "", true)).toBe(false);
+      expect(shouldShowEmptyHub(0, 0, "The Doors", true)).toBe(false);
+    });
   });
 
   describe("formatFolderScanningLabel", () => {

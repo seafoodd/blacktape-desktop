@@ -17,9 +17,21 @@ For larger changes, have a separate reviewer (a subagent or `superpowers:request
 
 ## Bugs
 
+- When replacing progress text with a hover action, keep their centers aligned and prevent the hidden text from intercepting pointer events. Verify the actual hover target and click in a browser, not only opacity or rendered markup.
+
+- Keep a download visible and retryable when its cancellation command fails. Prefer a running task over completed history when matching a download control to a URL.
+
+- A transfer reaching 100% is complete only after its library save succeeds. Derive task success from confirmed saves and preserve individual failures in the frontend.
+- Subscribe to download events before loading the active-task snapshot. Buffer events during recovery and replay them after the snapshot so final outcomes cannot be missed.
+
 Every bug that is fixed gets a test that fails without the fix. If the bug came from a missing rule, add the rule here.
 
 ## Security
+
+- Determine a platform from the parsed HTTP(S) hostname. Never infer it from a substring in a URL path, query, fragment or user information.
+- Requests for platform pages and covers must validate the URL and every redirect, have a timeout, check HTTP status and bound the response size. Custom Bandcamp domains remain supported.
+- Strip request URLs from network errors. SoundCloud client IDs may be sent only to the exact HTTPS api-v2.soundcloud.com origin, including redirects.
+- Cache platform search or release candidates only after all requested sources succeed. Incomplete results remain visible but must remain retryable.
 
 Take extra care, and review twice, in code that handles auth tokens, downloads, the updater, file paths and URLs:
 - never log or commit tokens, keys or secrets;
@@ -43,6 +55,7 @@ When changing a Zustand store action, search for `\.actionName\b`, not only for 
 - `src/shared/` holds only code used by three or more areas; code for one feature or page lives in it.
 - Tests sit next to the file they test.
 - Imports use the `@/` alias with the file extension, e.g. `@/shared/lib/ui/time.ts`.
+- Keep platform dispatch futures small: pin large request futures on the heap before adding cache, progress and deadline wrappers. Check debug builds on Tokio worker stacks as well as unit tests.
 
 ## No dead code
 

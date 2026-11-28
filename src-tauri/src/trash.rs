@@ -7,7 +7,7 @@
 //! so a slow cross-drive copy does not block other commands.
 
 use crate::audio::player::{lock_player, AudioPlayer};
-use crate::db::db::{Database, TrashRow};
+use crate::db::db::{Database, TrashRow, LIBRARY_DIR_KEY};
 use crate::types::Song;
 use crate::utils::set_hidden;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,6 @@ pub const TRASH_DIR_NAME: &str = ".blacktape-trash";
 
 /// Tauri event emitted (payload `()`) after every trash mutation.
 pub const TRASH_CHANGED_EVENT: &str = "trash-changed";
-
-/// `app_settings` key holding the library folder, written by `scan_music` (D11).
-pub const LIBRARY_DIR_KEY: &str = "library_dir";
 
 /// The app database behind the same tokio mutex that Tauri manages.
 pub type DbLock = tokio::sync::Mutex<Database>;
@@ -286,9 +283,35 @@ fn remove_trashed_file(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Removes `dir` only when it is empty (D16, same rule as `delete_song_files`).
-fn remove_dir_if_empty(dir: &Path) {
+/// Removes an album directory containing only Blacktape's generated cover, or no files.
+pub(crate) fn remove_dir_if_empty(dir: &Path) {
+    if !fs::symlink_metadata(dir).is_ok_and(|meta| meta.file_type().is_dir()) {
+        return;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut entries = entries;
+        if let Some(Ok(entry)) = entries.next() {
+            if entry.file_name() == "cover.jpg" && entries.next().is_none() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
     let _ = fs::remove_dir(dir);
+}
+
+#[cfg(test)]
+#[test]
+fn removing_last_track_folder_cleans_cover_but_preserves_other_files() {
+    let root = tempfile::tempdir().unwrap();
+    let album = root.path().join("album");
+    fs::create_dir(&album).unwrap();
+    fs::write(album.join("cover.jpg"), b"cover").unwrap();
+    fs::write(album.join("notes.txt"), b"notes").unwrap();
+    remove_dir_if_empty(&album);
+    assert!(album.join("cover.jpg").is_file());
+    fs::remove_file(album.join("notes.txt")).unwrap();
+    remove_dir_if_empty(&album);
+    assert!(!album.exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -466,33 +489,41 @@ pub async fn delete_items(db: &DbLock, ids: &[i64]) -> Result<TrashOutcome, Stri
                 .push(format!("Item {id} is no longer in the trash")),
         }
     }
-    purge(db, &rows, &mut outcome).await;
+    purge(db, &rows, &mut outcome, None).await;
     Ok(outcome)
 }
 
 /// Permanently deletes everything in the trash.
 pub async fn empty_items(db: &DbLock) -> Result<TrashOutcome, String> {
-    let rows = db
-        .lock()
-        .await
-        .list_trash_rows()
-        .await
-        .map_err(|e| e.to_string())?;
+    let (rows, library_root) = {
+        let guard = db.lock().await;
+        let rows = guard.list_trash_rows().await.map_err(|e| e.to_string())?;
+        let root = guard.get_app_setting(LIBRARY_DIR_KEY).await.map_err(|e| e.to_string())?
+            .filter(|root| !root.trim().is_empty()).and_then(|root| fs::canonicalize(root).ok());
+        (rows, root)
+    };
     let mut outcome = TrashOutcome::default();
-    purge(db, &rows, &mut outcome).await;
+    purge(db, &rows, &mut outcome, library_root.as_deref()).await;
     Ok(outcome)
 }
 
 /// Deletes each item's file, then its row. An item whose file cannot be deleted keeps
 /// its row and is reported. Rows already removed stay removed even if a later item
 /// fails, which is why the caller still reports the change.
-async fn purge(db: &DbLock, rows: &[TrashRow], outcome: &mut TrashOutcome) {
+async fn purge(db: &DbLock, rows: &[TrashRow], outcome: &mut TrashOutcome, library_root: Option<&Path>) {
     for row in rows {
         match remove_trashed_file(Path::new(&row.trash_path)) {
             Ok(()) => {
                 let stored = db.lock().await.delete_trash_item(row.id).await;
                 match stored {
-                    Ok(()) => outcome.done += 1,
+                    Ok(()) => {
+                        outcome.done += 1;
+                        if let (Some(root), Some(parent)) = (library_root, Path::new(&row.original_path).parent()) {
+                            if fs::canonicalize(parent).is_ok_and(|path| path != root && path.starts_with(root)) {
+                                remove_dir_if_empty(parent);
+                            }
+                        }
+                    }
                     Err(e) => outcome.failures.push(format!("{}: {e}", row.original_path)),
                 }
             }
@@ -528,7 +559,7 @@ pub async fn auto_clean_sparing(
             .list_trash_rows()
             .await
             .map_err(|e| e.to_string())?;
-        purge(db, &expired_rows(&rows, cutoff), &mut outcome).await;
+        purge(db, &expired_rows(&rows, cutoff), &mut outcome, None).await;
     }
 
     if let Some(max_mb) = settings.max_size_mb {
@@ -539,7 +570,7 @@ pub async fn auto_clean_sparing(
             .await
             .map_err(|e| e.to_string())?;
         let limit = max_mb.saturating_mul(1024 * 1024);
-        purge(db, &rows_over_limit_sparing(&rows, limit, spare_from), &mut outcome).await;
+        purge(db, &rows_over_limit_sparing(&rows, limit, spare_from), &mut outcome, None).await;
     }
 
     Ok(outcome)
@@ -627,13 +658,58 @@ fn stop_if_playing(player: &Mutex<AudioPlayer>, ids: &[i64]) {
     }
 }
 
-async fn trash_root(app: &AppHandle, db: &Database) -> Result<PathBuf, String> {
+async fn trash_root<R: tauri::Runtime>(app: &AppHandle<R>, db: &Database) -> Result<PathBuf, String> {
     let library_dir = db
         .get_app_setting(LIBRARY_DIR_KEY)
         .await
         .map_err(|e| e.to_string())?;
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(trash_root_dir(library_dir.as_deref(), &app_data))
+}
+
+/// Safely moves `old_song`'s audio file into the Blacktape Trash folder right before replacing it with a newly
+/// downloaded & verified upgrade. Returns `Ok(None)` if `old_song.path` does not exist on disk.
+/// Does NOT remove the song row or playlist/favorites links from the database.
+pub async fn move_old_file_for_upgrade<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    db_lock: &DbLock,
+    old_song: &Song,
+) -> Result<Option<(String, PathBuf, String, i64, i64)>, String> {
+    let src = PathBuf::from(&old_song.path);
+    if !src.exists() {
+        return Ok(None);
+    }
+    if let (Some(id), Some(player)) = (old_song.id, app.try_state::<Mutex<AudioPlayer>>()) {
+        stop_if_playing(&player, &[id]);
+    }
+    let size = fs::metadata(&src).map_err(|e| e.to_string())?.len() as i64;
+    let song_json = serde_json::to_string(old_song).map_err(|e| e.to_string())?;
+    let root = {
+        let guard = db_lock.lock().await;
+        trash_root(app, &guard).await?
+    };
+    if !root.exists() {
+        fs::create_dir_all(&root).map_err(|e| format!("could not create trash folder: {e}"))?;
+        let _ = set_hidden(&root, true);
+    }
+    let now = now_secs();
+    let file_name = src.file_name().and_then(|n| n.to_str()).unwrap_or("track");
+    let dst = unique_child_path(&root, &format!("{now}_{file_name}"));
+    move_file(&src, &dst)
+        .await
+        .map_err(|e| format!("could not move previous version to trash: {e}"))?;
+    Ok(Some((
+        song_json,
+        dst,
+        old_song.path.clone(),
+        size,
+        now,
+    )))
+}
+
+/// Restores a file from trash back to its original path if an upgrade fails before committing.
+pub async fn rollback_moved_file(trash_dst: &Path, original_path: &Path) {
+    let _ = move_file(trash_dst, original_path).await;
 }
 
 fn notify(app: &AppHandle, outcome: &TrashOutcome) {
@@ -888,6 +964,21 @@ mod tests {
             size_bytes,
             trashed_at,
         }
+    }
+
+    #[tokio::test]
+    async fn empty_trash_cleans_legacy_cover_only_albums_inside_the_library() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = DbLock::new(Database::new(":memory:").await);
+        let trash = temp.path().join("trash");
+        let album = trash.join("library");
+        db.lock().await.set_app_setting(LIBRARY_DIR_KEY, &s(temp.path())).await.unwrap();
+        let (_, stored) = add_trash_item(&db, &trash, "track.flac", 7, 1).await;
+        fs::create_dir(&album).unwrap();
+        fs::write(album.join("cover.jpg"), b"cover").unwrap();
+        assert_eq!(empty_items(&db).await.unwrap().done, 1);
+        assert!(!stored.exists());
+        assert!(!album.exists());
     }
 
     // --- pure helpers -----------------------------------------------------

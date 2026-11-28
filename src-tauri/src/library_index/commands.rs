@@ -108,6 +108,114 @@ pub fn album_statuses(
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LibraryTrackMatch {
+    pub id: i64,
+    pub quality_tier: crate::types::QualityTier,
+    pub path: String,
+}
+
+/// Resolves library song metadata matching remote track refs (by normalized URL/item ID first,
+/// then by canonical track slug scoped to `album` when given). Pure.
+pub fn resolve_library_tracks(
+    items: &[RemoteRef],
+    songs: &[crate::Song],
+) -> HashMap<String, LibraryTrackMatch> {
+    use crate::library_index::candidates::normalize_text;
+    use crate::library_index::normalize::item_id_key;
+    use crate::utils::make_canonical_slug;
+
+    let mut by_url_key: HashMap<String, usize> = HashMap::new();
+    let mut by_id_key: HashMap<String, usize> = HashMap::new();
+    let mut by_album_slug: HashMap<(String, String), usize> = HashMap::new();
+    let mut by_slug: HashMap<String, usize> = HashMap::new();
+
+    for (idx, song) in songs.iter().enumerate() {
+        if song.id.is_none() {
+            continue;
+        }
+        if let Some(ref su) = song.source_url {
+            if let Some(k) = normalize_url_key(su) {
+                by_url_key.entry(k).or_insert(idx);
+            }
+        }
+        if let Some(ref sid) = song.source_item_id {
+            if let Some(k) = item_id_key(song.source.clone(), sid) {
+                by_id_key.entry(k).or_insert(idx);
+            }
+        }
+        let slug = if song.canonical_track_slug.is_empty() {
+            let artist = song
+                .artists
+                .first()
+                .map(String::as_str)
+                .unwrap_or(song.album_artist.as_str());
+            make_canonical_slug(artist, &song.title)
+        } else {
+            song.canonical_track_slug.clone()
+        };
+        if !slug.is_empty() {
+            by_album_slug
+                .entry((normalize_text(&song.album), slug.clone()))
+                .or_insert(idx);
+            by_slug.entry(slug).or_insert(idx);
+        }
+    }
+
+    let mut out = HashMap::new();
+    for item in items {
+        let mut matched: Option<usize> = None;
+        if let Some(key) = normalize_url_key(&item.url) {
+            matched = by_url_key.get(&key).copied().or_else(|| {
+                if item.platform == Platform::Youtube {
+                    key.strip_prefix("yt:")
+                        .and_then(|vid| by_id_key.get(&format!("youtube:{vid}")).copied())
+                } else {
+                    None
+                }
+            });
+        }
+        if matched.is_none() {
+            if let (Some(artist), Some(title)) = (item.artist.as_deref(), item.title.as_deref()) {
+                let slug = make_canonical_slug(artist, title);
+                if !slug.is_empty() {
+                    if let Some(album) = item.album.as_deref().map(normalize_text).filter(|a| !a.is_empty()) {
+                        matched = by_album_slug.get(&(album, slug)).copied();
+                    } else {
+                        matched = by_slug.get(&slug).copied();
+                    }
+                }
+            }
+        }
+        if let Some(idx) = matched {
+            if let Some(id) = songs[idx].id {
+                out.insert(
+                    item.url.clone(),
+                    LibraryTrackMatch {
+                        id,
+                        quality_tier: songs[idx].quality_tier,
+                        path: songs[idx].path.clone(),
+                    },
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Library song IDs and stored quality metadata matching remote TRACK refs. Keyed by `item.url` as sent.
+#[command]
+pub async fn get_library_track_details(
+    db: State<'_, tokio::sync::Mutex<Database>>,
+    items: Vec<RemoteRef>,
+) -> Result<HashMap<String, LibraryTrackMatch>, String> {
+    let songs = {
+        let guard = db.lock().await;
+        guard.get_all_songs().await.map_err(db_error)?
+    };
+    Ok(resolve_library_tracks(&items, &songs))
+}
+
 /// Library state of remote TRACK urls. The answer is keyed by the url exactly as sent.
 #[command]
 pub async fn get_download_status(
@@ -350,8 +458,12 @@ pub fn build_missing(
     })
 }
 
-/// Preview of the album from the platform, cached for an hour. The cache lock is never held across the fetch.
-async fn cached_preview(platform: Platform, url: &str) -> Result<AlbumPreview, String> {
+/// Preview of the album from MusicBrainz canonical release OR platform, cached for an hour.
+async fn cached_preview(
+    cache_dir: Option<std::path::PathBuf>,
+    platform: Platform,
+    url: &str,
+) -> Result<AlbumPreview, String> {
     let key = normalize_url_key(url).unwrap_or_else(|| url.to_string());
     let hit = preview_cache()
         .lock()
@@ -360,7 +472,37 @@ async fn cached_preview(platform: Platform, url: &str) -> Result<AlbumPreview, S
     if let Some(preview) = hit {
         return Ok(preview);
     }
-    let preview = album_preview(platform, url).await?;
+
+    let preview = if url.starts_with("canonical:") {
+        let raw_target = url.trim_start_matches("canonical:");
+        let client = crate::metadata::MusicBrainzClient::new(cache_dir.clone());
+        let mut canonical = if !raw_target.starts_with("http://")
+            && !raw_target.starts_with("https://")
+            && !raw_target.starts_with("synth:")
+        {
+            client.fetch_canonical_release(raw_target).await?
+        } else {
+            let raw = album_preview(platform, raw_target).await?;
+            crate::metadata::fallback::synthesize_canonical_from_preview(raw)
+        };
+
+        let needs_resolution = canonical
+            .discs
+            .iter()
+            .any(|d| d.tracks.iter().any(|t| t.candidates.is_empty()));
+        if needs_resolution {
+            let complete = crate::resolver::resolve_release_candidates(&mut canonical, None, url).await;
+            if let (true, Ok(serialized)) = (complete, serde_json::to_string(&canonical)) {
+                client
+                    .write_cache(&format!("release:{}", canonical.id), &serialized)
+                    .await;
+            }
+        }
+        crate::download::album_preview::canonical_release_to_preview(canonical)
+    } else {
+        album_preview(platform, url).await?
+    };
+
     preview_cache()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -368,18 +510,21 @@ async fn cached_preview(platform: Platform, url: &str) -> Result<AlbumPreview, S
     Ok(preview)
 }
 
-/// Links the library album (`album_artist`, `album`) to the platform album at `url` (picked from
-/// `find_album_candidates`): its whole track list is stored as the album's source.
+/// Links the library album (`album_artist`, `album`) to the platform or MusicBrainz album at `url`:
+/// its whole track list is stored as the album's source.
 #[command]
 pub async fn link_album_source(
+    app: tauri::AppHandle,
     db: State<'_, tokio::sync::Mutex<Database>>,
     album_artist: String,
     album: String,
     platform: Platform,
     url: String,
 ) -> Result<(), String> {
+    use tauri::Manager;
+    let cache_dir = app.path().app_cache_dir().ok();
     // network: no lock held here
-    let preview = cached_preview(platform, &url).await?;
+    let preview = cached_preview(cache_dir, platform, &url).await?;
     let source = crate::library_index::sources::linked_source(&preview, &url, &album, &album_artist, unix_now())
         .ok_or_else(|| "The platform returned no downloadable tracks for this album.".to_string())?;
     let guard = db.lock().await;
@@ -405,11 +550,14 @@ pub async fn unlink_album_source(
 /// updates the stored source; otherwise the stored track list is used.
 #[command]
 pub async fn get_missing_tracks(
+    app: tauri::AppHandle,
     db: State<'_, tokio::sync::Mutex<Database>>,
     album_artist: String,
     album: String,
     refresh: Option<bool>,
 ) -> Result<Option<MissingTracks>, String> {
+    use tauri::Manager;
+    let cache_dir = app.path().app_cache_dir().ok();
     let (sources, album_songs, library_refs, meta) = {
         let guard = db.lock().await;
         let sources = guard.list_album_sources_for_artist(&album_artist).await.map_err(db_error)?;
@@ -434,7 +582,7 @@ pub async fn get_missing_tracks(
             .filter(|p| *p != Platform::Local)
             .ok_or_else(|| format!("Unknown platform \"{}\" for this album.", row.platform))?;
         // network: no lock held here
-        let preview = cached_preview(platform, &row.album_url).await?;
+        let preview = cached_preview(cache_dir, platform, &row.album_url).await?;
         let fresh = refreshed_source(&row, &preview, unix_now())
             .ok_or_else(|| "The platform returned no downloadable tracks for this album.".to_string())?;
         {
@@ -530,6 +678,8 @@ mod tests {
             available: true,
             note: None,
             duration_ms: Some(1000),
+            candidates: Vec::new(),
+            selected_candidate_idx: 0,
         }
     }
 
@@ -967,5 +1117,57 @@ mod tests {
             row(12, "Other Artist", "Syro", Platform::Bandcamp, &[T3]),
         ];
         assert_eq!(source_by_title(&rows, "Syro").map(|r| r.id), Some(10));
+    }
+
+    #[test]
+    fn resolve_library_tracks_matches_by_url_and_scoped_slug() {
+        use crate::Song;
+        let songs = vec![
+            Song {
+                id: Some(11),
+                path: "/m/11.opus".into(),
+                title: "Jynweythek".into(),
+                artists: vec!["Aphex Twin".into()],
+                album_artist: "Aphex Twin".into(),
+                album: "Drukqs".into(),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 143_000,
+                genre: None,
+                release_year: Some(2001),
+                cover_url: None,
+                external_cover_url: None,
+                source: Platform::Youtube,
+                source_url: Some("https://music.youtube.com/watch?v=abc123".into()),
+                source_item_id: Some("abc123".into()),
+                lyrics: None,
+                lyrics_source: None,
+                canonical_track_slug: "aphex-twin-jynweythek".into(),
+                canonical_album_slug: "aphex-twin-drukqs".into(),
+                quality_tier: crate::types::QualityTier::High,
+            },
+        ];
+        let refs = vec![
+            RemoteRef {
+                platform: Platform::Youtube,
+                url: "https://youtube.com/watch?v=abc123".into(),
+                artist: None,
+                title: None,
+                album: None,
+            },
+            RemoteRef {
+                platform: Platform::Bandcamp,
+                url: "https://aphextwin.bandcamp.com/track/jynweythek".into(),
+                artist: Some("Aphex Twin".into()),
+                title: Some("Jynweythek".into()),
+                album: Some("Drukqs".into()),
+            },
+        ];
+        let details = resolve_library_tracks(&refs, &songs);
+        let yt = details.get("https://youtube.com/watch?v=abc123").expect("yt details");
+        assert_eq!(yt.id, 11);
+        assert_eq!(yt.quality_tier, crate::types::QualityTier::High);
+        assert_eq!(yt.path, "/m/11.opus");
+        assert_eq!(details.get("https://aphextwin.bandcamp.com/track/jynweythek").map(|d| d.id), Some(11));
     }
 }

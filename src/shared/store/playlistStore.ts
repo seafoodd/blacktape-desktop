@@ -1,7 +1,10 @@
 // src/shared/store/playlistStore.ts
 import { create } from "zustand";
 import { playlistApi } from "@/shared/api/playlists";
+import { createLatestGuard } from "@/shared/lib/search/searchGuard.ts";
 import { Playlist, Song } from "@/shared/types";
+
+const playlistGuard = createLatestGuard();
 
 interface PlaylistState {
   playlists: Playlist[];
@@ -58,12 +61,14 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   },
 
   selectPlaylist: async (playlistId) => {
+    const token = playlistGuard.begin();
     try {
       set({ loading: true });
       const [playlist, songs] = await Promise.all([
         playlistApi.getById(playlistId),
         playlistApi.getSongs(playlistId),
       ]);
+      if (!playlistGuard.isLatest(token)) return;
       set({
         activePlaylist: playlist,
         activePlaylistId: playlistId,
@@ -71,11 +76,13 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
         loading: false,
       });
     } catch (error) {
+      if (!playlistGuard.isLatest(token)) return;
       console.error("Failed to load playlist details:", error);
       set({ loading: false });
     }
   },
   unselectPlaylist: () => {
+    playlistGuard.begin();
     set({
       activePlaylist: null,
       activePlaylistId: null,

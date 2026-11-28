@@ -1,8 +1,8 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
 import { useMemo } from "react";
 import styles from "./search-results.module.css";
 import {
   ItemType,
-  useLibraryStore,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
 import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
@@ -15,6 +15,7 @@ import {
   durationFilterEnabled,
   isKindShown,
   isProfileVisible,
+  prefersAlbumsFirst,
   visibleSectionItems,
   yearFilterEnabled,
 } from "./searchResultsView.ts";
@@ -24,11 +25,12 @@ import {
   formatCountLabel,
   hasActiveFilters,
   uniqueWarnings,
+  warningSource,
 } from "./searchResultsFormat.ts";
 
 /**
  * Full search page (search v2). Reads everything from `useSearchPageStore`; downloads go through
- * `useLibraryStore`. Layout: header with platform warnings, sticky filter bar, artist profile card, sections.
+ * `useDownloadStore`. Layout: header with platform warnings, sticky filter bar, artist profile card, sections.
  */
 const SearchResults = () => {
   const query = useSearchPageStore((s) => s.query);
@@ -39,9 +41,10 @@ const SearchResults = () => {
   const setFilters = useSearchPageStore((s) => s.setFilters);
   const setSort = useSearchPageStore((s) => s.setSort);
   const retry = useSearchPageStore((s) => s.retry);
+  const retrySource = useSearchPageStore((s) => s.retrySource);
   const loadMore = useSearchPageStore((s) => s.loadMore);
 
-  const activeDownloads = useLibraryStore((s) => s.activeDownloads);
+  const activeDownloads = useDownloadStore((s) => s.activeDownloads);
   const downloads = useMemo(
     () => buildDownloadMap(Object.values(activeDownloads)),
     [activeDownloads],
@@ -111,6 +114,16 @@ const SearchResults = () => {
     />
   );
 
+  const albumsFirst =
+    showAll &&
+    prefersAlbumsFirst(trimmed, visible[ItemType.Album], visible[ItemType.Track]);
+  const albumsSection =
+    isKindShown(tab, ItemType.Album) &&
+    renderSection(ItemType.Album, "Albums", "No albums found");
+  const tracksSection =
+    isKindShown(tab, ItemType.Track) &&
+    renderSection(ItemType.Track, "Tracks", "No tracks found");
+
   return (
     <div className={styles.container}>
       <header className={styles.header}>
@@ -119,11 +132,20 @@ const SearchResults = () => {
         </h2>
         {warnings.length > 0 && (
           <ul className={styles.notices}>
-            {warnings.map((message) => (
+            {warnings.map((message) => {
+              const affected = ([ItemType.Track, ItemType.Album, ItemType.Artist] as SearchKind[]).filter(kind => sections[kind].warnings.includes(message));
+              const source = affected.map(kind => sections[kind].warningSources?.[message]).find(Boolean) ?? warningSource(message);
+              return (
               <li key={message} className={styles.notice}>
-                {message}
+                <span>{message}</span>
+                <button type="button" className={styles.noticeRetry}
+                  disabled={affected.some(kind => sections[kind].status === "loading" || sections[kind].status === "loadingMore")}
+                  onClick={() => { if (source) { for (const kind of affected) void retrySource(kind, source); } else retry(); }}>
+                  {source ? "Retry source" : "Retry search"}
+                </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </header>
@@ -149,10 +171,17 @@ const SearchResults = () => {
           />
         )}
 
-        {isKindShown(tab, ItemType.Track) &&
-          renderSection(ItemType.Track, "Tracks", "No tracks found")}
-        {isKindShown(tab, ItemType.Album) &&
-          renderSection(ItemType.Album, "Albums", "No albums found")}
+        {albumsFirst ? (
+          <>
+            {albumsSection}
+            {tracksSection}
+          </>
+        ) : (
+          <>
+            {tracksSection}
+            {albumsSection}
+          </>
+        )}
         {isKindShown(tab, ItemType.Artist) &&
           renderSection(ItemType.Artist, "Artists", "No artists found")}
       </div>

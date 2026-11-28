@@ -7,6 +7,17 @@
 export function urlKey(url: string | null | undefined): string | null {
   const trimmed = url?.trim();
   if (!trimmed) return null;
+  if (trimmed.startsWith("canonical:")) {
+    const inner = trimmed.slice("canonical:".length).trim();
+    if (!inner) return null;
+    if (inner.startsWith("http://") || inner.startsWith("https://")) {
+      return urlKey(inner);
+    }
+    return `canonical:${inner.toLowerCase()}`;
+  }
+  if (trimmed.startsWith("synth:") || trimmed.startsWith("resolve:")) {
+    return trimmed;
+  }
   let parsed: URL;
   try {
     parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed.replace(/^\/\//, "")}`);

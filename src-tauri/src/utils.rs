@@ -1,6 +1,15 @@
 use crate::types::QualityTier;
 use lofty::file::AudioFile;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Active library/download directory: uses the configured `library_dir` setting when
+/// non-empty, otherwise falls back to `<home_dir>/blacktape-lib`. Pure.
+pub fn resolve_library_dir(library_dir: Option<&str>, home_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = library_dir.map(str::trim).filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    home_dir.map(|h| h.join("blacktape-lib"))
+}
 
 /// Sets or clears the hidden attribute on Windows. Elsewhere a file is hidden by a leading dot in
 /// its name, not an attribute, so this does nothing.
@@ -176,7 +185,11 @@ fn quality_tier(ext: &str, bitrate: u32, bit_depth: Option<u8>) -> QualityTier {
 #[cfg(test)]
 mod tests {
     use crate::types::QualityTier;
-    use crate::utils::{is_lossless_mp4, quality_tier, reaches, sanitize, sanitize_fs, set_hidden};
+    use crate::utils::{
+        is_lossless_mp4, quality_tier, reaches, resolve_library_dir, sanitize, sanitize_fs,
+        set_hidden,
+    };
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn set_hidden_succeeds_on_an_existing_folder() {
@@ -354,6 +367,33 @@ mod tests {
     #[test]
     fn reaches_does_not_overflow_at_max_values() {
         assert!(reaches(u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn resolve_library_dir_uses_configured_dir_when_non_empty_and_falls_back_to_home() {
+        let home = Path::new("/home/alice");
+
+        assert_eq!(
+            resolve_library_dir(Some("/custom/music"), Some(home)),
+            Some(PathBuf::from("/custom/music"))
+        );
+        assert_eq!(
+            resolve_library_dir(Some("  /trimmed/music  "), None),
+            Some(PathBuf::from("/trimmed/music"))
+        );
+        assert_eq!(
+            resolve_library_dir(None, Some(home)),
+            Some(PathBuf::from("/home/alice").join("blacktape-lib"))
+        );
+        assert_eq!(
+            resolve_library_dir(Some(""), Some(home)),
+            Some(PathBuf::from("/home/alice").join("blacktape-lib"))
+        );
+        assert_eq!(
+            resolve_library_dir(Some("   "), Some(home)),
+            Some(PathBuf::from("/home/alice").join("blacktape-lib"))
+        );
+        assert_eq!(resolve_library_dir(None, None), None);
     }
 }
 

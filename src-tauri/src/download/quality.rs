@@ -43,9 +43,14 @@ pub fn expected_quality(platform: Platform, lossless_available: bool) -> Expecte
 /// True when a Bandcamp album or track page offers a free download (free or "name your price"): its
 /// `data-tralbum` has a `freeDownloadPage` url instead of `null`. Pure.
 pub fn bandcamp_has_free_download(html: &str) -> bool {
-    ["freeDownloadPage&quot;:&quot;", "\"freeDownloadPage\":\"", "\"freeDownloadPage\": \""]
-        .iter()
-        .any(|needle| html.contains(needle))
+    [
+        "freeDownloadPage&quot;:&quot;",
+        "freeDownloadPage&quot;: &quot;",
+        "\"freeDownloadPage\":\"",
+        "\"freeDownloadPage\": \"",
+    ]
+    .iter()
+    .any(|needle| html.contains(needle))
 }
 
 /// True when the album is in the user's Bandcamp collection (bought). Bandcamp accounts are not supported yet, so
@@ -65,15 +70,61 @@ pub fn checked_format_id(id: &str) -> Option<&str> {
 }
 
 /// `args` with `preferred` tried first by the `-f` selector (the platform's own chain stays as the fallback, so a
-/// track that lacks the chosen format still downloads in the next best one). Unchanged without `preferred`, for an
-/// unsafe id, or when there is no `-f`. Pure.
-pub fn prefer_format(mut args: Vec<String>, preferred: Option<&str>) -> Vec<String> {
-    let Some(id) = preferred.and_then(checked_format_id) else {
+/// track that lacks the chosen format still downloads in the next best one). Unchanged without `preferred`, for
+/// `"best"` (uses the site's native best chain), for an unsafe id, or when there is no `-f`.
+/// Semantic tiers `"high"` and `"standard"` expand to safe per-platform audio selectors. Pure.
+pub fn prefer_format(args: Vec<String>, preferred: Option<&str>) -> Vec<String> {
+    prefer_format_for_site(args, None, preferred)
+}
+
+/// Site-aware variant of `prefer_format` handling semantic quality tiers (`"best"`, `"high"`, `"standard"`)
+/// as well as concrete yt-dlp format ids (`"251"`, `"flac"`, `"mp3-320"`, etc.). Pure.
+pub fn prefer_format_for_site(
+    mut args: Vec<String>,
+    site_hint: Option<&str>,
+    preferred: Option<&str>,
+) -> Vec<String> {
+    let Some(raw) = preferred.map(str::trim).filter(|s| !s.is_empty()) else {
         return args;
     };
+    let effective = if let Some(rest) = raw.strip_prefix("source:") {
+        match rest.split_once(':') {
+            Some((_, fmt)) if !fmt.trim().is_empty() => fmt.trim(),
+            _ => return args,
+        }
+    } else {
+        raw
+    };
+    let lower = effective.to_ascii_lowercase();
+    if lower == "best" {
+        return args;
+    }
+
+    let replacement_prefix: Option<&str> = match lower.as_str() {
+        "high" => match site_hint {
+            Some("bandcamp") => Some("mp3-320/mp3-v0/aac-hi/vorbis"),
+            Some("soundcloud") => Some("aac_160k/hls_aac_160k/mp3"),
+            _ => Some("251/250/140"),
+        },
+        "standard" => match site_hint {
+            Some("bandcamp") => Some("mp3-128/vorbis"),
+            Some("soundcloud") => Some("http_mp3_128_url/hls_mp3_128_url/mp3"),
+            _ => Some("140/250/249/139"),
+        },
+        _ => None,
+    };
+
+    let prefix = if let Some(semantic) = replacement_prefix {
+        semantic
+    } else if let Some(id) = checked_format_id(effective) {
+        id
+    } else {
+        return args;
+    };
+
     if let Some(i) = args.iter().position(|a| a == "-f") {
         if let Some(chain) = args.get_mut(i + 1) {
-            *chain = format!("{id}/{chain}");
+            *chain = format!("{prefix}/{chain}");
         }
     }
     args
@@ -200,7 +251,9 @@ pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, Stri
     let url = crate::download::ytdlp::checked_url(url)?;
     let mut args: Vec<String> =
         ["-J", "--skip-download", "--no-playlist", "--no-warnings"].iter().map(|s| s.to_string()).collect();
-    args.extend(cookie_args.iter().cloned());
+    if super::ytdlp::download_site(url) == super::ytdlp::DownloadSite::Youtube {
+        args.extend(cookie_args.iter().cloned());
+    }
     args.push("--".to_string());
     args.push(url.to_string());
     Ok(args)
@@ -211,10 +264,7 @@ pub fn probe_args(url: &str, cookie_args: &[String]) -> Result<Vec<String>, Stri
 #[tauri::command]
 pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQuality {
     let lossless = platform == Platform::Bandcamp && {
-        let free = match reqwest::get(url.trim()).await {
-            Ok(response) => response.text().await.is_ok_and(|html| bandcamp_has_free_download(&html)),
-            Err(_) => false,
-        };
+        let free = crate::platforms::bandcamp::download::page_has_free_download(&url).await;
         free || bandcamp_purchased(&url).await
     };
     expected_quality(platform, lossless)
@@ -223,9 +273,9 @@ pub async fn get_expected_quality(platform: Platform, url: String) -> ExpectedQu
 /// The first track page of the album at `url`.
 async fn first_track_url(platform: Platform, url: &str) -> Result<String, String> {
     let album = match platform {
-        Platform::Bandcamp => crate::download::bandcamp::parse_album(url).await?,
-        Platform::Youtube => crate::download::youtube::parse_album(url).await?,
-        Platform::Soundcloud => crate::download::soundcloud::parse_album(url).await?,
+        Platform::Bandcamp => crate::platforms::bandcamp::download::parse_album(url).await?,
+        Platform::Youtube => crate::platforms::youtube::download::parse_album(url).await?,
+        Platform::Soundcloud => crate::platforms::soundcloud::download::parse_album(url).await?,
         Platform::Local => return Err("Local files have no download formats.".into()),
     };
     album
@@ -253,9 +303,9 @@ pub async fn probe_audio_formats(
         None => url,
     };
     // the same session the downloads use, so a signed-in account shows the formats it unlocks
-    let cookies = match platform {
-        Platform::Soundcloud => crate::download::cookies::CookieSource::None,
-        _ => crate::download::cookies::find(&crate::auth::youtube::profile_dir(&app)?),
+    let cookies = match super::ytdlp::download_site(&track) {
+        super::ytdlp::DownloadSite::Youtube => crate::download::cookies::find(&crate::auth::youtube::profile_dir(&app)?),
+        _ => crate::download::cookies::CookieSource::None,
     };
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -275,6 +325,10 @@ pub async fn probe_audio_formats(
     }
     Ok(formats)
 }
+
+#[cfg(test)]
+#[path = "quality_cookie_tests.rs"]
+mod cookie_tests;
 
 #[cfg(test)]
 mod tests {
@@ -687,5 +741,18 @@ mod tests {
         for bad in ["--exec=calc", "-x", "file:///C:/a.mp3", "ftp://x.com/a", ""] {
             assert!(probe_args(bad, &[]).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn prefer_format_for_site_handles_semantic_and_source_specs() {
+        let yt = vec!["-f".into(), "251/140/ba".into()];
+        assert_eq!(prefer_format_for_site(yt.clone(), Some("youtube"), Some("best"))[1], "251/140/ba");
+        assert_eq!(prefer_format_for_site(yt.clone(), Some("youtube"), Some("source:youtube"))[1], "251/140/ba");
+        assert_eq!(prefer_format_for_site(yt.clone(), Some("youtube"), Some("standard"))[1], "140/250/249/139/251/140/ba");
+        assert_eq!(prefer_format_for_site(yt, Some("youtube"), Some("source:youtube:standard"))[1], "140/250/249/139/251/140/ba");
+
+        let bc = vec!["-f".into(), "flac/mp3-320".into()];
+        assert_eq!(prefer_format_for_site(bc.clone(), Some("bandcamp"), Some("high"))[1], "mp3-320/mp3-v0/aac-hi/vorbis/flac/mp3-320");
+        assert_eq!(prefer_format_for_site(bc, Some("bandcamp"), Some("standard"))[1], "mp3-128/vorbis/flac/mp3-320");
     }
 }

@@ -8,8 +8,9 @@ import {
 import { explainFailure } from "@/features/library/model/downloadFailure.ts";
 import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import FindAlternativeModal from "@/features/library/ui/FindAlternativeModal.tsx";
-import { useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
+import { sourceOfAlbum, useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
 import { ExpectedQualityBadge } from "@/features/download-quality/ui/ExpectedQualityBadge.tsx";
+import { PlatformBadge } from "@/shared/ui/platform-badge/PlatformBadge.tsx";
 import { candidateMeta } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
 import styles from "./find-missing-modal.module.css";
 
@@ -38,8 +39,9 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
   const [candidates, setCandidates] = useState<AlbumCandidate[] | null>(null);
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   // the platform album the library album is linked to now (Change linked album)
-  const linked = useMissingTracksStore((s) => s.sources[album]);
+  const linked = useMissingTracksStore((s) => sourceOfAlbum(s.sources, album));
 
   const explained = failedSong
     ? explainFailure(failedSong.message ?? "no output file", failedSong.platform)
@@ -47,6 +49,8 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
+    setCandidates(null);
     findAlbumCandidates(albumArtist, album)
       .then((found) => {
         if (!cancelled) setCandidates(excludeUrl ? found.filter((c) => !sameUrl(c.url, excludeUrl)) : found);
@@ -59,7 +63,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
     return () => {
       cancelled = true;
     };
-  }, [albumArtist, album, excludeUrl]);
+  }, [albumArtist, album, excludeUrl, attempt]);
 
   const handlePick = async (candidate: AlbumCandidate) => {
     setLinking(true);
@@ -83,12 +87,19 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
             ? failedSong
             ? `Pick another version of "${album}":`
             : `Which one is "${album}"?`
-            : "No matching album was found."}
+            : error ? "Album sources could not be searched." : "No matching album was found."}
       </span>
       {linked && (
         <span className={styles.linked}>
-          <span className={styles.linkedLabel}>Linked now:</span> {candidateMeta({ platform: linked.platform, year: null })}
-          <ExpectedQualityBadge platform={linked.platform} url={linked.source_url} />
+          <span className={styles.linkedLabel}>Linked now:</span>{" "}
+          {linked.source_url.startsWith("canonical:") ? (
+            <PlatformBadge platform={linked.platform} canonical />
+          ) : (
+            <>
+              {candidateMeta({ platform: linked.platform, year: null })}
+              <ExpectedQualityBadge platform={linked.platform} url={linked.source_url} />
+            </>
+          )}
         </span>
       )}
       {failedSong && (
@@ -114,8 +125,18 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
                 <span className={styles.name}>{candidate.title}</span>
                 <span className={styles.meta}>{candidate.artist}</span>
                 <span className={styles.metaRow}>
-                  <span className={styles.meta}>{candidateMeta(candidate)}</span>
-                  <ExpectedQualityBadge platform={candidate.platform} url={candidate.url} />
+                  <span className={styles.meta}>
+                    {candidate.url.startsWith("canonical:")
+                      ? candidate.year
+                        ? `MusicBrainz · ${candidate.year}`
+                        : "MusicBrainz"
+                      : candidateMeta(candidate)}
+                  </span>
+                  {candidate.url.startsWith("canonical:") ? (
+                    <PlatformBadge platform={candidate.platform} canonical />
+                  ) : (
+                    <ExpectedQualityBadge platform={candidate.platform} url={candidate.url} />
+                  )}
                 </span>
               </div>
             </button>
@@ -124,9 +145,18 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
       )}
       {error && <span className={styles.error}>{error}</span>}
       <div className={styles.buttons}>
-        {failedSong?.retry && explained?.kind !== "no-stream" && (
+        {error && (
           <button
             className={styles.cancelButton}
+            disabled={linking}
+            onClick={() => setAttempt((a) => a + 1)}
+          >
+            Retry
+          </button>
+        )}
+        {failedSong?.retry && explained?.kind !== "no-stream" && (
+          <button
+            className={styles.retryButton}
             disabled={linking}
             onClick={() => {
               failedSong.retry?.();
@@ -138,7 +168,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
         )}
         {failedSong && (
           <button
-            className={styles.cancelButton}
+            className={styles.alternativeButton}
             disabled={linking}
             onClick={() =>
               openModal(
@@ -156,7 +186,7 @@ const FindMissingModal = ({ albumArtist, album, excludeUrl, failedSong }: FindMi
               )
             }
           >
-            Only this song from YouTube / SoundCloud
+            Only this song from another platform
           </button>
         )}
         <button className={styles.cancelButton} onClick={closeModal} disabled={linking}>

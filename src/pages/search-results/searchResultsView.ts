@@ -7,6 +7,7 @@ import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import {
   applyFilters,
   itemsForPlatform,
+  normalizeText,
   type ItemCopy,
   sortItems,
   type PlatformChoice,
@@ -81,4 +82,40 @@ export function isProfileVisible(
   if (status !== "loading" && status !== "ready") return false;
   if (tab !== "All" && tab !== ItemType.Artist) return false;
   return platform === "All" || platform === artistPlatform;
+}
+
+const ALBUM_INTENT_RE = /\b(album|albums|ep|lp|discography|records?)\b/i;
+const TRACK_INTENT_RE = /\b(song|songs|track|tracks|single|singles|lyrics?)\b/i;
+
+/**
+ * Decides whether the "All" tab should place the Albums section above Tracks.
+ * True on explicit album-intent queries ("the doors albums") or when the top album covers every
+ * query word (e.g. "death grips no love deep web") without an exact top-track title match. Pure.
+ */
+export function prefersAlbumsFirst(
+  query: string,
+  albums: readonly SearchSuggestion[],
+  tracks: readonly SearchSuggestion[],
+): boolean {
+  if (albums.length === 0) return false;
+  if (ALBUM_INTENT_RE.test(query)) return true;
+  if (TRACK_INTENT_RE.test(query)) return false;
+
+  const qNorm = normalizeText(query);
+  const qTokens = qNorm.split(/\s+/).filter(Boolean);
+  if (qTokens.length < 3) return false;
+
+  const topAlbum = albums[0];
+  const albumText = `${normalizeText(topAlbum.band_name)} ${normalizeText(topAlbum.name)}`;
+  const albumTokens = new Set(albumText.split(/\s+/).filter(Boolean));
+  const albumCoversQuery = qTokens.every((t) => albumTokens.has(t));
+  if (!albumCoversQuery) return false;
+
+  const topTrack = tracks[0];
+  if (topTrack) {
+    const trackText = `${normalizeText(topTrack.band_name)} ${normalizeText(topTrack.name)}`;
+    const trackTitle = normalizeText(topTrack.name);
+    if (trackTitle === qNorm || trackText === qNorm) return false;
+  }
+  return true;
 }

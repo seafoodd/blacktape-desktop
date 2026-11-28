@@ -23,7 +23,11 @@
 
 #![allow(dead_code)]
 
-use crate::search::{bandcamp_full, ranking, soundcloud, youtube_full, SearchSuggestion};
+use crate::search::progress::{self, track, Report, Source};
+use crate::search::{ranking, SearchSuggestion};
+use crate::platforms::youtube::search_full as youtube_full;
+use crate::platforms::bandcamp::search_full as bandcamp_full;
+use crate::platforms::soundcloud::search as soundcloud;
 use crate::types::Platform;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -31,7 +35,7 @@ use std::time::Duration;
 use tokio::time::error::Elapsed;
 
 /// Which kind of item a `search_full` request is for. Serialized as "Track" | "Album" | "Artist"
-/// (same strings as `bandcamp::ItemType`, so the frontend can reuse its `ItemType` enum).
+/// (same strings as `ItemType`, so the frontend can reuse its `ItemType` enum).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchKind {
     Track,
@@ -56,6 +60,8 @@ pub struct SearchCursor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlatformWarning {
     pub platform: Platform,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     pub message: String,
 }
 
@@ -123,11 +129,11 @@ pub fn first_page_target(kind: SearchKind) -> usize {
 }
 
 /// Timeout of the Bandcamp search request (D18).
-const BANDCAMP_TIMEOUT: Duration = Duration::from_secs(4);
+const BANDCAMP_TIMEOUT: Duration = Duration::from_secs(6);
 /// Timeout of the artist profile request (D18).
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(6);
 /// Timeout of one SoundCloud search request.
-const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(5);
+const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What one platform contributed to a page. Built from a successful platform call.
 #[derive(Debug, Default, Clone)]
@@ -139,6 +145,12 @@ pub(crate) struct Fetched {
     pub next_offset: Option<u32>,
     /// Partial failure (YouTube first-page chain): items kept, `next_token` is the token that failed.
     pub warning: Option<String>,
+}
+
+impl Fetched {
+    fn len(&self) -> usize {
+        self.items.len()
+    }
 }
 
 /// Orchestrates one `search_full` request (see module docs).
@@ -159,11 +171,51 @@ pub async fn search_full(
     platforms: &[Platform],
     cursor: Option<SearchCursor>,
 ) -> Result<FullSearchPage, String> {
+    search_full_with_cache(query, kind, platforms, cursor, None, &progress::ignore()).await
+}
+
+/// Same as `search_full`, with an optional cache directory for MusicBrainz canonical lookups, and `report` told
+/// what each source is doing.
+pub async fn search_full_with_cache(
+    query: &str,
+    kind: SearchKind,
+    platforms: &[Platform],
+    cursor: Option<SearchCursor>,
+    cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
+) -> Result<FullSearchPage, String> {
+    search_full_with_partial(query, kind, platforms, cursor, cache_dir, report, &|_| {}).await
+}
+
+pub async fn search_full_with_partial(
+    query: &str,
+    kind: SearchKind,
+    platforms: &[Platform],
+    cursor: Option<SearchCursor>,
+    cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+) -> Result<FullSearchPage, String> {
+    search_full_scoped(query, kind, platforms, cursor, cache_dir, report, partial, None).await
+}
+
+pub async fn search_full_scoped(
+    query: &str,
+    kind: SearchKind,
+    platforms: &[Platform],
+    cursor: Option<SearchCursor>,
+    cache_dir: Option<std::path::PathBuf>,
+    report: &Report,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+    sources: Option<&[Source]>,
+) -> Result<FullSearchPage, String> {
     let query = query.trim();
-    let want_youtube = platforms.contains(&Platform::Youtube);
-    let want_bandcamp = platforms.contains(&Platform::Bandcamp);
-    let want_soundcloud = platforms.contains(&Platform::Soundcloud);
-    if query.is_empty() || !(want_youtube || want_bandcamp || want_soundcloud) {
+    let enabled = |source| sources.is_none_or(|sources| sources.contains(&source));
+    let want_youtube = platforms.contains(&Platform::Youtube) && enabled(Source::Youtube);
+    let want_bandcamp = platforms.contains(&Platform::Bandcamp) && enabled(Source::Bandcamp);
+    let want_soundcloud = platforms.contains(&Platform::Soundcloud) && enabled(Source::Soundcloud);
+    let want_canonical = kind == SearchKind::Album && (platforms.contains(&Platform::Youtube) || platforms.len() > 1) && enabled(Source::Musicbrainz);
+    if query.is_empty() || !(want_youtube || want_bandcamp || want_soundcloud || want_canonical) {
         return Ok(FullSearchPage::default());
     }
 
@@ -171,6 +223,7 @@ pub async fn search_full(
         // "Show more": one continuation request per platform that has a cursor. Bandcamp has no paging (D9).
         let token = cursor
             .youtube
+            .clone()
             .filter(|token| want_youtube && !token.is_empty());
         let offset = cursor.soundcloud.filter(|_| want_soundcloud);
         if token.is_none() && offset.is_none() {
@@ -178,47 +231,135 @@ pub async fn search_full(
         }
         let youtube = async {
             match &token {
-                Some(token) => Some(youtube_more(query, kind, token).await),
+                Some(token) => {
+                    let page_cursor = SearchCursor { youtube: Some(token.clone()), soundcloud: None };
+                    let request = crate::platforms::search_page(Platform::Youtube, query, kind, Some(&page_cursor));
+                    Some(track(report, Source::Youtube, request, Fetched::len).await)
+                }
                 None => None,
             }
         };
         let soundcloud = async {
             match offset {
-                Some(offset) => Some(soundcloud_page(query, kind, offset).await),
+                Some(offset) => {
+                    let page_cursor = SearchCursor { youtube: None, soundcloud: Some(offset) };
+                    let request = crate::platforms::search_page(Platform::Soundcloud, query, kind, Some(&page_cursor));
+                    Some(track(report, Source::Soundcloud, request, Fetched::len).await)
+                }
                 None => None,
             }
         };
         let (youtube, soundcloud) = tokio::join!(youtube, soundcloud);
-        return assemble_platforms(query, youtube, None, soundcloud);
+        let mut page = assemble_platforms(query, youtube, None, soundcloud)?;
+        retain_failed_cursors(&mut page, &cursor);
+        return Ok(page);
     }
 
-    let youtube = async {
-        if want_youtube {
-            Some(youtube_first_page(query, kind).await)
-        } else {
-            None
-        }
+    let clean_q_tokens: Vec<String> = {
+        let tokens = ranking::tokenize(query);
+        let (stripped, _) = ranking::extract_query_intent(&tokens);
+        stripped
     };
-    let bandcamp = async {
-        if want_bandcamp {
-            Some(bandcamp_page(query, kind).await)
-        } else {
-            None
-        }
+    let platform_query_owned = if clean_q_tokens.is_empty() {
+        query.to_string()
+    } else {
+        clean_q_tokens.join(" ")
     };
-    let soundcloud = async {
-        if want_soundcloud {
-            Some(soundcloud_page(query, kind, 0).await)
-        } else {
-            None
-        }
+    let upstream_query = if platform_query_owned.is_empty() {
+        query
+    } else {
+        platform_query_owned.as_str()
     };
-    let (youtube, bandcamp, soundcloud) = tokio::join!(youtube, bandcamp, soundcloud);
-    assemble_platforms(query, youtube, bandcamp, soundcloud)
+
+    let mut jobs = tokio::task::JoinSet::new();
+    for (source, wanted) in [(Source::Youtube, want_youtube), (Source::Bandcamp, want_bandcamp), (Source::Soundcloud, want_soundcloud)] {
+        if !wanted { continue; }
+        let query = upstream_query.to_owned();
+        let report = report.clone();
+        jobs.spawn(async move {
+            let request = async {
+                let platform = match source {
+                    Source::Youtube => Platform::Youtube,
+                    Source::Bandcamp => Platform::Bandcamp,
+                    Source::Soundcloud => Platform::Soundcloud,
+                    Source::Musicbrainz => return Err("MusicBrainz is not a streaming platform".into()),
+                };
+                crate::platforms::search_page(platform, &query, kind, None).await
+            };
+            let outcome = progress::track_checked(&report, source, request, Fetched::len, |page| page.warning.is_none()).await;
+            (source, outcome)
+        });
+    }
+    if want_canonical {
+        let query = query.to_owned();
+        let report = report.clone();
+        jobs.spawn(async move {
+            let client = crate::metadata::MusicBrainzClient::new(cache_dir);
+            let request = super::fetch_canonical_album_suggestions_result(
+                &client,
+                &query,
+                Platform::Youtube,
+                8,
+                Duration::from_millis(6000),
+            );
+            let request = progress::with_deadline(progress::page_deadline(Source::Musicbrainz), request);
+            let outcome = track(&report, Source::Musicbrainz, request, Vec::len).await
+                .map(|items| Fetched { items, ..Fetched::default() });
+            (Source::Musicbrainz, outcome)
+        });
+    }
+    collect_page_sources(query, jobs, partial).await
 }
 
+async fn collect_page_sources(
+    query: &str,
+    mut jobs: tokio::task::JoinSet<(Source, Result<Fetched, String>)>,
+    partial: &(dyn Fn(FullSearchPage) + Send + Sync),
+) -> Result<FullSearchPage, String> {
+    let mut outcomes = Vec::new();
+    while let Some(result) = jobs.join_next().await {
+        outcomes.push(result.map_err(|_| "Search source task failed".to_string())?);
+        if !jobs.is_empty() {
+            if let Ok(page) = assemble_sources(query, &outcomes) { partial(page); }
+        }
+    }
+    assemble_sources(query, &outcomes)
+}
+
+fn assemble_sources(query: &str, outcomes: &[(Source, Result<Fetched, String>)]) -> Result<FullSearchPage, String> {
+    let outcome = |source| outcomes.iter().find(|(s, _)| *s == source).map(|(_, result)| result.clone());
+    let canonical = outcome(Source::Musicbrainz);
+    let items = canonical.as_ref().and_then(|r| r.as_ref().ok()).map(|p| p.items.clone()).unwrap_or_default();
+    let mut page = assemble_with_canonical(query, outcome(Source::Youtube), outcome(Source::Bandcamp), outcome(Source::Soundcloud), items)?;
+    if let Some(Err(message)) = canonical {
+        page.warnings.push(PlatformWarning { platform: Platform::Youtube, source: Some(Source::Musicbrainz), message: format!("MusicBrainz: {message}") });
+    }
+    Ok(page)
+}
+
+#[cfg(test)]
+#[path = "full_partial_tests.rs"]
+mod partial_tests;
+
+fn retain_failed_cursors(page: &mut FullSearchPage, previous: &SearchCursor) {
+    let mut cursor = page.next_cursor.clone().unwrap_or_default();
+    for warning in &page.warnings {
+        match warning.platform {
+            Platform::Youtube if warning.source != Some(Source::Musicbrainz) => cursor.youtube = previous.youtube.clone(),
+            Platform::Soundcloud => cursor.soundcloud = previous.soundcloud,
+            _ => {}
+        }
+    }
+    page.has_more = cursor.youtube.is_some() || cursor.soundcloud.is_some();
+    page.next_cursor = page.has_more.then_some(cursor);
+}
+
+#[cfg(test)]
+#[path = "full_cursor_tests.rs"]
+mod cursor_tests;
+
 /// First YouTube page of `kind` (D5 chain). Err only when its very first request failed.
-async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
+pub(crate) async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
     youtube_full::fetch_first_page(query, kind, first_page_target(kind))
         .await
         .map(|page| Fetched {
@@ -231,8 +372,9 @@ async fn youtube_first_page(query: &str, kind: SearchKind) -> Result<Fetched, St
 }
 
 /// One YouTube continuation page ("Show more"), 20 raw items.
-async fn youtube_more(query: &str, kind: SearchKind, token: &str) -> Result<Fetched, String> {
-    youtube_full::fetch_page(query, kind, Some(token))
+pub(crate) async fn youtube_more(query: &str, kind: SearchKind, token: &str) -> Result<Fetched, String> {
+    progress::with_deadline(progress::page_deadline(Source::Youtube),
+        youtube_full::fetch_page(query, kind, Some(token)))
         .await
         .map(|page| Fetched {
             items: page.items,
@@ -244,7 +386,7 @@ async fn youtube_more(query: &str, kind: SearchKind, token: &str) -> Result<Fetc
 }
 
 /// Bandcamp filtered search for `kind` (first page only, D9), bounded by `BANDCAMP_TIMEOUT`.
-async fn bandcamp_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
+pub(crate) async fn bandcamp_page(query: &str, kind: SearchKind) -> Result<Fetched, String> {
     match tokio::time::timeout(BANDCAMP_TIMEOUT, bandcamp_full::search_page(query, kind)).await {
         Ok(Ok(items)) => Ok(Fetched {
             items,
@@ -258,7 +400,7 @@ async fn bandcamp_page(query: &str, kind: SearchKind) -> Result<Fetched, String>
 }
 
 /// One SoundCloud page of `kind` starting at `offset`, bounded by `SOUNDCLOUD_TIMEOUT`.
-async fn soundcloud_page(query: &str, kind: SearchKind, offset: u32) -> Result<Fetched, String> {
+pub(crate) async fn soundcloud_page(query: &str, kind: SearchKind, offset: u32) -> Result<Fetched, String> {
     let sc_kind = match kind {
         SearchKind::Track => soundcloud::SearchKind::Tracks,
         SearchKind::Album => soundcloud::SearchKind::Sets,
@@ -302,6 +444,16 @@ pub(crate) fn assemble_platforms(
     bandcamp: Option<Result<Fetched, String>>,
     soundcloud: Option<Result<Fetched, String>>,
 ) -> Result<FullSearchPage, String> {
+    assemble_with_canonical(query, youtube, bandcamp, soundcloud, Vec::new())
+}
+
+pub(crate) fn assemble_with_canonical(
+    query: &str,
+    youtube: Option<Result<Fetched, String>>,
+    bandcamp: Option<Result<Fetched, String>>,
+    soundcloud: Option<Result<Fetched, String>>,
+    canonical_items: Vec<SearchSuggestion>,
+) -> Result<FullSearchPage, String> {
     let requested: Vec<(Platform, Result<Fetched, String>)> = [
         (Platform::Youtube, youtube),
         (Platform::Bandcamp, bandcamp),
@@ -310,12 +462,9 @@ pub(crate) fn assemble_platforms(
     .into_iter()
     .filter_map(|(platform, outcome)| outcome.map(|outcome| (platform, outcome)))
     .collect();
-    if requested.is_empty() {
-        return Ok(FullSearchPage::default());
-    }
     let total = requested.len();
 
-    let mut items = Vec::new();
+    let mut items = canonical_items;
     let mut warnings = Vec::new();
     let mut failures = Vec::new();
     let mut next_token = None;
@@ -330,16 +479,16 @@ pub(crate) fn assemble_platforms(
                     _ => {}
                 }
                 if let Some(message) = fetched.warning {
-                    warnings.push(PlatformWarning { platform, message });
+                    warnings.push(PlatformWarning { platform, source: None, message });
                 }
             }
             Err(message) => {
                 failures.push(format!("{}: {message}", platform_name(platform)));
-                warnings.push(PlatformWarning { platform, message });
+                warnings.push(PlatformWarning { platform, source: None, message });
             }
         }
     }
-    if failures.len() == total {
+    if total > 0 && failures.len() == total && items.is_empty() {
         return Err(failures.join("; "));
     }
 
@@ -348,7 +497,13 @@ pub(crate) fn assemble_platforms(
         soundcloud: next_offset,
     });
     let has_more = next_cursor.is_some();
-    let (items, copies) = ranking::rank_flat_with_copies(items, query);
+    let (items, copies) = ranking::rank_flat_with_options(
+        items,
+        query,
+        ranking::RankOptions {
+            promote_canonical_albums: true,
+        },
+    );
     Ok(FullSearchPage {
         items,
         copies: copies.into_iter().map(|(of, item)| PlatformCopy { of, item }).collect(),
@@ -371,20 +526,9 @@ fn platform_name(platform: Platform) -> &'static str {
 /// `bandcamp_full::artist_profile`). Err(message) for unsupported platform, bad url or network/parse failure
 /// (the frontend then simply shows no profile card). Bounded by a 6 s timeout.
 pub async fn artist_profile(platform: Platform, url: &str) -> Result<ArtistProfile, String> {
-    let result = match platform {
-        Platform::Youtube => {
-            tokio::time::timeout(PROFILE_TIMEOUT, youtube_full::artist_profile(url)).await
-        }
-        Platform::Bandcamp => {
-            tokio::time::timeout(PROFILE_TIMEOUT, bandcamp_full::artist_profile(url)).await
-        }
-        Platform::Soundcloud => {
-            tokio::time::timeout(PROFILE_TIMEOUT, soundcloud::artist_profile(url))
-                .await
-                .map(|r| r.map_err(Into::into))
-        }
-        Platform::Local => return Err("artist profiles are not available for local files".to_string()),
-    };
+    let result = tokio::time::timeout(PROFILE_TIMEOUT, async {
+        crate::platforms::artist_profile(platform, url).await.map_err(Into::into)
+    }).await;
     flatten_profile(result)
 }
 
@@ -402,7 +546,7 @@ fn flatten_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::bandcamp::ItemType;
+    use crate::search::ItemType;
 
     #[test]
     fn first_page_targets() {

@@ -10,11 +10,11 @@
 
 #![allow(dead_code)]
 
-use crate::search::bandcamp::ItemType;
+use crate::search::ItemType;
 use crate::search::SearchSuggestion;
 use crate::types::Platform;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
 
 /// Tracks / albums placed right after the champion (same slot structure as the legacy feed).
@@ -24,8 +24,8 @@ const ALBUM_SLOTS: usize = 2;
 /// Match tiers, index = tier - 1: inside-query, contains, prefix, exact.
 /// The artist/band field outweighs the title field at every tier: a query that names an artist
 /// ("daft punk") should prefer that artist's own tracks over titles that merely contain the name.
-const TITLE_TIERS: [f32; 4] = [25.0, 45.0, 65.0, 85.0];
-const BAND_TIERS: [f32; 4] = [30.0, 55.0, 85.0, 115.0];
+const TITLE_TIERS: [f32; 4] = [25.0, 45.0, 62.0, 96.0];
+const BAND_TIERS: [f32; 4] = [18.0, 35.0, 56.0, 76.0];
 const TIER_INSIDE: u8 = 1;
 const TIER_EXACT: u8 = 4;
 
@@ -40,6 +40,18 @@ const FUZZY_MAX: f32 = 30.0;
 const COVERAGE_WEIGHT: f32 = 40.0;
 /// Query tokens split between title and band ("daft punk one more time" -> One More Time by Daft Punk).
 const SPLIT_BONUS: f32 = 30.0;
+/// Canonical split match bonus when both band and title are exact/prefix matches for query partitions.
+const CANONICAL_SPLIT_BONUS: f32 = 80.0;
+/// Penalty when an item has the queried artist in its title but is uploaded by a third-party account.
+const THIRD_PARTY_UPLOADER_PENALTY: f32 = 60.0;
+/// Penalty when an item is a derivative (remix, chopped, cover, karaoke, parody) unless user asked for it.
+const DERIVATIVE_PENALTY: f32 = 55.0;
+/// Bonus when item type matches explicit query intent ("album", "track", "artist").
+const INTENT_BONUS: f32 = 45.0;
+const INTENT_MISMATCH_PENALTY: f32 = 15.0;
+/// Universal alias bonus (e.g. "White Album" -> The Beatles (1968)).
+const ALIAS_MATCH_BONUS: f32 = 100.0;
+
 /// Artist items whose name equals the query exactly. Large enough that the artist card outscores the
 /// same artist's tracks whose title merely starts with the name (band exact + title prefix ~ 177).
 const ARTIST_EXACT_BONUS: f32 = 50.0;
@@ -51,8 +63,8 @@ const EMBEDDED_ARTIST_PENALTY: f32 = 40.0;
 
 /// Position within the source list (earlier = better). Kept small so it never outweighs a tier.
 const POSITION_WEIGHT: f32 = 6.0;
-/// Popularity: each of view count and subscriber count adds at most this much.
-const POPULARITY_MAX: f32 = 4.0;
+/// Popularity: each of view count and subscriber count adds at most this much (kept bounded so 2*max + pos < 25).
+const POPULARITY_MAX: f32 = 9.0;
 /// ln(1e9): a count of one billion is treated as fully popular.
 const POPULARITY_LOG_CEIL: f64 = 20.723_266;
 
@@ -84,12 +96,176 @@ const NOISE_PHRASES: &[&[&str]] = &[
     &["bonus", "track"],
 ];
 
-/// Entry point used by wiring. Scores every known item, dedups across platforms (best score wins),
-/// then lays out: champion, up to 3 tracks, up to 2 albums, remainder by score. Pure and deterministic.
-/// Champion: the best item, except that an artist card only takes it when its name equals the query
-/// exactly and no track/album is a strong match (exact title or split query), see `champion_index`.
-pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
-    // 1. Score each known item. Native index = position within its (platform, type) source list.
+const DERIVATIVE_KEYWORDS: &[&str] = &[
+    "remix", "chop", "chopped", "screwed", "slowed", "reverb", "8d", "cover", "karaoke",
+    "tribute", "parody", "acoustic", "instrumental", "rework", "bootleg", "mashup",
+];
+
+const ARTIST_SEPARATORS: &[&str] = &[" - ", " | ", " // ", " / ", " : ", " ~ ", " — ", " – "];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryIntent {
+    Album,
+    Track,
+    Artist,
+}
+
+pub fn extract_query_intent(tokens: &[String]) -> (Vec<String>, Option<QueryIntent>) {
+    if tokens.is_empty() {
+        return (Vec::new(), None);
+    }
+    let mut intent = None;
+    let mut filtered = Vec::with_capacity(tokens.len());
+    for t in tokens {
+        match t.as_str() {
+            "album" | "albums" | "ep" | "lp" | "discography" => {
+                intent = Some(QueryIntent::Album);
+            }
+            "song" | "songs" | "track" | "tracks" | "single" | "singles" => {
+                intent = Some(QueryIntent::Track);
+            }
+            "artist" | "artists" | "band" | "singer" => {
+                intent = Some(QueryIntent::Artist);
+            }
+            _ => filtered.push(t.clone()),
+        }
+    }
+    if filtered.is_empty() {
+        (tokens.to_vec(), intent)
+    } else {
+        (filtered, intent)
+    }
+}
+
+pub fn tokens_equivalent(a: &str, b: &str) -> bool {
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    if a.len() > 3 && b.len() > 3 {
+        if let Some(stripped) = a.strip_suffix('s') {
+            if stripped.eq_ignore_ascii_case(b) {
+                return true;
+            }
+        }
+        if let Some(stripped) = b.strip_suffix('s') {
+            if stripped.eq_ignore_ascii_case(a) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+const TRIBUTE_BAND_KEYWORDS: &[&str] = &["tribute", "karaoke", "parody", "cover", "bootleg"];
+
+fn has_tribute_band_keyword(band_name: &str, query: &str) -> bool {
+    let q_tokens = words(&normalize(query));
+    let b_tokens = words(&normalize(band_name));
+    TRIBUTE_BAND_KEYWORDS
+        .iter()
+        .any(|kw| b_tokens.iter().any(|t| t == kw) && !q_tokens.iter().any(|t| t == kw))
+}
+
+fn is_derivative_version(name: &str, query: &str) -> bool {
+    let q_norm = normalize(query);
+    let n_norm = normalize(name);
+    let q_tokens = words(&q_norm);
+    let n_tokens = words(&n_norm);
+
+    for kw in DERIVATIVE_KEYWORDS {
+        if n_tokens.iter().any(|t| t == kw) && !q_tokens.iter().any(|t| t == kw) {
+            return true;
+        }
+    }
+    if n_tokens
+        .windows(2)
+        .any(|w| {
+            ((w[0] == "full" || w[0] == "complete") && (w[1] == "album" || w[1] == "ep"))
+                || (w[0] == "type" && w[1] == "beat")
+        })
+        && !q_tokens.iter().any(|t| t == "full" || t == "complete" || t == "beat")
+    {
+        return true;
+    }
+    false
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RankOptions {
+    /// Upgrades returned Album items to `canonical:` URLs (and keeps `PlatformCopy.of` keys synchronized).
+    pub promote_canonical_albums: bool,
+}
+
+fn canonicalize_album_url(url: &str) -> String {
+    if url.starts_with("canonical:") {
+        url.to_string()
+    } else {
+        format!("canonical:{url}")
+    }
+}
+
+fn is_musicbrainz_canonical(url: &str) -> bool {
+    url.strip_prefix("canonical:").is_some_and(|inner| {
+        !inner.is_empty()
+            && !inner.starts_with("http://")
+            && !inner.starts_with("https://")
+            && !inner.starts_with("synth:")
+    })
+}
+
+fn merge_canonical_album_url(winner_url: &mut String, dup_url: &str) {
+    if is_musicbrainz_canonical(dup_url) && !is_musicbrainz_canonical(winner_url) {
+        *winner_url = dup_url.to_string();
+    } else {
+        *winner_url = canonicalize_album_url(winner_url);
+    }
+}
+
+fn merge_duplicate_metadata(winner: &mut SearchSuggestion, dup: &SearchSuggestion) {
+    let winner_needs_cover =
+        winner.img.is_empty() || winner.img.contains("coverartarchive.org");
+    let dup_has_cdn_cover = !dup.img.is_empty() && !dup.img.contains("coverartarchive.org");
+    if winner_needs_cover && dup_has_cdn_cover {
+        winner.img = dup.img.clone();
+    }
+    if winner.year.is_none() && dup.year.is_some() {
+        winner.year = dup.year;
+    }
+}
+
+fn score_and_sort(raw: Vec<SearchSuggestion>, query: &str) -> Vec<(f32, usize, SearchSuggestion)> {
+    let q_raw = tokenize(query);
+    let (q_stripped, _) = extract_query_intent(&q_raw);
+    let q_use: &[String] = if q_stripped.is_empty() { &q_raw } else { &q_stripped };
+    let query_is_known_artist = !q_use.is_empty()
+        && raw.iter().any(|i| {
+            i.item_type == ItemType::Artist
+                && i.subscriber_count.unwrap_or(0) >= 10_000
+                && phrase_tier(&words(&normalize(&i.name)), q_use) == TIER_EXACT
+        });
+
+    // Track distinct ecosystems per dedup_key (YouTube=1, Bandcamp=2, SoundCloud=4, MusicBrainz=8)
+    // so official releases verified across multiple independent platforms beat 1-platform homonyms.
+    let mut source_masks: HashMap<String, u8> = HashMap::new();
+    for item in &raw {
+        if item.item_type == ItemType::Unknown {
+            continue;
+        }
+        let bit: u8 = if item.item_url_path.starts_with("canonical:") {
+            1 << 3
+        } else {
+            match item.platform {
+                Platform::Youtube => 1 << 0,
+                Platform::Bandcamp => 1 << 1,
+                Platform::Soundcloud => 1 << 2,
+                Platform::Local => 0,
+            }
+        };
+        if bit != 0 {
+            *source_masks.entry(dedup_key(item)).or_insert(0) |= bit;
+        }
+    }
+
     let mut counters = [[0usize; 3]; 4];
     let mut scored: Vec<(f32, usize, SearchSuggestion)> = Vec::new();
     for item in raw {
@@ -107,31 +283,95 @@ pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
         };
         let native = counters[platform_slot][type_slot];
         counters[platform_slot][type_slot] += 1;
-        let s = score(&item, query, native, type_bias(&item.item_type));
+        let mut s = score(&item, query, native, type_bias(&item.item_type));
+        let source_count = source_masks
+            .get(&dedup_key(&item))
+            .map_or(0, |m| m.count_ones());
+        if source_count >= 2 && s >= 60.0 && !is_derivative_version(&item.name, query) {
+            s += if source_count >= 3 { 26.0 } else { 16.0 };
+        }
+        if query_is_known_artist
+            && item.item_type != ItemType::Artist
+            && item.view_count.unwrap_or(0) < 10_000
+        {
+            let band_tokens = words(&normalize(strip_featuring(&item.band_name)));
+            let by_queried_artist = !band_tokens.is_empty()
+                && band_tokens
+                    .iter()
+                    .any(|b| q_use.iter().any(|qt| tokens_equivalent(b, qt)));
+            if !by_queried_artist {
+                s -= THIRD_PARTY_UPLOADER_PENALTY;
+            }
+        }
         let seq = scored.len();
         scored.push((s, seq, item));
     }
-
-    // 2. Best first; ties keep input order so the output is deterministic.
     scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+}
 
-    // 3. Cross-platform dedup: the first (best scored) occurrence of each key wins.
-    let mut seen = HashSet::new();
-    let mut pending: Vec<Option<SearchSuggestion>> = scored
-        .into_iter()
-        .filter(|(_, _, item)| seen.insert(dedup_key(item)))
-        .map(|(_, _, item)| Some(item))
-        .collect();
+/// Entry point used by wiring. Scores every known item, dedups across platforms (best score wins),
+/// then lays out: champion, up to 3 tracks, up to 2 albums, remainder by score. Pure and deterministic.
+/// Champion: the best item, except that an artist card only takes it when its name equals the query
+/// exactly and no track/album is a strong match (exact title or split query), see `champion_index`.
+pub fn rank(raw: Vec<SearchSuggestion>, query: &str) -> Vec<SearchSuggestion> {
+    rank_with_options(raw, query, RankOptions::default())
+}
 
-    // 4. Champion first, then slot fills (tracks, then albums; champion counts), then the rest.
+/// Customizable variant of `rank` supporting `RankOptions`.
+pub fn rank_with_options(
+    raw: Vec<SearchSuggestion>,
+    query: &str,
+    options: RankOptions,
+) -> Vec<SearchSuggestion> {
+    let scored = score_and_sort(raw, query);
+
+    // Cross-platform dedup: the first (best scored) occurrence of each key wins,
+    // borrowing reliable non-CAA artwork / year from dropped platform copies.
+    // Honest MULTI-SOURCE rule: only promote an album to `canonical:` when it came from
+    // MusicBrainz (already `canonical:`) OR matched across >= 2 distinct platforms.
+    let mut index_by_key: HashMap<String, (usize, Vec<Platform>)> = HashMap::new();
+    let mut unique: Vec<SearchSuggestion> = Vec::with_capacity(scored.len());
+    for (_, _, item) in scored {
+        let key = dedup_key(&item);
+        if let Some((idx, platforms)) = index_by_key.get_mut(&key) {
+            merge_duplicate_metadata(&mut unique[*idx], &item);
+            let is_new_platform = !platforms.contains(&item.platform);
+            if is_new_platform {
+                platforms.push(item.platform);
+            }
+            if options.promote_canonical_albums
+                && unique[*idx].item_type == ItemType::Album
+                && (platforms.len() >= 2
+                    || item.item_url_path.starts_with("canonical:")
+                    || unique[*idx].item_url_path.starts_with("canonical:"))
+            {
+                merge_canonical_album_url(&mut unique[*idx].item_url_path, &item.item_url_path);
+            }
+        } else {
+            let platform = item.platform;
+            let idx = unique.len();
+            unique.push(item);
+            index_by_key.insert(key, (idx, vec![platform]));
+        }
+    }
+    let mut pending: Vec<Option<SearchSuggestion>> = unique.into_iter().map(Some).collect();
+
+    // Champion first, then slot fills.
     let q = tokenize(query);
+    let (_, intent) = extract_query_intent(&q);
     let mut out = Vec::with_capacity(pending.len());
-    if let Some(ci) = champion_index(&pending, &q) {
+    if let Some(ci) = champion_index(&pending, &q, intent) {
         if let Some(champion) = pending[ci].take() {
             out.push(champion);
         }
     }
-    for (kind, cap) in [(ItemType::Track, TRACK_SLOTS), (ItemType::Album, ALBUM_SLOTS)] {
+    let (first_kind, first_cap, second_kind, second_cap) = if intent == Some(QueryIntent::Album) {
+        (ItemType::Album, 4, ItemType::Track, TRACK_SLOTS)
+    } else {
+        (ItemType::Track, TRACK_SLOTS, ItemType::Album, ALBUM_SLOTS)
+    };
+    for (kind, cap) in [(first_kind, first_cap), (second_kind, second_cap)] {
         let have = out.iter().filter(|i| i.item_type == kind).count();
         take_matching(&mut pending, &mut out, &kind, cap.saturating_sub(have));
     }
@@ -156,43 +396,61 @@ pub fn rank_flat_with_copies(
     raw: Vec<SearchSuggestion>,
     query: &str,
 ) -> (Vec<SearchSuggestion>, Vec<(String, SearchSuggestion)>) {
-    let mut counters = [[0usize; 3]; 4];
-    let mut scored: Vec<(f32, usize, SearchSuggestion)> = Vec::new();
-    for item in raw {
-        let type_slot = match item.item_type {
-            ItemType::Track => 0,
-            ItemType::Album => 1,
-            ItemType::Artist => 2,
-            ItemType::Unknown => continue,
-        };
-        let platform_slot = match item.platform {
-            Platform::Youtube => 0,
-            Platform::Bandcamp => 1,
-            Platform::Soundcloud => 2,
-            Platform::Local => 3,
-        };
-        let native = counters[platform_slot][type_slot];
-        counters[platform_slot][type_slot] += 1;
-        let s = score(&item, query, native, type_bias(&item.item_type));
-        let seq = scored.len();
-        scored.push((s, seq, item));
-    }
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    // dedup key -> (url of the kept item, platforms already present for this key)
-    let mut seen: HashMap<String, (String, Vec<Platform>)> = HashMap::new();
-    let mut items = Vec::new();
-    let mut copies = Vec::new();
-    for (_, _, item) in scored {
-        match seen.entry(dedup_key(&item)) {
+    rank_flat_with_options(raw, query, RankOptions::default())
+}
+
+/// Customizable variant of `rank_flat_with_copies` supporting `RankOptions`.
+pub fn rank_flat_with_options(
+    raw: Vec<SearchSuggestion>,
+    query: &str,
+    options: RankOptions,
+) -> (Vec<SearchSuggestion>, Vec<(String, SearchSuggestion)>) {
+    let scored = score_and_sort(raw, query);
+    // dedup key -> (index in items, indices in `copies`, platforms already present for this key)
+    let mut seen: HashMap<String, (usize, Vec<usize>, Vec<Platform>)> = HashMap::new();
+    let mut items: Vec<SearchSuggestion> = Vec::new();
+    let mut copies: Vec<(String, SearchSuggestion)> = Vec::new();
+    for (_, _, mut item) in scored {
+        let key = dedup_key(&item);
+        match seen.entry(key) {
             Entry::Vacant(slot) => {
-                slot.insert((item.item_url_path.clone(), vec![item.platform]));
+                let idx = items.len();
+                let platform = item.platform;
                 items.push(item);
+                slot.insert((idx, Vec::new(), vec![platform]));
             }
             Entry::Occupied(mut slot) => {
-                let (kept_url, platforms) = slot.get_mut();
+                let (idx, copy_indices, platforms) = slot.get_mut();
+                merge_duplicate_metadata(&mut items[*idx], &item);
+                let is_canonical_incoming = item.item_url_path.starts_with("canonical:");
                 if !platforms.contains(&item.platform) {
                     platforms.push(item.platform);
-                    copies.push((kept_url.clone(), item));
+                    let multi_platform = platforms.len() >= 2;
+                    if options.promote_canonical_albums
+                        && items[*idx].item_type == ItemType::Album
+                        && (multi_platform
+                            || is_canonical_incoming
+                            || items[*idx].item_url_path.starts_with("canonical:"))
+                    {
+                        merge_canonical_album_url(&mut items[*idx].item_url_path, &item.item_url_path);
+                        let new_url = items[*idx].item_url_path.clone();
+                        for &ci in copy_indices.iter() {
+                            copies[ci].0 = new_url.clone();
+                        }
+                        item.item_url_path = canonicalize_album_url(&item.item_url_path);
+                    }
+                    let copy_idx = copies.len();
+                    copies.push((items[*idx].item_url_path.clone(), item));
+                    copy_indices.push(copy_idx);
+                } else if options.promote_canonical_albums
+                    && items[*idx].item_type == ItemType::Album
+                    && is_canonical_incoming
+                {
+                    merge_canonical_album_url(&mut items[*idx].item_url_path, &item.item_url_path);
+                    let new_url = items[*idx].item_url_path.clone();
+                    for &ci in copy_indices.iter() {
+                        copies[ci].0 = new_url.clone();
+                    }
                 }
             }
         }
@@ -232,18 +490,25 @@ pub fn normalize(s: &str) -> String {
         if is_diacritic_mark(c) {
             continue;
         }
-        if c == '&' {
-            buf.push_str(" and ");
-        } else if is_apostrophe(c) {
-            // Dropped without a space so contractions stay one word.
-        } else if c.is_alphanumeric() {
-            for lc in c.to_lowercase() {
-                if !is_diacritic_mark(lc) {
-                    buf.push(lc);
+        match c {
+            'æ' | 'Æ' => buf.push_str("ae"),
+            'œ' | 'Œ' => buf.push_str("oe"),
+            'ø' | 'Ø' => buf.push('o'),
+            'đ' | 'Đ' | 'ð' | 'Ð' => buf.push('d'),
+            'ł' | 'Ł' => buf.push('l'),
+            'ß' => buf.push_str("ss"),
+            '&' => buf.push_str(" and "),
+            _ if is_apostrophe(c) => {
+                // Dropped without a space so contractions stay one word.
+            }
+            _ if c.is_alphanumeric() => {
+                for lc in c.to_lowercase() {
+                    if !is_diacritic_mark(lc) {
+                        buf.push(lc);
+                    }
                 }
             }
-        } else {
-            buf.push(' ');
+            _ => buf.push(' '),
         }
     }
     words(&buf).join(" ")
@@ -284,31 +549,49 @@ pub fn score(
     native_index: usize,
     type_bias: f32,
 ) -> f32 {
-    let q = tokenize(query);
+    let q_raw = tokenize(query);
+    let (q_stripped, intent) = extract_query_intent(&q_raw);
+    let q: &[String] = if q_stripped.is_empty() { &q_raw } else { &q_stripped };
     let is_artist = item.item_type == ItemType::Artist;
-    let f = fields(item, &q);
+    let f = fields(item, q);
 
-    let (title_s, title_tier) = field_score(&f.title, &q, &TITLE_TIERS);
-    let (band_s, _) = field_score(&f.band, &q, &BAND_TIERS);
+    let (title_s, title_tier) = field_score(&f.title, q, &TITLE_TIERS);
+    let (band_s, band_tier) = field_score(&f.band, q, &BAND_TIERS);
 
-    // The stronger field carries the score; the weaker one adds a little, so a track whose band
-    // matches exactly does not stack up with a title that merely contains the query.
+    // The stronger field carries the score; the weaker one adds a little unless it is just
+    // repeating the matched artist name inside the title ("aphex twin does dubstep" by aphex twin).
     let (hi, lo) = if title_s >= band_s {
         (title_s, band_s)
     } else {
-        (band_s, title_s)
+        let redundant_title = band_tier == TIER_EXACT
+            && title_tier < TIER_EXACT
+            && !split_match(&f, q);
+        (band_s, if redundant_title { 0.0 } else { title_s })
     };
+    let mut is_derivative = !is_artist && is_derivative_version(&item.name, query);
+    if !is_artist && !is_derivative && has_tribute_band_keyword(&item.band_name, query) {
+        is_derivative = true;
+    }
+    let is_third_party = !item.item_url_path.starts_with("canonical:")
+        && title_tier < TIER_EXACT
+        && is_third_party_uploader(&f, q);
     let mut s = hi + SECONDARY_FIELD_WEIGHT * lo;
 
     if !q.is_empty() {
         let matched = q
             .iter()
-            .filter(|t| f.title.contains(t) || f.band.contains(t))
+            .filter(|t| {
+                f.title.iter().any(|tt| tokens_equivalent(tt, t))
+                    || f.band.iter().any(|b| tokens_equivalent(b, t))
+            })
             .count();
-        s += COVERAGE_WEIGHT * matched as f32 / q.len() as f32;
+        let cov = COVERAGE_WEIGHT * matched as f32 / q.len() as f32;
+        s += cov;
 
-        if split_match(&f, &q) {
-            s += SPLIT_BONUS;
+        if let Some(split_s) = evaluate_split_match(&f, q, matched, is_derivative) {
+            if split_s + cov > s {
+                s = split_s + cov;
+            }
         }
     }
 
@@ -316,13 +599,61 @@ pub fn score(
         s += ARTIST_EXACT_BONUS;
     }
 
+    // Third-party uploader and derivative penalties.
+
+    if is_third_party {
+        s -= THIRD_PARTY_UPLOADER_PENALTY;
+    }
     if f.embedded_artist {
         s -= EMBEDDED_ARTIST_PENALTY;
+    }
+    if is_derivative {
+        s -= DERIVATIVE_PENALTY;
+    }
+
+    // Universal colloquial alias bonus (e.g. "White Album" -> Beatles, "Black Album" -> Metallica, "Blue Album" -> Weezer).
+    const SELF_TITLED_ALIASES: &[(&str, &[&str])] = &[
+        ("beatles", &["white", "album"]),
+        ("metallica", &["black", "album"]),
+        ("weezer", &["blue", "album"]),
+        ("weezer", &["green", "album"]),
+        ("weezer", &["red", "album"]),
+        ("weezer", &["teal", "album"]),
+    ];
+    if item.item_type == ItemType::Album {
+        for (artist_kw, alias_words) in SELF_TITLED_ALIASES {
+            let band_matches = f.band.iter().any(|b| tokens_equivalent(b, artist_kw));
+            let query_mentions = q_raw.windows(alias_words.len()).any(|w| {
+                w.iter().zip(alias_words.iter()).all(|(a, b)| a == b)
+            });
+            let title_matches = f.title.iter().any(|t| tokens_equivalent(t, artist_kw))
+                || f.title.windows(alias_words.len()).any(|w| {
+                    w.iter().zip(alias_words.iter()).all(|(a, b)| a == b)
+                });
+            if band_matches && query_mentions && title_matches {
+                s += ALIAS_MATCH_BONUS;
+                break;
+            }
+        }
+    }
+
+    // Apply explicit intent boost/penalty (e.g. user typed "albums" or "songs").
+    if let Some(target_intent) = intent {
+        match (target_intent, &item.item_type) {
+            (QueryIntent::Album, ItemType::Album) => s += INTENT_BONUS,
+            (QueryIntent::Track, ItemType::Track) => s += INTENT_BONUS,
+            (QueryIntent::Artist, ItemType::Artist) => s += INTENT_BONUS,
+            _ => s -= INTENT_MISMATCH_PENALTY,
+        }
     }
 
     let bias = if type_bias.is_finite() { type_bias } else { 0.0 };
     let position = POSITION_WEIGHT / (native_index as f32 + 1.0).sqrt();
     s += position + bias;
+
+    if item.item_url_path.starts_with("canonical:") && !is_third_party && !is_derivative {
+        s += 20.0;
+    }
 
     if item.platform == Platform::Bandcamp {
         s += BANDCAMP_BIAS;
@@ -350,7 +681,7 @@ struct Fields {
     title: Vec<String>,
     /// Empty for artist items and for the placeholder band "Artist".
     band: Vec<String>,
-    /// The title opens with "<artist> - " where the artist is named in the query and is not the band.
+    /// The title opens with "<artist> - " (or similar delimiter) where the artist is named in the query and is not the band.
     embedded_artist: bool,
 }
 
@@ -377,7 +708,7 @@ fn fields(item: &SearchSuggestion, q: &[String]) -> Fields {
     }
 }
 
-/// True when the raw name starts with "<words> - " and those words are all in the query but do not
+/// True when the raw name starts with "<words> <sep> " and those words are all in the query but do not
 /// belong to the band. Needs a known band (an unknown band cannot be contradicted).
 /// A part after " - " that is only a version label ("Radio Edit", "Remastered 2011", "Live ...") is
 /// not an artist prefix: "Around the World - Radio Edit" by Daft Punk is still the official track.
@@ -386,18 +717,64 @@ fn embedded_artist_prefix(name: &str, band: &[String], q: &[String]) -> bool {
         return false;
     }
     let no_feat = strip_featuring(name);
-    let Some(p) = no_feat.find(" - ") else {
-        return false;
-    };
-    let rest = &no_feat[p + 3..];
-    if is_version_label(rest) {
+    for sep in ARTIST_SEPARATORS {
+        if let Some(p) = no_feat.find(sep) {
+            let rest = &no_feat[p + sep.len()..];
+            if is_version_label(rest) {
+                continue;
+            }
+            let left = words(&normalize(&no_feat[..p]));
+            if !left.is_empty()
+                && phrase_tier(band, &left) == 0
+                && left.iter().all(|t| q.iter().any(|qt| tokens_equivalent(qt, t)))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True when `q` contains a multi-word phrase appearing in the item's title while the item's
+/// `band` shares NO tokens with the query (indicating a third-party uploader channel like
+/// "Jason Voorhees" uploading "THE DOORS STRANGE DAYS FULL ALBUM").
+fn is_third_party_uploader(f: &Fields, q: &[String]) -> bool {
+    if f.band.is_empty() || q.len() < 2 || f.title.len() < 2 {
         return false;
     }
-    let left = words(&normalize(&no_feat[..p]));
-    if left.is_empty() || phrase_tier(band, &left) > 0 {
+    if f.embedded_artist {
+        return true;
+    }
+    let band_has_query_overlap = f
+        .band
+        .iter()
+        .any(|b| q.iter().any(|qt| tokens_equivalent(b, qt)));
+    if band_has_query_overlap {
         return false;
     }
-    left.iter().all(|t| q.contains(t))
+    q.windows(2).any(|w| {
+        f.title
+            .windows(2)
+            .any(|tw| tokens_equivalent(&tw[0], &w[0]) && tokens_equivalent(&tw[1], &w[1]))
+    })
+}
+
+/// True when every token of `needle` appears inside `hay` in order (allowing extra words in between,
+/// e.g. `["one", "more", "time", "remix"]` inside `["one", "more", "time", "club", "remix"]`).
+fn is_ordered_subsequence(hay: &[String], needle: &[String]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut ni = 0;
+    for h in hay {
+        if tokens_equivalent(h, &needle[ni]) {
+            ni += 1;
+            if ni == needle.len() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Version or live label that may follow " - " in a title: known noise ("Radio Edit", "Remastered
@@ -412,35 +789,145 @@ fn is_version_label(rest: &str) -> bool {
 /// Query tokens found in the title AND, separately, in the band ("daft punk one more time" against
 /// "One More Time" by "Daft Punk"): the query is split between the two fields.
 fn split_match(f: &Fields, q: &[String]) -> bool {
-    let title_only = q.iter().any(|t| f.title.contains(t) && !f.band.contains(t));
-    let band_only = q.iter().any(|t| f.band.contains(t) && !f.title.contains(t));
+    let title_only = q.iter().any(|t| {
+        f.title.iter().any(|tt| tokens_equivalent(tt, t))
+            && !f.band.iter().any(|b| tokens_equivalent(b, t))
+    });
+    let band_only = q.iter().any(|t| {
+        f.band.iter().any(|b| tokens_equivalent(b, t))
+            && !f.title.iter().any(|tt| tokens_equivalent(tt, t))
+    });
     title_only && band_only
+}
+
+/// Computes an upgraded field+bonus score when the query cleanly splits between artist and title.
+/// Scales the canonical split bonus by the fraction of `q` matched so items missing explicit
+/// qualifier terms (like "remix" or "live") or unrequested derivative rips do not defeat canonical originals.
+fn evaluate_split_match(
+    f: &Fields,
+    q: &[String],
+    matched_count: usize,
+    is_derivative: bool,
+) -> Option<f32> {
+    if !split_match(f, q) || f.band.is_empty() || f.title.is_empty() || q.is_empty() {
+        return None;
+    }
+    let mut band_tokens = Vec::new();
+    let mut title_tokens = Vec::new();
+    for t in q {
+        let in_band = f.band.iter().any(|b| tokens_equivalent(b, t));
+        let in_title = f.title.iter().any(|tt| tokens_equivalent(tt, t));
+        if in_band && !in_title {
+            band_tokens.push(t.clone());
+        } else if in_title && !in_band {
+            title_tokens.push(t.clone());
+        } else if in_band && in_title {
+            band_tokens.push(t.clone());
+            title_tokens.push(t.clone());
+        }
+    }
+    if band_tokens.is_empty() || title_tokens.is_empty() {
+        return None;
+    }
+    let b_tier = phrase_tier(&f.band, &band_tokens);
+    let t_tier = {
+        let exact_or_phrase = phrase_tier(&f.title, &title_tokens);
+        if exact_or_phrase > 0 {
+            exact_or_phrase
+        } else if is_ordered_subsequence(&f.title, &title_tokens) {
+            2
+        } else {
+            0
+        }
+    };
+    if b_tier >= 3 && t_tier >= 2 {
+        let b_cov = (band_tokens.len() as f32 / f.band.len() as f32).min(1.0);
+        let t_cov = (title_tokens.len() as f32 / f.title.len() as f32).min(1.0);
+        let b_score = BAND_TIERS[(b_tier - 1) as usize] * (0.4 + 0.6 * b_cov);
+        let t_score = TITLE_TIERS[(t_tier - 1) as usize] * (0.4 + 0.6 * t_cov);
+        let coverage_ratio = matched_count as f32 / q.len() as f32;
+        let is_contiguous_partition = (1..q.len()).any(|k| {
+            let (left, right) = q.split_at(k);
+            let title_matches = |tokens: &[String]| {
+                phrase_tier(&f.title, tokens) >= 2 || is_ordered_subsequence(&f.title, tokens)
+            };
+            (phrase_tier(&f.band, left) >= 3 && title_matches(right))
+                || (title_matches(left) && phrase_tier(&f.band, right) >= 3)
+        });
+        if matched_count == q.len() && !is_derivative && is_contiguous_partition {
+            if b_tier == TIER_EXACT && t_tier == TIER_EXACT {
+                Some(b_score + t_score + CANONICAL_SPLIT_BONUS)
+            } else if (b_tier == TIER_EXACT && t_tier >= 2) || (t_tier == TIER_EXACT && b_tier >= 3) {
+                Some(b_score + t_score + SPLIT_BONUS)
+            } else {
+                // Both fields are only partial prefixes/substrings (e.g. "Plastic Lovin" by "Death the Kid"
+                // for query "plastic death"): never let a coincidental cross-field prefix hijack exact titles.
+                Some((b_score + t_score) * 0.75)
+            }
+        } else {
+            Some((b_score + t_score) * coverage_ratio * 0.75)
+        }
+    } else {
+        None
+    }
 }
 
 /// Strong non-artist match: title equal to the query, or the query split across title and band.
 fn is_strong_match(item: &SearchSuggestion, q: &[String]) -> bool {
-    if q.is_empty() || item.item_type == ItemType::Artist {
+    let (q_stripped, _) = extract_query_intent(q);
+    let q_use = if q_stripped.is_empty() { q } else { &q_stripped };
+    if q_use.is_empty() || item.item_type == ItemType::Artist {
         return false;
     }
-    let f = fields(item, q);
-    phrase_tier(&f.title, q) == TIER_EXACT || split_match(&f, q)
+    let f = fields(item, q_use);
+    phrase_tier(&f.title, q_use) == TIER_EXACT || split_match(&f, q_use)
 }
 
 /// Index in `pending` (score order, all present) of the item that takes the champion slot.
 /// An artist card keeps the slot only when its name equals the query exactly AND no track or album
 /// is a strong match (exact title or split query). Otherwise the best track/album takes it.
-/// Empty query: the best item stays first.
-fn champion_index(pending: &[Option<SearchSuggestion>], q: &[String]) -> Option<usize> {
+/// When query intent is Album, prefer an Album if present.
+fn champion_index(
+    pending: &[Option<SearchSuggestion>],
+    q: &[String],
+    intent: Option<QueryIntent>,
+) -> Option<usize> {
     let first = pending.iter().position(Option::is_some)?;
     let top = pending[first].as_ref()?;
-    if q.is_empty() || top.item_type != ItemType::Artist {
+    if q.is_empty() {
         return Some(first);
     }
-    let artist_exact = phrase_tier(&fields(top, q).title, q) == TIER_EXACT;
-    let strong_other = pending
-        .iter()
-        .flatten()
-        .any(|i| is_strong_match(i, q));
+    if intent == Some(QueryIntent::Album) && top.item_type != ItemType::Album {
+        if let Some(ai) = pending
+            .iter()
+            .position(|s| matches!(s, Some(i) if i.item_type == ItemType::Album))
+        {
+            return Some(ai);
+        }
+    }
+    if top.item_type != ItemType::Artist {
+        return Some(first);
+    }
+    let (q_stripped, _) = extract_query_intent(q);
+    let q_use = if q_stripped.is_empty() { q } else { &q_stripped };
+    let artist_exact = phrase_tier(&fields(top, q_use).title, q_use) == TIER_EXACT;
+    let artist_prominent = top.subscriber_count.unwrap_or(0) >= 10_000;
+    let strong_other = pending.iter().flatten().any(|i| {
+        if !is_strong_match(i, q) {
+            return false;
+        }
+        if !artist_prominent {
+            return true;
+        }
+        let f = fields(i, q_use);
+        let band_overlaps = f
+            .band
+            .iter()
+            .any(|b| q_use.iter().any(|qt| tokens_equivalent(b, qt)));
+        split_match(&f, q_use)
+            || i.view_count.unwrap_or(0) >= 10_000
+            || (i.item_url_path.starts_with("canonical:") && band_overlaps)
+    });
     if artist_exact && !strong_other {
         return Some(first);
     }
@@ -581,24 +1068,31 @@ fn type_bias(t: &ItemType) -> f32 {
     }
 }
 
+fn tokens_match(a: &[String], b: &[String]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| tokens_equivalent(x, y))
+}
+
 /// Phrase match of `needle` against `hay` (both token lists).
 /// 4 = equal, 3 = hay starts with needle, 2 = needle inside hay, 1 = hay inside needle, 0 = none.
 fn phrase_tier(hay: &[String], needle: &[String]) -> u8 {
     if needle.is_empty() || hay.is_empty() {
         return 0;
     }
-    if hay == needle {
+    if tokens_match(hay, needle) {
         return TIER_EXACT;
     }
     if hay.len() > needle.len() {
-        if hay.starts_with(needle) {
+        if tokens_match(&hay[..needle.len()], needle) {
             return 3;
         }
-        if hay.windows(needle.len()).any(|w| w == needle) {
+        if hay.windows(needle.len()).any(|w| tokens_match(w, needle)) {
             return 2;
         }
     }
-    if needle.len() > hay.len() && needle.windows(hay.len()).any(|w| w == hay) {
+    if needle.len() > hay.len() && needle.windows(hay.len()).any(|w| tokens_match(w, hay)) {
         return TIER_INSIDE;
     }
     0
@@ -1654,6 +2148,49 @@ mod tests {
         assert_eq!(urls, vec!["bc", "sc", "yt"]);
         for (of, _) in &copies {
             assert_eq!(of, &items[0].item_url_path);
+        }
+    }
+
+    #[test]
+    fn canonical_promotion_prefers_musicbrainz_rg_over_youtube_http_url() {
+        let mut yt = on(
+            Platform::Youtube,
+            "https://music.youtube.com/browse/MPREb_tms",
+            album("The Money Store", "Death Grips"),
+        );
+        yt.view_count = Some(5_000_000);
+        yt.img = "https://lh3.googleusercontent.com/yt-cover".into();
+
+        let mut mb = on(
+            Platform::Youtube,
+            "canonical:rg:mbid-tms",
+            album("The Money Store", "Death Grips"),
+        );
+        mb.year = Some(2012);
+        mb.img = "https://coverartarchive.org/release-group/mbid-tms/front-250".into();
+
+        let ranked = rank_with_options(
+            vec![yt.clone(), mb.clone()],
+            "death grips the money store",
+            RankOptions {
+                promote_canonical_albums: true,
+            },
+        );
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].item_url_path, "canonical:rg:mbid-tms");
+        assert_eq!(ranked[0].img, "https://lh3.googleusercontent.com/yt-cover");
+
+        let (flat_items, copies) = rank_flat_with_options(
+            vec![yt, mb],
+            "death grips",
+            RankOptions {
+                promote_canonical_albums: true,
+            },
+        );
+        assert_eq!(flat_items.len(), 1);
+        assert_eq!(flat_items[0].item_url_path, "canonical:rg:mbid-tms");
+        for (of, _) in copies {
+            assert_eq!(of, "canonical:rg:mbid-tms");
         }
     }
 

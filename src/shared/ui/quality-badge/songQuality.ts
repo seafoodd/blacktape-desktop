@@ -9,7 +9,7 @@ const TIER_LABELS: Record<QualityTier, string> = {
 
 export interface SongQuality {
   tier: QualityTier;
-  /** "MP3 · Low", "OPUS · High", "FLAC" (a lossless file needs no tier word). */
+  /** "MP3 · Low", "OPUS · High" or "FLAC · Lossless". */
   label: string;
   /** Tooltip: "Quality: Low (MP3)". */
   title: string;
@@ -30,6 +30,6 @@ export function songQuality(song: { path: string; quality_tier: QualityTier }): 
   const container = fileFormat(song.path);
   // a lossless .m4a / .mp4 holds ALAC: name the codec, not the container
   const format = tier === "lossless" && (container === "M4A" || container === "MP4") ? "ALAC" : container;
-  const label = !format ? tierLabel : tier === "lossless" ? format : `${format} · ${tierLabel}`;
+  const label = format ? `${format} · ${tierLabel}` : tierLabel;
   return { tier, label, title: format ? `Quality: ${tierLabel} (${format})` : `Quality: ${tierLabel}` };
 }

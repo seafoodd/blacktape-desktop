@@ -1,0 +1,4 @@
+{
+  "entry": ["src/pages/album-preview/AlbumTrackRow.browser.fixture.tsx"],
+  "ignore": ["src-tauri/src/platforms/**/fixtures/**"]
+}

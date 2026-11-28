@@ -1,6 +1,10 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
+import { DownloadingTrackRow } from "@/pages/artist-albums/DownloadingTrackRow.tsx";
+import { torrentStatusMessage } from "@/features/library/model/downloadStatusMessage.ts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./artist-albums.module.css";
-import { ItemType, useLibraryStore } from "@/shared/store/libraryStore.ts";
+import { ItemType, useLibraryStore, type DownloadProgress } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import { coverSrc } from "@/shared/lib/remote/cover";
@@ -10,7 +14,8 @@ import { Album, Song } from "@/shared/types.ts";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ContextMenu, ContextMenuPosition, MenuItemOption } from "@/shared/ui/context-menu";
 import { useModalStore } from "@/shared/store/modalStore.ts";
-import { AddNextToQueue, AddToQueue } from "@/shared/lib/audio.ts";
+import { AddNextToQueue, AddToQueue, getArtistAlbums } from "@/shared/lib/audio.ts";
+import { invoke } from "@tauri-apps/api/core";
 import {
   EMPTY_SELECTION,
   nextSelection,
@@ -26,8 +31,8 @@ import { setDragGhost } from "@/pages/artist-albums/dragGhost.ts";
 import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylistModal.tsx";
 import { MdWarningAmber } from "react-icons/md";
 import { listTrash, TRASH_CHANGED_EVENT, type TrashItem } from "@/shared/lib/library/trash.ts";
+import { getMissingTracks } from "@/shared/lib/library/libraryIndex.ts";
 import { listen } from "@tauri-apps/api/event";
-import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import { EmptyLibraryHub } from "@/features/library/ui/EmptyLibraryHub.tsx";
 import { shouldShowEmptyHub } from "@/features/library/ui/emptyLibraryHubHelper.ts";
 import CancelDownloadModal from "@/features/library/ui/CancelDownloadModal.tsx";
@@ -43,6 +48,7 @@ import { startMixedPlayback, type MixedEntry } from "@/shared/lib/remote/stream.
 import SongListItem from "@/features/library/ui/song-list-item/SongListItem.tsx";
 import {
   playableMissingTracks,
+  missingDownloadParams,
   sourceOfAlbum,
   useMissingTracksStore,
   withoutUnavailable,
@@ -59,14 +65,28 @@ import {
   missingRemoteTrack,
   missingTrackPercent,
   missingTrackDownloading,
+  missingTrackIndex,
   findTrashItem,
   albumHasTrackGaps,
 } from "@/features/library/ui/missing-track-row/missingTrackRow.ts";
-import { albumHasMultipleDiscs, rowDiscNumber } from "./artistAlbumsDisc.ts";
+import { albumHasMultipleDiscs, playableRowsFrom, rowDiscNumber } from "./artistAlbumsDisc.ts";
+import {
+  downloadingAlbumMetaLine,
+  extraDownloadingTracksForAlbum,
+  findMissingTrackDownload,
+  normalizeAlbumTitle,
+  groupMissingSelection,
+  isActiveLibraryDownload,
+  matchDownloadToLibraryAlbum,
+  prepareAlbumDeletion,
+  unifiedAlbumKey,
+} from "./artistAlbumsDownloads.ts";
 
 const ArtistAlbums = () => {
-  const { selectedTab, tabs, albums, activeDownloads, cancelDownload } =
+  const { activeDownloads, cancelDownload, dismissDownload } = useDownloadStore();
+  const { selectedTab, tabs, albums, scrollToAlbum, setScrollToAlbum } =
     useLibraryStore();
+  const containerRef = useRef<HTMLDivElement>(null);
   const { startPlayback } = useAudioStore();
   const { openModal } = useModalStore();
   const [menu, setMenu] = useState<{
@@ -113,6 +133,7 @@ const ArtistAlbums = () => {
 
   // Songs of all albums in display order.
   const allSongs = useMemo(() => albums.flatMap((a) => a.songs), [albums]);
+  const songById = useMemo(() => new Map(allSongs.map((song) => [song.id, song])), [allSongs]);
 
   // Every row of every album in display order: the songs and the shown missing songs. Missing songs have no
   // library id, so they get negative ones (-1, -2, ...) to be selectable together with the songs.
@@ -180,7 +201,7 @@ const ArtistAlbums = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelection(EMPTY_SELECTION);
+      if (e.key === "Escape" && !useModalStore.getState().isOpen) setSelection(EMPTY_SELECTION);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -279,6 +300,50 @@ const ArtistAlbums = () => {
         label: "Add to Playlist...",
         action: () => openModal(<AddToPlaylistModal songIds={ids} />),
       },
+      {
+        label: `Re-download / Upgrade ${label}…`,
+        action: () => {
+          const upgradeUrl =
+            songs.length === 1
+              ? `resolve:song:${songs[0].id}`
+              : `resolve:batch:${ids.join(",")}`;
+          openQualityMenu(
+            {
+              platform: "youtube",
+              downloadType: ItemType.Album,
+              url: upgradeUrl,
+              artistName: selectedTab ?? "",
+              title: `${songs.length} selected tracks`,
+              trackUrls: songs.map((s) => `resolve:song:${s.id}`),
+            },
+            {
+              start: (format, overrides) => {
+                void useDownloadStore.getState().startDownload({
+                  platform: "youtube",
+                  downloadType: songs.length === 1 ? ItemType.Track : ItemType.Album,
+                  url: upgradeUrl,
+                  artistName: selectedTab || songs[0]?.album_artist || "",
+                  title: songs.length === 1 ? songs[0].title : `${songs.length} selected tracks`,
+                  coverUrl: songs[0]?.cover_url ?? undefined,
+                  trackUrls: songs.length === 1 ? undefined : songs.map((s) => `resolve:song:${s.id}`),
+                  replaceSongId: songs.length === 1 ? songs[0].id : undefined,
+                  placement:
+                    songs.length === 1
+                      ? {
+                          album: songs[0].album,
+                          album_artist: songs[0].album_artist,
+                          title: songs[0].title,
+                          track_number: songs[0].track_number ?? null,
+                        }
+                      : undefined,
+                  format,
+                  overrides,
+                });
+              },
+            },
+          );
+        },
+      },
       { separator: true, label: "" },
       {
         label: `Delete ${label}...`,
@@ -314,16 +379,20 @@ const ArtistAlbums = () => {
     | { kind: "song"; song: Song }
     | { kind: "missing"; album: string; track: AlbumTrackInfo; missing: MissingTracks };
 
+  const pickForRow = (id: number): Pick | undefined => {
+    const song = songById.get(id);
+    const missing = missingById.get(id);
+    if (song) return { kind: "song", song };
+    if (missing) return { kind: "missing", ...missing };
+  };
+
   /** The rows with these ids (songs and missing songs) in list order. */
   const picksOf = (include: (id: number) => boolean): Pick[] => {
-    const songById = new Map(allSongs.map((s) => [s.id, s]));
     const picks: Pick[] = [];
     for (const id of orderedIds) {
       if (!include(id)) continue;
-      const song = songById.get(id);
-      const m = missingById.get(id);
-      if (song) picks.push({ kind: "song", song });
-      else if (m) picks.push({ kind: "missing", ...m });
+      const pick = pickForRow(id);
+      if (pick) picks.push(pick);
     }
     return picks;
   };
@@ -369,10 +438,9 @@ const ArtistAlbums = () => {
    */
   const playFromRow = async (id: number) => {
     try {
-      const at = orderedIds.indexOf(id);
-      if (at < 0) return;
-      // every row is a pick, so the picks line up with orderedIds
-      await startMixedPlayback(mixedEntries(picksOf(() => true)), at);
+      const { entries, index } = playableRowsFrom(orderedIds, id, pickForRow);
+      if (index < 0) return;
+      await startMixedPlayback(mixedEntries(entries), index);
     } catch (e) {
       console.error("Play error: ", e);
     }
@@ -387,6 +455,8 @@ const ArtistAlbums = () => {
     const picks = picksOf((id) => state.selected.has(id));
     const songs = picks.flatMap((p) => (p.kind === "song" ? [p.song] : []));
     const missing = picks.flatMap((p) => (p.kind === "missing" ? [p] : []));
+    const groups = [...groupMissingSelection(missing, (url) => !pendingUrls.has(url) && !unavailable.has(url))];
+    const downloadableCount = groups.reduce((count, [, tracks]) => count + tracks.length, 0);
     const addPick = queuePick;
 
     const items: MenuItemOption[] = [
@@ -395,15 +465,29 @@ const ArtistAlbums = () => {
         action: () => void playPicks(picks),
       },
     ];
-    if (missing.length > 0) {
+    if (downloadableCount > 0) {
+      const label = `Download ${downloadableCount} missing song${downloadableCount === 1 ? "" : "s"}`;
+      const chooseAlbumQuality = (position: number) => {
+        const group = groups[position];
+        if (!group) return;
+        const [album, selection] = group;
+        const tracks = selection.map(({ track }) => track);
+        const urls = tracks.map((track) => track.url);
+        openQualityMenu(missingDownloadParams(selection[0].missing, urls), {
+          scopeTracks: tracks,
+          displayTitle: groups.length > 1 ? `${album} · Album ${position + 1} of ${groups.length}` : undefined,
+          start: (format, overrides) => {
+            void downloadMissing(album, format, overrides, urls);
+            chooseAlbumQuality(position + 1);
+          },
+        });
+      };
       items.push({
-        label: `Download ${missing.length} missing song${missing.length === 1 ? "" : "s"}`,
+        label,
         action: () => {
-          const byAlbum = new Map<string, AlbumTrackInfo[]>();
-          for (const m of missing) byAlbum.set(m.album, [...(byAlbum.get(m.album) ?? []), m.track]);
-          for (const [album, tracks] of byAlbum) void downloadMissingMany(album, tracks);
+          for (const [album, selection] of groups) void downloadMissingMany(album, selection.map(({ track }) => track));
         },
-      });
+      }, { label: `${label} as…`, action: () => chooseAlbumQuality(0) });
     }
     items.push(
       {
@@ -436,6 +520,50 @@ const ArtistAlbums = () => {
         {
           label: "Add to Playlist...",
           action: () => openModal(<AddToPlaylistModal songIds={ids} />),
+        },
+        {
+          label: `Re-download / Upgrade ${noun}…`,
+          action: () => {
+            const upgradeUrl =
+              songs.length === 1
+                ? `resolve:song:${songs[0].id}`
+                : `resolve:batch:${ids.join(",")}`;
+            openQualityMenu(
+              {
+                platform: "youtube",
+                downloadType: ItemType.Album,
+                url: upgradeUrl,
+                artistName: selectedTab ?? "",
+                title: noun,
+                trackUrls: songs.map((s) => `resolve:song:${s.id}`),
+              },
+              {
+                start: (format, overrides) => {
+                  void useDownloadStore.getState().startDownload({
+                    platform: "youtube",
+                    downloadType: songs.length === 1 ? ItemType.Track : ItemType.Album,
+                    url: upgradeUrl,
+                    artistName: selectedTab || songs[0]?.album_artist || "",
+                    title: songs.length === 1 ? songs[0].title : noun,
+                    coverUrl: songs[0]?.cover_url ?? undefined,
+                    trackUrls: songs.length === 1 ? undefined : songs.map((s) => `resolve:song:${s.id}`),
+                    replaceSongId: songs.length === 1 ? songs[0].id : undefined,
+                    placement:
+                      songs.length === 1
+                        ? {
+                            album: songs[0].album,
+                            album_artist: songs[0].album_artist,
+                            title: songs[0].title,
+                            track_number: songs[0].track_number ?? null,
+                          }
+                        : undefined,
+                    format,
+                    overrides,
+                  });
+                },
+              },
+            );
+          },
         },
         { separator: true, label: "" },
         {
@@ -499,21 +627,56 @@ const ArtistAlbums = () => {
         label: "Add Album to Playlist...",
         action: () => openModal(<AddToPlaylistModal songIds={ids} />),
       },
+      ...(album.songs.length > 0
+        ? [
+            {
+              label: "Re-download / Upgrade album…",
+              action: () => {
+                const albumUrl = `resolve:album:${encodeURIComponent(selectedTab ?? album.album_artist)}::${encodeURIComponent(album.title)}`;
+                openQualityMenu(
+                  {
+                    platform: "youtube",
+                    downloadType: ItemType.Album,
+                    url: albumUrl,
+                    artistName: selectedTab ?? album.album_artist,
+                    title: album.title,
+                    trackUrls: album.songs.map((s) => `resolve:song:${s.id}`),
+                  },
+                  {
+                    start: (format, overrides) => {
+                      void useDownloadStore.getState().startDownload({
+                        platform: "youtube",
+                        downloadType: ItemType.Album,
+                        url: albumUrl,
+                        artistName: selectedTab ?? album.album_artist,
+                        title: album.title,
+                        coverUrl: album.songs[0]?.cover_url ?? undefined,
+                        trackUrls: album.songs.map((s) => `resolve:song:${s.id}`),
+                        format,
+                        overrides,
+                      });
+                    },
+                  },
+                );
+              },
+            },
+          ]
+        : []),
       ...missingAlbumMenuItems(sourceOf(album.title), isMissingShown(album.title), {
         toggle: () => toggleMissing(album.title),
         download: () => void downloadMissing(album.title),
-        downloadAs: () => {
-          const source = sourceOf(album.title);
-          if (!source) return;
+        downloadAs: async () => {
+          if (!selectedTab) return;
+          const missing = await getMissingTracks(selectedTab, album.title).catch(() => null);
+          if (!missing) return;
+          const { unavailable, pendingUrls } = useMissingTracksStore.getState();
+          const tracks = playableMissingTracks(missing).filter((track) =>
+            !unavailable.has(track.url) && !pendingUrls.has(track.url));
+          const urls = tracks.map((track) => track.url);
+          if (urls.length === 0) return;
           openQualityMenu(
-            {
-              platform: source.platform,
-              downloadType: ItemType.Album,
-              url: source.source_url,
-              artistName: selectedTab,
-              title: album.title,
-            },
-            { start: (format) => void downloadMissing(album.title, format) },
+            missingDownloadParams(missing, urls),
+            { scopeTracks: tracks, start: (format, overrides) => void downloadMissing(album.title, format, overrides, urls) },
           );
         },
         find: () =>
@@ -541,7 +704,18 @@ const ArtistAlbums = () => {
         danger: true,
         action: () =>
           openModal(
-            <DeleteSongModal songs={album.songs} albumTitle={album.title} />,
+            <DeleteSongModal
+              songs={album.songs}
+              albumTitle={album.title}
+              beforeDelete={() => prepareAlbumDeletion(
+                album,
+                selectedTab ?? album.songs[0]?.album_artist ?? "",
+                Object.values(useDownloadStore.getState().activeDownloads),
+                missingSources[album.title]?.source_url,
+                (taskId) => invoke("cancel_download", { taskId }),
+                getArtistAlbums,
+              )}
+            />,
           ),
       },
     ];
@@ -550,32 +724,108 @@ const ArtistAlbums = () => {
   /** Albums whose running download only fetches missing songs: they show up inside the album, not as a new one. */
   const missingDownloadUrls = useMemo(() => new Set(pendingUrls.values()), [pendingUrls]);
 
-  /** Library albums linked to a remote album: a download of that remote album fills the library album. */
-  const linkedAlbumOf = (d: { url: string; itemType: string; albumTitle: string }): string | undefined => {
-    if (!missingReady) return undefined;
-    const byUrl = Object.entries(missingSources).find(([, source]) => sameUrl(source.source_url, d.url))?.[0];
-    if (byUrl !== undefined) return byUrl;
-    // A single track filed into an album the library has (the download carries that album's title).
-    if (d.itemType !== "Track") return undefined;
-    const title = d.albumTitle.trim().toLowerCase();
-    return albums.find((a) => a.title.trim().toLowerCase() === title)?.title;
-  };
+  /** Library albums linked to a remote album or matching an existing album title: downloads integrate into them. */
+  const linkedAlbumOf = (d: DownloadProgress): string | undefined =>
+    matchDownloadToLibraryAlbum(d, albums, missingSources, missingReady);
+
+  const anyRunningDownloads = useMemo(
+    () => Object.values(activeDownloads).some(isActiveLibraryDownload),
+    [activeDownloads],
+  );
+
+  const downloadsByExistingAlbum = useMemo(() => {
+    const map = new Map<string, (typeof activeDownloads)[string][]>();
+    if (!selectedTab) return map;
+    const normArtist = selectedTab.trim().toLowerCase();
+    for (const d of Object.values(activeDownloads)) {
+      if (!isActiveLibraryDownload(d)) continue;
+      if (d.artistName.trim().toLowerCase() !== normArtist) continue;
+      const targetAlbum = matchDownloadToLibraryAlbum(d, albums, missingSources, missingReady);
+      if (targetAlbum === undefined) continue;
+      const list = map.get(targetAlbum) ?? [];
+      list.push(d);
+      map.set(targetAlbum, list);
+    }
+    return map;
+  }, [activeDownloads, selectedTab, albums, missingSources, missingReady]);
 
   const activeArtistDownloads = useMemo(() => {
     if (!selectedTab) return [];
     return Object.values(activeDownloads).filter(
       (d) =>
-        (d.status === "downloading" ||
-          d.status === "idle" ||
-          d.status === "processing") &&
+        isActiveLibraryDownload(d) &&
         !missingDownloadUrls.has(d.url) &&
         // a single track shows up once its album is known (otherwise it would flash as "Singles" first)
         !(d.itemType === "Track" && d.albumTitle.trim() === "") &&
-        linkedAlbumOf(d) === undefined &&
+        matchDownloadToLibraryAlbum(d, albums, missingSources, missingReady) === undefined &&
         d.artistName.trim().toLowerCase() === selectedTab.trim().toLowerCase(),
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDownloads, selectedTab, missingDownloadUrls, missingSources, missingReady, albums]);
+
+  /** Per-song upgrade state from running `resolve:` tasks, shown right inside the existing album rows. */
+  const upgradingBySongId = useMemo(() => {
+    const map = new Map<number, { percent: number; done: boolean; taskId: string; trackIndex: number }>();
+    for (const d of Object.values(activeDownloads)) {
+      const running =
+        d.status === "downloading" || d.status === "idle" || d.status === "processing";
+      if (!running || !d.url.startsWith("resolve:")) continue;
+
+      if (d.replaceSongId !== undefined) {
+        const tr = d.tracks[0];
+        if (tr?.status !== "cancelled") {
+          map.set(d.replaceSongId, {
+            taskId: d.id,
+            trackIndex: 0,
+            percent: tr?.percent ?? d.overallPercent ?? 0,
+            done: tr?.status === "completed" || d.overallPercent >= 100,
+          });
+        }
+      }
+      if (d.trackUrls && d.trackUrls.length > 0) {
+        d.trackUrls.forEach((tu, idx) => {
+          const match = /^resolve:song:(\d+)$/.exec(tu);
+          if (!match) return;
+          const songId = Number(match[1]);
+          const tr = d.tracks[idx];
+          if (tr?.status === "cancelled") return;
+          map.set(songId, {
+            taskId: d.id,
+            trackIndex: idx,
+            percent: tr?.percent ?? 0,
+            done: tr?.status === "completed",
+          });
+        });
+      }
+    }
+    return map;
+  }, [activeDownloads]);
+
+  const [expandedErrorAlbums, setExpandedErrorAlbums] = useState<Record<string, boolean>>({});
+
+  const failedArtistDownloads = useMemo(() => {
+    if (!selectedTab) return [];
+    const normArtist = selectedTab.trim().toLowerCase();
+    return Object.values(activeDownloads).filter(
+      (d) => d.artistName.trim().toLowerCase() === normArtist && d.status === "failed",
+    );
+  }, [activeDownloads, selectedTab]);
+
+  const { failedByAlbum, unmatchedFailedDownloads } = useMemo(() => {
+    const albumKeys = new Set(albums.map((a) => normalizeAlbumTitle(a.title)));
+    const byAlbum = new Map<string, (typeof failedArtistDownloads)>();
+    const unmatched: typeof failedArtistDownloads = [];
+    for (const failed of failedArtistDownloads) {
+      const key = normalizeAlbumTitle(failed.albumTitle);
+      if (key && albumKeys.has(key)) {
+        const list = byAlbum.get(key) ?? [];
+        list.push(failed);
+        byAlbum.set(key, list);
+      } else {
+        unmatched.push(failed);
+      }
+    }
+    return { failedByAlbum: byAlbum, unmatchedFailedDownloads: unmatched };
+  }, [albums, failedArtistDownloads]);
 
   // A running download of a linked album shows its songs inside the library album: open that album's rows.
   useEffect(() => {
@@ -622,7 +872,25 @@ const ArtistAlbums = () => {
     );
   }
 
-  if (shouldShowEmptyHub(tabs.length, albums.length, selectedTab)) {
+  // Scroll smoothly to a requested album (e.g. clicking album name in PlayerControls).
+  useEffect(() => {
+    if (!scrollToAlbum || !containerRef.current) return;
+    const target = scrollToAlbum.trim().toLowerCase();
+    if (!target) {
+      setScrollToAlbum(null);
+      return;
+    }
+    const sections = containerRef.current.querySelectorAll<HTMLElement>("[data-album-title]");
+    const match = Array.from(sections).find(
+      (el) => (el.dataset.albumTitle ?? "").trim().toLowerCase() === target,
+    );
+    if (match) {
+      match.scrollIntoView({ behavior: "smooth", block: "center" });
+      setScrollToAlbum(null);
+    }
+  }, [scrollToAlbum, albums, selectedTab, setScrollToAlbum]);
+
+  if (shouldShowEmptyHub(tabs.length, albums.length, selectedTab, anyRunningDownloads)) {
     return <EmptyLibraryHub />;
   }
 
@@ -637,7 +905,7 @@ const ArtistAlbums = () => {
     );
   }
 
-  if (albums.length === 0) {
+  if (albums.length === 0 && activeArtistDownloads.length === 0 && failedArtistDownloads.length === 0) {
     return (
       <div className={styles.container}>
         <div className={styles.selectArtistPrompt}>
@@ -650,6 +918,7 @@ const ArtistAlbums = () => {
 
   return (
     <div
+      ref={containerRef}
       className={styles.container}
       onClick={(e) => {
         // A click outside the song rows clears the selection.
@@ -659,36 +928,62 @@ const ArtistAlbums = () => {
       }}
     >
       <h1 className={clsx(styles.artistName, "truncate")}>{selectedTab}</h1>
-      <div className={styles.albums}>
-        {/* Downloading Albums */}
-        {activeArtistDownloads.map((download) => (
-          <section
-            className={clsx(styles.albumBlock, styles.downloadingAlbumBlock)}
-            key={`download-${download.id}`}
-            onContextMenu={(e) =>
-              openMenu(e, [
-                {
-                  label: "Cancel Download",
-                  danger: true,
-                  action: () =>
-                    openModal(
-                      <CancelDownloadModal
-                        title={decodeHtmlEntities(download.albumTitle)}
-                        artist={download.artistName}
-                        onConfirm={() => {
-                          cancelDownload(download.id).catch((e) =>
-                            console.error("cancelDownload error: ", e),
-                          );
-                        }}
-                      />,
-                    ),
-                },
-              ])
-            }
+      {unmatchedFailedDownloads.map((failed) => (
+        <div key={failed.id} className={styles.downloadErrorBanner} role="alert">
+          <span>
+            <strong>{decodeHtmlEntities(failed.albumTitle || "Download")}:</strong>{" "}
+            {failed.message || "Download failed."}
+          </span>
+          <button
+            type="button"
+            className={styles.downloadErrorDismiss}
+            onClick={() => dismissDownload(failed.id)}
+            aria-label="Dismiss error"
           >
-            <div className={styles.albumBlockLeft}>
-              <div className={styles.downloadingCoverWrapper}>
-                <img loading="lazy" decoding="async"
+            Dismiss
+          </button>
+        </div>
+      ))}
+      <div className={styles.albums}>
+        {/* Downloading Albums (rendered through the same albumBlock layout so transitioning at track 1 is seamless) */}
+        {(() => {
+          const seenAlbumKeys = new Set(albums.map((a) => unifiedAlbumKey(selectedTab, a.title)));
+          return activeArtistDownloads.map((download) => {
+          const metaLine = downloadingAlbumMetaLine(download);
+          const tracks = download.tracks ?? [];
+          const hasMultiDiscs = new Set(tracks.map((t) => t.discNumber ?? 1)).size >= 2;
+          let lastDisc = 0;
+          const baseKey = unifiedAlbumKey(selectedTab, download.albumTitle);
+          const blockKey = seenAlbumKeys.has(baseKey) ? `${baseKey}::${download.id}` : baseKey;
+          seenAlbumKeys.add(baseKey);
+
+          return (
+            <section
+              className={styles.albumBlock}
+              data-album-title={download.albumTitle}
+              key={blockKey}
+              onContextMenu={(e) =>
+                openMenu(e, [
+                  {
+                    label: "Cancel Download",
+                    danger: true,
+                    action: () =>
+                      openModal(
+                        <CancelDownloadModal
+                          title={decodeHtmlEntities(download.albumTitle)}
+                          artist={download.artistName}
+                          onConfirm={() => cancelDownload(download.id)}
+                        />,
+                      ),
+                  },
+                ])
+              }
+            >
+              <div className={styles.albumBlockLeft}>
+                <img
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
                   src={
                     download.coverUrl
                       ? coverSrc(download.coverUrl, 200)
@@ -703,84 +998,85 @@ const ArtistAlbums = () => {
                   className={styles.playlistImage}
                   alt={download.albumTitle}
                 />
-                <div className={styles.downloadingCoverBadge}>
-                  Downloading {download.overallPercent}%
+              </div>
+              <div className={styles.albumBlockRight}>
+                <div className={styles.albumTitleRow}>
+                  <h2 className={clsx(styles.albumTitle, "truncate")}>
+                    {decodeHtmlEntities(download.albumTitle)}
+                  </h2>
+                  {metaLine && (
+                    <span className={clsx(styles.albumMeta, "truncate")}>{metaLine}</span>
+                  )}
+                  <span className={styles.albumTransfer}>
+                    <span className={styles.albumUpgradingBadge} title="Downloading album">
+                      <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
+                      <span role="status">{torrentStatusMessage(download.message) ?? `Downloading ${download.overallPercent}%`}</span>
+                    </span>
+                    <CancelDownloadButton taskId={download.id} />
+                  </span>
                 </div>
-              </div>
-            </div>
-            <div className={styles.albumBlockRight}>
-              <div className={styles.downloadingHeader}>
-                <h2 className={clsx(styles.albumTitle, "truncate")}>
-                  {decodeHtmlEntities(download.albumTitle)}
-                </h2>
-                <span className={styles.downloadingOverallBadge}>
-                  {download.overallPercent}%
-                </span>
-              </div>
-              <ul className={styles.songs}>
-                {download.tracks && download.tracks.length > 0 ? (
-                  download.tracks.map((track, trackIdx) => (
-                    <li
-                      className={clsx(styles.song, styles.downloadingSong)}
-                      key={`track-${trackIdx}`}
-                    >
-                      <div className={styles.songLeft}>
-                        <div className={styles.songTrackNumber}>
-                          {String(track.trackNumber || trackIdx + 1).padStart(
-                            2,
-                            "0",
+                <ul className={styles.songs}>
+                  {tracks.length > 0 ? (
+                    tracks.map((track, trackIdx) => {
+                      const disc = track.discNumber ?? 1;
+                      const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
+                      if (showDiscHeader) lastDisc = disc;
+                      const trackUrl = track.url ?? download.trackUrls?.[trackIdx];
+                      return (
+                        <React.Fragment key={`dl-track-${trackIdx}-${track.title}`}>
+                          {showDiscHeader && (
+                            <li className={styles.discHeader} role="presentation">
+                              <span className={styles.discHeaderTitle}>DISC {disc}</span>
+                            </li>
                           )}
-                        </div>
+                          <DownloadingTrackRow
+                            taskId={download.id}
+                            trackIndex={trackIdx}
+                            title={track.title}
+                            trackNumber={track.trackNumber || trackIdx + 1}
+                            percent={track.percent}
+                            status={track.status}
+                            platform={download.platform}
+                            albumUrl={download.url}
+                            artistName={download.artistName}
+                            albumTitle={download.albumTitle}
+                            coverUrl={download.coverUrl}
+                            playUrl={trackUrl}
+                          />
+                        </React.Fragment>
+                      );
+                    })
+                  ) : (
+                    <li className={clsx(styles.song, styles.downloadingSong)}>
+                      <div className={styles.songLeft}>
+                        <div className={styles.songTrackNumber}>01</div>
                         <div className={clsx(styles.songTitle, "truncate")}>
-                          {decodeHtmlEntities(track.title)}
+                          {download.message || "Preparing download..."}
                         </div>
                       </div>
                       <div className={styles.songRight}>
                         <div className={styles.trackPercentage}>
-                          {track.status === "completed" ||
-                          track.percent >= 100 ? (
-                            <span className={styles.percentCompleted}>
-                              100%
-                            </span>
-                          ) : track.percent > 0 ? (
-                            <span className={styles.percentActive}>
-                              {track.percent}%
-                            </span>
-                          ) : (
-                            <span className={styles.percentPending}>0%</span>
-                          )}
+                          <span className={styles.percentPending}>
+                            {download.overallPercent}%
+                          </span>
                         </div>
                       </div>
                     </li>
-                  ))
-                ) : (
-                  <li className={clsx(styles.song, styles.downloadingSong)}>
-                    <div className={styles.songLeft}>
-                      <div className={styles.songTrackNumber}>01</div>
-                      <div className={clsx(styles.songTitle, "truncate")}>
-                        {download.message || "Preparing download..."}
-                      </div>
-                    </div>
-                    <div className={styles.songRight}>
-                      <div className={styles.trackPercentage}>
-                        <span className={styles.percentPending}>
-                          {download.overallPercent}%
-                        </span>
-                      </div>
-                    </div>
-                  </li>
-                )}
-              </ul>
-            </div>
-          </section>
-        ))}
+                  )}
+                </ul>
+              </div>
+            </section>
+          );
+        });
+        })()}
 
         {/* Existing Downloaded Albums */}
         {albums.map((album, index) => (
           <section
             className={styles.albumBlock}
-            // Stable key: with the index, every album after an added / removed one was remounted (covers reloaded).
-            key={`${album.album_artist}::${album.title}`}
+            data-album-title={album.title}
+            // Stable unified key matches downloading album blocks so track 1 saving does not remount the card.
+            key={unifiedAlbumKey(selectedTab, album.title)}
             onContextMenu={(e) => openMenu(e, albumMenuItems(album))}
           >
             <div
@@ -826,6 +1122,72 @@ const ArtistAlbums = () => {
                     {albumMetaLine(album.songs)}
                   </span>
                 )}
+                <span className={styles.albumTransfer}>
+                {(() => {
+                  const albumDownloads = downloadsByExistingAlbum.get(album.title) ?? [];
+                  const torrentMessage = albumDownloads.map((d) => torrentStatusMessage(d.message)).find(Boolean);
+                  if (torrentMessage) {
+                    return (
+                      <span className={styles.albumUpgradingBadge} role="status">
+                        <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
+                        <span>{torrentMessage}</span>
+                      </span>
+                    );
+                  }
+                  const activeSongs = album.songs
+                    .map((s) => upgradingBySongId.get(s.id))
+                    .filter((v) => v !== undefined);
+                  if (activeSongs.length > 0) {
+                    const pct = Math.round(
+                      activeSongs.reduce((acc, s) => acc + s.percent, 0) / activeSongs.length,
+                    );
+                    return (
+                      <span className={styles.albumUpgradingBadge} title={`Upgrading ${activeSongs.length} track(s)`}>
+                        <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
+                        <span>Upgrading{pct > 0 ? ` ${pct}%` : "…"}</span>
+                      </span>
+                    );
+                  }
+                  if (albumDownloads.length > 0) {
+                    const pct = Math.round(
+                      albumDownloads.reduce((acc, d) => acc + (d.overallPercent ?? 0), 0) /
+                        albumDownloads.length,
+                    );
+                    return (
+                      <span className={styles.albumUpgradingBadge} title="Downloading tracks into this album">
+                        <span className={styles.albumUpgradingSpinner} aria-hidden="true" />
+                        <span role="status">{albumDownloads.map((d) => torrentStatusMessage(d.message)).find(Boolean) ?? `Downloading ${pct}%`}</span>
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+                <CancelDownloadButton taskIds={[
+                  ...(downloadsByExistingAlbum.get(album.title) ?? []).map((task) => task.id),
+                  ...album.songs.flatMap((song) => {
+                    const upgrade = upgradingBySongId.get(song.id);
+                    return upgrade ? [upgrade.taskId] : [];
+                  }),
+                ]} />
+                </span>
+                {(() => {
+                  const albumErrors = failedByAlbum.get(normalizeAlbumTitle(album.title)) ?? [];
+                  if (albumErrors.length === 0) return null;
+                  const errKey = normalizeAlbumTitle(album.title);
+                  const expanded = Boolean(expandedErrorAlbums[errKey]);
+                  return (
+                    <button
+                      type="button"
+                      className={styles.albumErrorPill}
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setExpandedErrorAlbums((prev) => ({ ...prev, [errKey]: !prev[errKey] }))
+                      }
+                    >
+                      ! {albumErrors.length} {albumErrors.length === 1 ? "error" : "errors"} · {expanded ? "Hide ▴" : "Details ▾"}
+                    </button>
+                  );
+                })()}
                 {(() => {
                   const source = sourceOf(album.title);
                   if (source) {
@@ -870,12 +1232,31 @@ const ArtistAlbums = () => {
                   );
                 })()}
               </div>
+              {(() => {
+                const errKey = normalizeAlbumTitle(album.title);
+                const albumErrors = failedByAlbum.get(errKey) ?? [];
+                if (albumErrors.length === 0 || !expandedErrorAlbums[errKey]) return null;
+                return (
+                  <div className={styles.albumErrorList} role="alert">
+                    {albumErrors.map((failed) => (
+                      <div key={failed.id} className={styles.albumErrorItem}>
+                        <span className="truncate">{failed.message || "Download failed."}</span>
+                        <button
+                          type="button"
+                          className={styles.downloadErrorDismiss}
+                          onClick={() => dismissDownload(failed.id)}
+                          aria-label="Dismiss error"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <ul className={styles.songs}>
                 {(() => {
                   const { missing, rows } = albumViews[index];
-                  const download = missing
-                    ? Object.values(activeDownloads).find((d) => linkedAlbumOf(d) === album.title)
-                    : undefined;
                   const hasMultiDiscs = albumHasMultipleDiscs(
                     album.songs,
                     missing ? missing.tracks : undefined,
@@ -885,67 +1266,116 @@ const ArtistAlbums = () => {
                     const r = rows[i];
                     return !!r && selection.selected.has(r.id);
                   };
-                  return rows.map(({ row, id }, i) => {
-                    const disc = rowDiscNumber(row);
-                    const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
-                    if (showDiscHeader) {
-                      lastDisc = disc;
-                    }
-                    const prevRow = rows[i - 1]?.row;
-                    const nextRow = rows[i + 1]?.row;
-                    const sameDiscAbove = !hasMultiDiscs || (prevRow && rowDiscNumber(prevRow) === disc);
-                    const sameDiscBelow = !hasMultiDiscs || (nextRow && rowDiscNumber(nextRow) === disc);
+                  return (
+                    <>
+                      {rows.map(({ row, id }, i) => {
+                        const download = row.kind === "missing"
+                          ? (downloadsByExistingAlbum.get(album.title) ?? []).find((task) => missingTrackDownloading(task, row.track))
+                          : undefined;
+                        const cancelTarget = row.kind === "missing"
+                          ? findMissingTrackDownload(downloadsByExistingAlbum.get(album.title) ?? [], row.track)
+                          : undefined;
+                        const disc = rowDiscNumber(row);
+                        const showDiscHeader = hasMultiDiscs && disc !== lastDisc;
+                        if (showDiscHeader) {
+                          lastDisc = disc;
+                        }
+                        const prevRow = rows[i - 1]?.row;
+                        const nextRow = rows[i + 1]?.row;
+                        const sameDiscAbove = !hasMultiDiscs || (prevRow && rowDiscNumber(prevRow) === disc);
+                        const sameDiscBelow = !hasMultiDiscs || (nextRow && rowDiscNumber(nextRow) === disc);
 
-                    return (
-                      <React.Fragment key={row.kind === "song" ? row.song.id : `missing-${row.track.index}-${row.track.url}`}>
-                        {showDiscHeader && (
-                          <li
-                            key={`disc-header-${album.title}-${disc}`}
-                            className={styles.discHeader}
-                            role="presentation"
-                          >
-                            <span className={styles.discHeaderTitle}>DISC {disc}</span>
-                          </li>
-                        )}
-                        {row.kind === "song" ? (
-                          <SongListItem
-                            selectedAbove={sameDiscAbove && selectedAt(i - 1)}
-                            selectedBelow={sameDiscBelow && selectedAt(i + 1)}
-                            dragIds={
-                              selection.selected.has(row.song.id)
-                                ? orderedIds.filter((x) => x > 0 && selection.selected.has(x))
-                                : [row.song.id]
-                            }
-                            song={row.song}
-                            onPlay={handlePlaySongRow}
-                            onSelect={handleSelectSong}
-                            onOpenMenu={handleOpenSongMenu}
-                            selected={selection.selected.has(row.song.id)}
-                          />
-                        ) : (
-                          missing && (
-                            <MissingTrackRow
-                              album={album.title}
-                              missing={missing}
-                              track={row.track}
-                              percent={missingTrackPercent(download, row.track)}
-                              downloading={missingTrackDownloading(download, row.track)}
-                              ghost={row.track.url === ""}
-                              unavailable={unavailable.has(row.track.url)}
-                              failure={missingFailures[row.track.url]}
-                              trashId={findTrashItem(trashed, album.title, row.track)?.id}
-                              selected={selection.selected.has(id)}
-                              selectedAbove={sameDiscAbove && selectedAt(i - 1)}
-                              selectedBelow={sameDiscBelow && selectedAt(i + 1)}
-                              onPlay={() => void playFromRow(id)}
-                              onSelect={(e) => handleSelectMissing(id, e)}
-                              onMenu={(e) => handleMissingMenu(id, e)}
-                            />
-                          )
-                        )}
-                      </React.Fragment>
-                    );
-                  });
+                        return (
+                          <React.Fragment key={row.kind === "song" ? row.song.id : `missing-${row.track.index}-${row.track.url}`}>
+                            {showDiscHeader && (
+                              <li
+                                key={`disc-header-${album.title}-${disc}`}
+                                className={styles.discHeader}
+                                role="presentation"
+                              >
+                                <span className={styles.discHeaderTitle}>DISC {disc}</span>
+                              </li>
+                            )}
+                            {row.kind === "song" ? (
+                              <SongListItem
+                                selectedAbove={sameDiscAbove && selectedAt(i - 1)}
+                                selectedBelow={sameDiscBelow && selectedAt(i + 1)}
+                                dragIds={
+                                  selection.selected.has(row.song.id)
+                                    ? orderedIds.filter((x) => x > 0 && selection.selected.has(x))
+                                    : [row.song.id]
+                                }
+                                song={row.song}
+                                onPlay={handlePlaySongRow}
+                                onSelect={handleSelectSong}
+                                onOpenMenu={handleOpenSongMenu}
+                                selected={selection.selected.has(row.song.id)}
+                                upgradeProgress={upgradingBySongId.get(row.song.id)}
+                              />
+                            ) : (
+                              missing && (
+                                <MissingTrackRow
+                                  album={album.title}
+                                  missing={missing}
+                                  track={row.track}
+                                  percent={missingTrackPercent(download, row.track)}
+                                  downloading={missingTrackDownloading(download, row.track)}
+                                  downloadTaskId={cancelTarget?.id}
+                                  downloadTrackIndex={missingTrackIndex(cancelTarget, row.track)}
+                                  ghost={row.track.url === ""}
+                                  unavailable={unavailable.has(row.track.url)}
+                                  failure={missingFailures[row.track.url]}
+                                  trashId={findTrashItem(trashed, album.title, row.track)?.id}
+                                  selected={selection.selected.has(id)}
+                                  selectedAbove={sameDiscAbove && selectedAt(i - 1)}
+                                  selectedBelow={sameDiscBelow && selectedAt(i + 1)}
+                                  onPlay={() => void playFromRow(id)}
+                                  onSelect={(e) => handleSelectMissing(id, e)}
+                                  onMenu={(e) => handleMissingMenu(id, e)}
+                                />
+                              )
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                      {(() => {
+                        const extraTracks = extraDownloadingTracksForAlbum(
+                          album.songs,
+                          missing ? missing.tracks.map((t) => t.title) : [],
+                          downloadsByExistingAlbum.get(album.title) ?? [],
+                        );
+                        const hasExtraMultiDiscs =
+                          hasMultiDiscs || new Set(extraTracks.map((t) => t.discNumber)).size >= 2;
+                        return extraTracks.map((tr, trIdx) => {
+                          const showExtraDisc = hasExtraMultiDiscs && tr.discNumber !== lastDisc;
+                          if (showExtraDisc) lastDisc = tr.discNumber;
+                          return (
+                            <React.Fragment key={`integrated-dl-${album.title}-${trIdx}-${tr.title}`}>
+                              {showExtraDisc && (
+                                <li className={styles.discHeader} role="presentation">
+                                  <span className={styles.discHeaderTitle}>DISC {tr.discNumber}</span>
+                                </li>
+                              )}
+                              <DownloadingTrackRow
+                                taskId={tr.taskId}
+                                trackIndex={tr.trackIndex}
+                                title={tr.title}
+                                trackNumber={tr.trackNumber}
+                                percent={tr.percent}
+                                status={tr.status}
+                                platform={tr.platform}
+                                albumUrl={tr.albumUrl}
+                                artistName={tr.artistName}
+                                albumTitle={tr.albumTitle}
+                                coverUrl={tr.coverUrl}
+                                playUrl={tr.url}
+                              />
+                            </React.Fragment>
+                          );
+                        });
+                      })()}
+                    </>
+                  );
                 })()}
               </ul>
             </div>

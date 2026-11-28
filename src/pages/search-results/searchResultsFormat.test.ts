@@ -20,11 +20,27 @@ import {
   trackAlbumItem,
   trackSubline,
   uniqueWarnings,
+  warningSource,
 } from "./searchResultsFormat.ts";
 import { ItemType, type DownloadProgress } from "@/shared/store/libraryStore.ts";
 
 const download = (url: string, status: DownloadProgress["status"]): DownloadProgress =>
   ({ url, status }) as DownloadProgress;
+
+describe("warningSource", () => {
+  it.each([
+    ["YouTube Music temporarily unavailable", "youtube"],
+    ["bandcamp: request timed out", "bandcamp"],
+    ["SoundCloud rate limited", "soundcloud"],
+    ["musicbrainz lookup failed", "musicbrainz"],
+  ] as const)("finds the source label in %s", (message, source) => {
+    expect(warningSource(message)).toBe(source);
+  });
+
+  it("returns null when no source name is present", () => {
+    expect(warningSource("Search failed. Try again later.")).toBeNull();
+  });
+});
 
 describe("formatDurationSecs", () => {
   it("formats m:ss below an hour", () => {

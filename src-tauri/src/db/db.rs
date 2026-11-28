@@ -4,6 +4,9 @@ use crate::types::{Album, ArtistSummary, Playlist, Song};
 use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Error;
 
+/// `app_settings` key holding the active library directory (written by `scan_music`).
+pub const LIBRARY_DIR_KEY: &str = "library_dir";
+
 pub struct Database {
     pub pool: SqlitePool,
 }
@@ -155,6 +158,54 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Atomically replaces an existing song's underlying audio file, source metadata, and quality tier
+    /// while preserving its row id (keeping playlists and favorites links intact), and optionally records
+    /// the replaced older file inside `trash_items`.
+    pub async fn replace_song_file_and_record_trash(
+        &self,
+        song_id: i64,
+        updated: &Song,
+        trash_record: Option<(&str, &str, &str, i64, i64)>,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE songs
+             SET path = ?, source = ?, source_url = ?, source_item_id = ?,
+                 duration_ms = ?, quality_tier = ?,
+                 cover_url = COALESCE(?, cover_url),
+                 external_cover_url = COALESCE(?, external_cover_url)
+             WHERE id = ?",
+        )
+        .bind(&updated.path)
+        .bind(updated.source)
+        .bind(&updated.source_url)
+        .bind(&updated.source_item_id)
+        .bind(updated.duration_ms as i64)
+        .bind(updated.quality_tier)
+        .bind(&updated.cover_url)
+        .bind(&updated.external_cover_url)
+        .bind(song_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if let Some((song_json, original_path, trash_path, size_bytes, trashed_at)) = trash_record {
+            sqlx::query(
+                "INSERT INTO trash_items (song_json, original_path, trash_path, size_bytes, trashed_at)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(song_json)
+            .bind(original_path)
+            .bind(trash_path)
+            .bind(size_bytes)
+            .bind(trashed_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1762,5 +1813,57 @@ pub(crate) mod tests {
         assert_eq!(albums.len(), 1);
         let titles: Vec<&str> = albums[0].songs.iter().map(|s| s.title.as_str()).collect();
         assert_eq!(titles, vec!["D1T1", "D1T2", "D2T1", "D2T2"]);
+    }
+
+    #[tokio::test]
+    async fn test_replace_song_file_preserves_playlists_favorites_and_records_trash() {
+        let db = setup_test_db().await;
+        db.ensure_favorites_schema().await.unwrap();
+        db.ensure_trash_schema().await.unwrap();
+
+        let original = make_source_song(
+            "/m/old.mp3",
+            Platform::Bandcamp,
+            Some("https://a.bandcamp.com/track/1"),
+            Some("1"),
+        );
+        db.insert_song(original.clone()).await.unwrap();
+        let inserted = only_song(&db).await;
+        let song_id = inserted.id.unwrap();
+
+        let pl_id = db.create_playlist("My Mix", None, None).await.unwrap();
+        db.add_songs_to_playlist(pl_id, &[song_id]).await.unwrap();
+        db.add_favorite(song_id).await.unwrap();
+
+        let mut upgraded = inserted.clone();
+        upgraded.path = "/m/new.opus".to_string();
+        upgraded.source = Platform::Youtube;
+        upgraded.source_url = Some("https://youtube.com/watch?v=new".to_string());
+        upgraded.quality_tier = QualityTier::High;
+
+        let song_json = serde_json::to_string(&inserted).unwrap();
+        db.replace_song_file_and_record_trash(
+            song_id,
+            &upgraded,
+            Some((&song_json, "/m/old.mp3", "/m/.blacktape-trash/100_old.mp3", 4096, 100)),
+        )
+        .await
+        .unwrap();
+
+        let reloaded = db.require_song_by_id(song_id).await.unwrap();
+        assert_eq!(reloaded.id, Some(song_id));
+        assert_eq!(reloaded.path, "/m/new.opus");
+        assert_eq!(reloaded.source, Platform::Youtube);
+        assert_eq!(reloaded.quality_tier, QualityTier::High);
+
+        let pl_songs = db.get_playlist_songs(pl_id).await.unwrap();
+        assert_eq!(pl_songs.len(), 1);
+        assert_eq!(pl_songs[0].id, Some(song_id));
+        assert_eq!(pl_songs[0].path, "/m/new.opus");
+        assert!(db.is_favorite(song_id).await.unwrap());
+
+        let trash = db.list_trash_rows().await.unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].original_path, "/m/old.mp3");
     }
 }

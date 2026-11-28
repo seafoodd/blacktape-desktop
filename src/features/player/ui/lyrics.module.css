@@ -6,7 +6,6 @@
     box-sizing: border-box;
     font-size: var(--font-lg);
     overflow-y: auto;
-    scrollbar-width: thin;
     scroll-behavior: smooth;
 }
 
@@ -127,6 +126,7 @@
     transition:
         color 100ms linear,
         background-color 100ms linear,
+        border-color 150ms ease,
         width 150ms ease,
         height 150ms ease,
         font-size 150ms ease;
@@ -146,7 +146,8 @@
 
 .fillToggleOn {
     color: var(--color-primary);
-    /*background-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-surface));*/
+    border-color: var(--color-primary);
+    background-color: color-mix(in srgb, var(--color-primary) 18%, var(--bg-surface));
 }
 
 .fillToggleIcon {

@@ -24,3 +24,14 @@
     background-color: rgba(255, 110, 20, 0.15);
     color: rgba(255, 150, 80, 0.8);
 }
+
+.torrent {
+    background-color: rgba(139, 92, 246, 0.16);
+    color: rgba(196, 181, 253, 0.9);
+}
+
+.canonical {
+    background-color: rgba(92, 107, 255, 0.16);
+    color: rgba(160, 172, 255, 0.92);
+    border: 1px solid rgba(114, 128, 255, 0.35);
+}

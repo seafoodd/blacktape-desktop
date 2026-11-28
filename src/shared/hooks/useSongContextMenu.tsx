@@ -5,10 +5,9 @@ import { AddToPlaylistModal } from "@/features/library/ui/playlists/AddToPlaylis
 import { PlaybackContext, useAudioStore } from "@/shared/store/audioStore.ts";
 import { useModalStore } from "@/shared/store/modalStore.ts";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ItemType, useLibraryStore, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
+import { ItemType, type StartDownloadParams } from "@/shared/store/libraryStore.ts";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import { refreshLibrary } from "@/shared/lib/library/libraryRefresh.ts";
-import { canRedownload as canRedownloadSong } from "@/shared/lib/remote/platforms.ts";
 import { EditLyricsModal } from "@/features/player/ui/EditLyricsModal.tsx";
 import EditSongInfoModal from "@/features/library/ui/EditSongInfoModal.tsx";
 import FetchLyricsModal from "@/features/library/ui/FetchLyricsModal.tsx";
@@ -127,13 +126,19 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
       navigator.clipboard
         .writeText(text)
         .catch((e) => console.error("clipboard error: ", e));
-    const canRedownload = canRedownloadSong(song.source, song.source_url);
-    const redownloadParams = (): StartDownloadParams => ({
-      platform: song.source,
+    const upgradeParams = (): StartDownloadParams => ({
+      platform: song.source === "local" ? "youtube" : song.source,
       downloadType: ItemType.Track,
-      url: song.source_url!,
+      url: `resolve:song:${song.id}`,
       artistName: song.album_artist || artistText,
       title: song.title,
+      placement: {
+        album: song.album,
+        album_artist: song.album_artist,
+        title: song.title,
+        track_number: song.track_number ?? null,
+      },
+      replaceSongId: song.id,
     });
 
     items.push(
@@ -186,23 +191,10 @@ export const useSongContextMenu = (options: UseSongContextMenuOptions) => {
             },
           ]
         : []),
-      ...(canRedownload
-        ? [
-            {
-              label: "Re-download",
-              action: () => {
-                useLibraryStore
-                  .getState()
-                  .startDownload(redownloadParams())
-                  .catch((e) => console.error("re-download error: ", e));
-              },
-            },
-            {
-              label: "Re-download as…",
-              action: () => openQualityMenu(redownloadParams()),
-            },
-          ]
-        : []),
+      {
+        label: "Re-download / Upgrade quality…",
+        action: () => openQualityMenu(upgradeParams()),
+      },
       {
         label: "Show in Explorer",
         action: () => {

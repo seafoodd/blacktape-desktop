@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { albumHasMultipleDiscs, rowDiscNumber } from "./artistAlbumsDisc.ts";
+import { albumHasMultipleDiscs, playableRowsFrom, rowDiscNumber } from "./artistAlbumsDisc.ts";
 import type { Song } from "@/shared/types.ts";
 import type { AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 
@@ -36,4 +36,8 @@ describe("artistAlbumsDisc helper", () => {
     expect(rowDiscNumber({ kind: "missing", track: missing(3) })).toBe(3);
     expect(rowDiscNumber({ kind: "missing", track: missing(undefined) })).toBe(1);
   });
+});
+it("starts Breed at its playable queue position when an earlier album has a placeholder", () => {
+  const queue = playableRowsFrom([1, -1, 4, -2], 4, (id) => id === -1 ? undefined : id);
+  expect(queue).toEqual({ entries: [1, 4, -2], index: 1 });
 });

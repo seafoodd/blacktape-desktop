@@ -6,6 +6,7 @@ import {
   matchesPlatformFilter,
   platformFilterLabel,
   platformLabel,
+  platformForUrl,
 } from "./platforms.ts";
 
 describe("platformLabel", () => {
@@ -103,5 +104,37 @@ describe("constants", () => {
 
   it("SEARCH_PLATFORMS includes soundcloud, youtube and bandcamp", () => {
     expect(SEARCH_PLATFORMS).toEqual(expect.arrayContaining(["soundcloud", "youtube", "bandcamp"]));
+  });
+});
+
+describe("platformForUrl", () => {
+  it.each([
+    ["https://youtube.com/watch?v=1", "youtube"],
+    [" https://WWW.YouTube.COM./watch?v=1 ", "youtube"],
+    ["https://youtu.be/abc", "youtube"],
+    ["https://music.youtube.com/watch?v=1", "youtube"],
+    ["https://bandcamp.com/track/x", "bandcamp"],
+    ["https://artist.bandcamp.com/track/x", "bandcamp"],
+    ["https://soundcloud.com/artist/track", "soundcloud"],
+    ["https://api.soundcloud.com/tracks/1", "soundcloud"],
+    ["https://snd.sc/abc", "soundcloud"],
+  ] as const)("recognizes host in %s", (url, expected) => {
+    expect(platformForUrl(url, "local")).toBe(expected);
+  });
+
+  it.each([
+    "https://evil.com/?next=bandcamp.com",
+    "https://notbandcamp.com/track/x",
+    "https://bandcamp.com.evil.com/track/x",
+    "https://youtube.com.evil.com/watch?v=1",
+    "https://soundcloud.com.evil.com/track",
+    "https://evil.com/youtube.com/bandcamp.com/soundcloud.com#youtu.be",
+    "https://youtube.com@evil.com/watch?v=1",
+    "not a url",
+    "https://",
+    "ftp://youtube.com/file",
+    "magnet:?xt=urn:btih:abc&dn=bandcamp.com",
+  ])("uses fallback for non-platform or malformed URL %s", (url) => {
+    expect(platformForUrl(url, "local")).toBe("local");
   });
 });

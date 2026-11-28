@@ -114,9 +114,13 @@
     margin-top: 24px;
     display: flex;
     justify-content: end;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
-.cancelButton {
+.cancelButton,
+.alternativeButton,
+.retryButton {
     font-size: var(--font-lg);
     padding: 6px 12px;
     border-radius: var(--radius-full);
@@ -128,5 +132,19 @@
 
     &:disabled {
         opacity: 0.5;
+    }
+}
+
+.alternativeButton {
+    border: 1px solid var(--color-border);
+}
+
+.retryButton {
+    background-color: var(--color-primary);
+    color: white;
+
+    &:hover:not(:disabled) {
+        background-color: var(--color-primary);
+        filter: brightness(1.12);
     }
 }

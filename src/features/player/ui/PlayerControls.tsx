@@ -1,3 +1,5 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { PlayerDownloadControl } from "@/features/player/ui/PlayerDownloadControl.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAudioStore } from "@/shared/store/audioStore.ts";
 import styles from "./player-controls.module.css";
@@ -42,6 +44,7 @@ import { useModalStore } from "@/shared/store/modalStore.ts";
 import { useTrackStatus } from "@/shared/hooks/useDownloadStatus.ts";
 import { findDownload, isRunning } from "@/shared/lib/library/downloadMatch.ts";
 import { streamAlbumUrl } from "@/shared/lib/remote/stream.ts";
+import { sameUrl } from "@/shared/lib/remote/urlKey.ts";
 import {
   albumTarget,
   remoteTrackRef,
@@ -182,19 +185,44 @@ export const PlayerControls = () => {
     [streamTrack],
   );
   // The download of this song started from anywhere (here, a menu, the album page), if any.
-  const download = useLibraryStore((s) =>
-    downloadParams
-      ? findDownload(s.activeDownloads, downloadParams)
-      : undefined,
-  );
+  const download = useDownloadStore((s) => {
+    if (!downloadParams || !streamTrack) return undefined;
+    const streamTitle = streamTrack.title ?? currentSong?.title;
+    const direct = findDownload(s.activeDownloads, {
+      ...downloadParams,
+      trackTitle: streamTitle,
+    });
+    if (direct) return direct;
+    const normTitle = streamTitle?.trim().toLowerCase() ?? "";
+    const matched = Object.values(s.activeDownloads).filter((d) => {
+      if (d.status === "failed" || d.status === "cancelled") return false;
+      const urlMatches =
+        sameUrl(d.url, streamTrack.url) ||
+        (d.trackUrls?.some((u) => sameUrl(u, streamTrack.url)) ?? false);
+      if (!urlMatches) return false;
+      if (!normTitle) return true;
+      const track = d.tracks?.find((t) => t.title.trim().toLowerCase() === normTitle);
+      return track?.status !== "cancelled";
+    });
+    return matched.find(isRunning) ?? matched[0];
+  });
   const downloading = isRunning(download);
   const downloaded =
     downloadState === "downloaded" || download?.status === "completed";
 
+  const openArtist = () => {
+    if (!currentSong?.album_artist) return;
+    const lib = useLibraryStore.getState();
+    lib.setScrollToAlbum(null);
+    void lib.setSelectedTab(currentSong.album_artist);
+  };
+
   const openAlbum = () => {
     if (!currentSong || !target) return;
     if (target.kind === "library") {
-      void useLibraryStore.getState().setSelectedTab(target.albumArtist);
+      const lib = useLibraryStore.getState();
+      lib.setScrollToAlbum(currentSong.album || null);
+      void lib.setSelectedTab(target.albumArtist);
       return;
     }
     const item: SearchSuggestion = {
@@ -317,7 +345,22 @@ export const PlayerControls = () => {
                       Streaming
                     </span>
                   )}
-                  {currentSong.album_artist}
+                  {currentSong.album_artist ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className={styles.albumLink}
+                      onClick={openArtist}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        openArtist();
+                      }}
+                      title="Open artist"
+                    >
+                      {currentSong.album_artist}
+                    </span>
+                  ) : null}
                   {currentSong.album && " • "}
                   {target ? (
                     // A span, not a button: a button is one unbreakable box, so a long album name
@@ -362,7 +405,7 @@ export const PlayerControls = () => {
                 </button>
                 <button
                   type="button"
-                  className={clsx(styles.songAction, {
+                  className={clsx(styles.songAction, styles.favoriteButton, {
                     [styles.favoriteActive]: isCurrentFavorite,
                   })}
                   disabled={!currentSong}
@@ -387,24 +430,18 @@ export const PlayerControls = () => {
                   {isCurrentFavorite ? <MdFavorite /> : <MdFavoriteBorder />}
                 </button>
                 {streamTrack &&
-                  (downloading || downloaded || !downloadParams ? (
+                  (downloading && download ? (
+                    <PlayerDownloadControl taskId={download.id} percent={download.overallPercent} />
+                  ) : downloaded || !downloadParams ? (
                     <button
                       type="button"
                       className={styles.songAction}
                       disabled
                       title={
-                        downloaded ? "Already in your library" : "Downloading…"
+                        downloaded ? "Already in your library" : "Download unavailable"
                       }
                     >
-                      {downloading ? (
-                        <span
-                          className={styles.actionSpinner}
-                          role="status"
-                          aria-label="Downloading"
-                        />
-                      ) : (
-                        <MdCheck />
-                      )}
+                      <MdCheck />
                     </button>
                   ) : (
                     <DownloadSplitButton
@@ -414,7 +451,7 @@ export const PlayerControls = () => {
                       icon={<MdFileDownload />}
                       title="Download this song"
                       onDownload={() =>
-                        void useLibraryStore
+                        void useDownloadStore
                           .getState()
                           .startDownload(downloadParams)
                       }

@@ -10,9 +10,10 @@ interface DeleteSongModalProps {
   songs: Song[];
   /** Shown instead of the song title, e.g. the album name. */
   albumTitle?: string;
+  beforeDelete?: () => Promise<Song[]>;
 }
 
-const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
+const DeleteSongModal = ({ songs, albumTitle, beforeDelete }: DeleteSongModalProps) => {
   const isMany = albumTitle !== undefined || songs.length > 1;
   const subject = isMany
     ? `${albumTitle ?? "these songs"} (${songs.length} tracks)`
@@ -25,8 +26,9 @@ const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
     setBusy(true);
     setError(null);
     try {
+      const currentSongs = beforeDelete ? await beforeDelete() : songs;
       await invoke("delete_songs", {
-        ids: songs.map((s) => s.id),
+        ids: currentSongs.map((s) => s.id),
         deleteFile: false,
       });
       await refreshLibrary();
@@ -41,7 +43,8 @@ const DeleteSongModal = ({ songs, albumTitle }: DeleteSongModalProps) => {
     setBusy(true);
     setError(null);
     try {
-      const outcome = await trashSongs(songs.map((s) => s.id));
+      const currentSongs = beforeDelete ? await beforeDelete() : songs;
+      const outcome = await trashSongs(currentSongs.map((s) => s.id));
       // Songs that did move are already gone from the library, so refresh
       // even when some failed.
       await refreshLibrary();

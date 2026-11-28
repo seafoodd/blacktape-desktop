@@ -64,4 +64,14 @@ describe("urlKey", () => {
     expect(sameUrl("https://example.com/path", null)).toBe(false);
     expect(sameUrl(undefined, undefined)).toBe(false);
   });
+
+  it("handles canonical, synth, and resolve internal URL schemes", () => {
+    expect(urlKey("canonical:rg:87f1a316-510f-36c3-9f2c-38230b0e56e0")).toBe(
+      "canonical:rg:87f1a316-510f-36c3-9f2c-38230b0e56e0",
+    );
+    expect(sameUrl("canonical:rg:abc", "canonical:rg:ABC")).toBe(true);
+    expect(sameUrl("canonical:https://music.youtube.com/watch?v=AbC123", "https://youtu.be/AbC123")).toBe(true);
+    expect(sameUrl("resolve:song:42", "resolve:song:42")).toBe(true);
+    expect(sameUrl("synth:youtube:123", "synth:youtube:123")).toBe(true);
+  });
 });

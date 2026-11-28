@@ -138,10 +138,36 @@ ul {
     list-style: none;
 }
 
-/* Modern Standard (Firefox and Chrome 121+) */
-:root {
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-primary) var(--bg-surface);
+/* Scrollbars are thin and grey, without arrows, and show only on the area under the mouse. The standard
+   scrollbar-width and scrollbar-color must stay unset: Chromium ignores these rules where either is set. */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* scrollbarFade.ts sets the colour on the area under the mouse. Every other element keeps its own transparent
+   value, so a shown area does not light up the bars inside it. */
+* {
+    --scrollbar-thumb: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    /* the transparent border leaves a 4px bar inside the 8px wide area that can be grabbed */
+    border: 2px solid transparent;
+    border-radius: 4px;
+    background-color: var(--scrollbar-thumb);
+    background-clip: padding-box;
+}
+
+/* The bar under the mouse is brighter, and a dragged one stays visible outside its area. */
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+    background-color: color-mix(in srgb, var(--color-text) 50%, transparent);
 }
 
 * {
@@ -157,24 +183,3 @@ ul {
     background-color: var(--color-primary);
     color: #ffffff;
 }
-
-/*!* Legacy WebKit (Older Chrome, Safari, and Tauri's WebView2/WebKit) *!*/
-/*!* This ensures the look is consistent even if the standard properties aren't fully parsed *!*/
-/*::-webkit-scrollbar {*/
-/*    width: 8px; !* Equivalent to 'thin' *!*/
-/*    height: 8px;*/
-/*}*/
-
-/*::-webkit-scrollbar-track {*/
-/*    background: var(--color-surface);*/
-/*}*/
-
-/*::-webkit-scrollbar-thumb {*/
-/*    background-color: var(--color-primaryLight);*/
-/*    border-radius: 10px;*/
-/*    border: 2px solid var(--color-surface); !* Creates a "padding" effect around the thumb *!*/
-/*}*/
-
-/*::-webkit-scrollbar-thumb:hover {*/
-/*    background-color: var(--color-primary); !* Optional: darken on hover *!*/
-/*}*/

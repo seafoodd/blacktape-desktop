@@ -27,6 +27,17 @@ pub enum Platform {
     Local,
 }
 
+impl std::fmt::Display for Platform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Youtube => write!(f, "youtube"),
+            Self::Bandcamp => write!(f, "bandcamp"),
+            Self::Soundcloud => write!(f, "soundcloud"),
+            Self::Local => write!(f, "local"),
+        }
+    }
+}
+
 #[derive(Serialize, Debug, Deserialize, Clone, sqlx::FromRow)]
 pub struct Song {
     pub id: Option<i64>,

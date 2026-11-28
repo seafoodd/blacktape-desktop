@@ -8,10 +8,10 @@
 use blacktape_desktop_lib::db::db::Database;
 use blacktape_desktop_lib::download::album::download_album_cover;
 use blacktape_desktop_lib::download::post_processor::process_and_move_track;
-use blacktape_desktop_lib::download::soundcloud::{parse_album_with_skipped, parse_track};
+use blacktape_desktop_lib::platforms::soundcloud::download::{parse_album_with_skipped, parse_track};
 use blacktape_desktop_lib::download::ytdlp::soundcloud_format_args;
 use blacktape_desktop_lib::download::TrackDownload;
-use blacktape_desktop_lib::soundcloud::{api_get, ScCollection, ScTrack};
+use blacktape_desktop_lib::platforms::soundcloud::{api_get, ScCollection, ScTrack};
 use blacktape_desktop_lib::types::{Platform, Song};
 use blacktape_desktop_lib::utils::sanitize_fs;
 use std::path::{Path, PathBuf};

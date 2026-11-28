@@ -136,11 +136,28 @@
 }
 
 .songTitle {
+    display: flex;
+    align-items: baseline;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+}
+
+.songTitleText {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .songArtistSuffix {
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-left: 0.35em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--color-muted, rgba(255, 255, 255, 0.45));
     font-weight: normal;
 }
@@ -153,6 +170,28 @@
 
 .qualityBadge {
     margin-left: 8px;
+}
+
+.upgradeBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: var(--radius-xs);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-primaryLight);
+    background-color: color-mix(in srgb, var(--color-primaryLight) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primaryLight) 35%, transparent);
+    white-space: nowrap;
+}
+
+.upgradeBadgeDone {
+    color: #7ddc9b;
+    background-color: rgba(22, 163, 74, 0.16);
+    border-color: rgba(22, 163, 74, 0.35);
 }
 
 /* duration at rest, the "..." button on hover, stacked in one cell so nothing beside them moves */

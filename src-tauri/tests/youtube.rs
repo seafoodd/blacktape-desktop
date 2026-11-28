@@ -1,4 +1,4 @@
-use blacktape_desktop_lib::download::youtube::parse_album;
+use blacktape_desktop_lib::platforms::youtube::download::parse_album;
 
 #[tokio::test]
 #[ignore]

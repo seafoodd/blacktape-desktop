@@ -22,6 +22,13 @@ import { DownloaderSettings } from "@/features/downloader-setup";
 import { TelemetrySettings } from "@/features/telemetry";
 import { KeymapSettings } from "@/features/keymaps/ui/KeymapSettings.tsx";
 import { SETTINGS_HEADER_HEIGHT, useChromeHeight } from "@/shared/ui/modal";
+import { TorrentIndexerSettings } from "@/pages/settings/TorrentIndexerSettings.tsx";
+import {
+  parseSearchProgressStyle,
+  SEARCH_PROGRESS_STYLES,
+  useSearchProgressStyle,
+  writeSearchProgressStyle,
+} from "@/features/search/model/searchProgressStyle.ts";
 
 type SettingsTab =
   | "appearance"
@@ -44,8 +51,34 @@ export const Settings = () => {
     setBgBlur,
   } = useTheme();
   const { fetchTabs } = useLibraryStore();
+  const progressStyle = useSearchProgressStyle();
   useChromeHeight(SETTINGS_HEADER_HEIGHT);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const param = new URLSearchParams(window.location.search).get("tab");
+    const valid: SettingsTab[] = ["appearance", "playback", "keymaps", "library", "downloader", "accounts", "about"];
+    return valid.includes(param as SettingsTab) ? (param as SettingsTab) : "appearance";
+  });
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("settings-select-tab", (event) => {
+        if (disposed) return;
+        const valid: SettingsTab[] = ["appearance", "playback", "keymaps", "library", "downloader", "accounts", "about"];
+        if (valid.includes(event.payload as SettingsTab)) {
+          setActiveTab(event.payload as SettingsTab);
+        }
+      }),
+    ).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const [libraryDir, setLibraryDir] = useState<string>(() => {
     return localStorage.getItem("library_dir") || "Not set";
@@ -188,6 +221,28 @@ export const Settings = () => {
                   <option value="12px">Small (12px)</option>
                   <option value="14px">Medium (14px) (default)</option>
                   <option value="16px">Large (16px)</option>
+                </select>
+              </div>
+
+              <div className={styles.settingRow}>
+                <label htmlFor="search-progress-select">
+                  Search Radar
+                  <span className={styles.mutedText}>
+                    {" "}
+                    {SEARCH_PROGRESS_STYLES.find((s) => s.id === progressStyle)?.description}
+                  </span>
+                </label>
+                <select
+                  id="search-progress-select"
+                  className={styles.select}
+                  value={progressStyle}
+                  onChange={(e) => writeSearchProgressStyle(parseSearchProgressStyle(e.target.value))}
+                >
+                  {SEARCH_PROGRESS_STYLES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -371,14 +426,18 @@ export const Settings = () => {
           )}
 
           {activeTab === "downloader" && (
-            <section className={styles.section}>
-              <h2>Downloader</h2>
-              <DownloaderSettings
-                rowClassName={styles.settingRow}
-                buttonClassName={styles.actionButton}
-                mutedClassName={styles.mutedText}
-              />
-            </section>
+            <>
+              <section className={styles.section}>
+                <h2>Downloader</h2>
+                <DownloaderSettings
+                  rowClassName={styles.settingRow}
+                  buttonClassName={styles.actionButton}
+                  mutedClassName={styles.mutedText}
+                  selectClassName={styles.select}
+                />
+              </section>
+              <TorrentIndexerSettings />
+            </>
           )}
 
           {activeTab === "about" && (

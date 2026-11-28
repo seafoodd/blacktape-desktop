@@ -44,7 +44,6 @@
     resize: vertical;
     outline: none;
     transition: border-color 0.15s ease;
-    scrollbar-width: thin;
 }
 
 .textarea:focus {

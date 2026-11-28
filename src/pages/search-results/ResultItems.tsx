@@ -149,7 +149,12 @@ export const AlbumCard = ({ item, progress, compact = false }: AlbumCardProps) =
           {typeof item.year === "number" && (
             <span className={styles.cardSub}>{item.year}</span>
           )}
-          {!compact && <PlatformBadge platform={item.platform} />}
+          {!compact && (
+            <PlatformBadge
+              platform={item.platform}
+              canonical={Boolean(item.item_url_path?.startsWith("canonical:"))}
+            />
+          )}
         </div>
       </div>
     </article>

@@ -49,13 +49,16 @@ vi.mock("@/shared/store/libraryIndexStore.ts", () => ({
 }));
 vi.mock("@/shared/store/libraryStore.ts", () => ({
   ItemType: { Track: "Track", Album: "Album", Artist: "Artist" },
-  useLibraryStore: {
+}));
+
+vi.mock("@/shared/store/downloadStore.ts", () => ({
+  useDownloadStore: {
     getState: () => ({ startDownload: startDownloadMock }),
     subscribe: subscribeMock,
   },
 }));
 
-/** The store's subscription to the library downloads (registered once, when the store module loads). */
+/** The store's subscription to downloads (registered once, when the store module loads). */
 const onLibraryChange = subscribeMock.mock.calls[0][0] as (state: {
   activeDownloads: Record<string, { url: string; status: string }>;
 }) => void;
@@ -330,6 +333,15 @@ describe("toggle", () => {
 });
 
 describe("downloadMissing format", () => {
+  it("downloads only tracks shown in the quality picker even if additional tracks are now missing", async () => {
+    getMissingTracksMock.mockResolvedValue(missing());
+    useMissingTracksStore.setState({ artist: "Artist" });
+    await useMissingTracksStore.getState().downloadMissing("A", "source:youtube:high", undefined, ["https://example.test/track/2"]);
+    expect(startDownloadMock).toHaveBeenCalledWith(expect.objectContaining({
+      format: "source:youtube:high", trackUrls: ["https://example.test/track/2"],
+    }));
+  });
+
   it("passes the picked format to startDownload", async () => {
     getMissingTracksMock.mockResolvedValue(missing());
     useMissingTracksStore.setState({ artist: "Artist" });

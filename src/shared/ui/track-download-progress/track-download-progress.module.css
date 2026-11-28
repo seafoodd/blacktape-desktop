@@ -1,0 +1,49 @@
+.slot {
+    display: inline-grid;
+    grid-template-columns: minmax(0, 1fr);
+    place-items: center;
+    isolation: isolate;
+    width: 16px;
+    height: 30px;
+    flex: 0 0 16px;
+    vertical-align: middle;
+}
+
+.slot > * { grid-area: 1 / 1; }
+
+.percentage {
+    min-width: 36px;
+    text-align: center;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.completed { color: var(--color-primaryLight); }
+.active { color: var(--color-text); }
+.pending { color: var(--color-muted); }
+
+.slot > button {
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+[data-song-row]:hover .cancellable > .percentage,
+[data-song-row]:focus-within .cancellable > .percentage,
+.cancellable:has(> button:disabled) > .percentage { visibility: hidden; }
+
+[data-song-row]:hover .cancellable > button,
+[data-song-row]:focus-within .cancellable > button,
+.cancellable > button:focus-visible,
+.cancellable > button:disabled {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+@media (hover: none) {
+    .cancellable > .percentage { visibility: hidden; }
+    .cancellable > button { visibility: visible; opacity: 1; pointer-events: auto; }
+}

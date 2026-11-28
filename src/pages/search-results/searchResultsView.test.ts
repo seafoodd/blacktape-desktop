@@ -5,6 +5,7 @@ import {
   filtersForKind,
   isKindShown,
   isProfileVisible,
+  prefersAlbumsFirst,
   yearFilterEnabled,
 } from "./searchResultsView.ts";
 import { ItemType } from "@/shared/store/libraryStore.ts";
@@ -120,5 +121,37 @@ describe("isProfileVisible", () => {
   it("with a platform filter but no known artist platform, is hidden", () => {
     expect(isProfileVisible("All", "youtube", "ready", null)).toBe(false);
     expect(isProfileVisible("All", "All", "ready", null)).toBe(true);
+  });
+});
+
+describe("prefersAlbumsFirst", () => {
+  const mkItem = (item_type: ItemType, name: string, band_name: string) => ({
+    item_type,
+    name,
+    band_name,
+    item_url_path: "canonical:id",
+    img: "",
+    platform: "youtube" as const,
+  });
+
+  it("places albums first on explicit album intent queries", () => {
+    const albums = [mkItem(ItemType.Album, "The Doors", "The Doors")];
+    const tracks = [mkItem(ItemType.Track, "Hello, I Love You", "The Doors")];
+    expect(prefersAlbumsFirst("the doors albums", albums, tracks)).toBe(true);
+    expect(prefersAlbumsFirst("death grips no love album", albums, tracks)).toBe(true);
+  });
+
+  it("places albums first when top album covers all query tokens (no exact track match)", () => {
+    const albums = [mkItem(ItemType.Album, "NO LOVE DEEP WEB", "Death Grips")];
+    const tracks = [mkItem(ItemType.Track, "No Love", "Death Grips")];
+    expect(prefersAlbumsFirst("death grips no love deep web", albums, tracks)).toBe(true);
+  });
+
+  it("keeps tracks first when query matches a song directly or specifies track intent", () => {
+    const albums = [mkItem(ItemType.Album, "Discovery", "Daft Punk")];
+    const tracks = [mkItem(ItemType.Track, "One More Time", "Daft Punk")];
+    expect(prefersAlbumsFirst("daft punk one more time", albums, tracks)).toBe(false);
+    expect(prefersAlbumsFirst("death grips songs", albums, tracks)).toBe(false);
+    expect(prefersAlbumsFirst("the doors albums", [], tracks)).toBe(false);
   });
 });

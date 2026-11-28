@@ -4,6 +4,8 @@ import type { MenuItemOption } from "@/shared/ui/context-menu/ContextMenu.tsx";
 import type { RemoteTrack } from "@/shared/lib/remote/remoteTrack.ts";
 
 export interface RemoteTrackMenuOptions {
+  onDownload?: () => void;
+  onDownloadAs?: () => void;
   /** The list the track belongs to (queue actions may use it). */
   list?: readonly RemoteTrack[];
   /** Known library state of the track (the menu shows "Downloaded" instead of "Download" when downloaded). */

@@ -47,56 +47,9 @@
     background-color: var(--bg-surface); /* placeholder while the image loads */
 }
 
-.downloadingAlbumBlock {
-    position: relative;
-    opacity: 0.65;
-    filter: grayscale(40%);
-    transition: opacity 200ms ease;
-}
-
-.downloadingCoverWrapper {
-    position: relative;
-    width: 200px;
-    flex-shrink: 0;
-    aspect-ratio: 1;
-    border-radius: var(--radius-sm, 4px);
-    overflow: hidden;
-}
-
-.downloadingCoverBadge {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 4px 8px;
-    background: rgba(0, 0, 0, 0.75);
-    color: var(--color-primary);
-    font-size: 11px;
-    font-weight: 600;
-    text-align: center;
-    backdrop-filter: blur(2px);
-}
-
-.downloadingHeader {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.downloadingOverallBadge {
-    font-size: var(--font-sm, 12px);
-    color: var(--color-primary);
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
-    padding: 2px 8px;
-    border-radius: var(--radius-full, 9999px);
-    font-weight: 500;
-}
-
 .downloadingSong {
     cursor: default !important;
     user-select: none;
-    pointer-events: none;
 
     &:hover {
         background-color: transparent !important;
@@ -105,17 +58,9 @@
 
 .trackPercentage {
     font-size: var(--font-md, 14px);
-    font-weight: 600;
+    font-weight: 400;
     min-width: 48px;
     text-align: right;
-}
-
-.percentCompleted {
-    color: var(--color-primary);
-}
-
-.percentActive {
-    color: var(--color-text, #ffffff);
 }
 
 .percentPending {
@@ -138,6 +83,7 @@
 /* Album title with the year and genres to the right of it, on one line. */
 .albumTitleRow {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 12px;
     min-width: 0;
@@ -197,6 +143,52 @@
     min-width: 0;
     font-size: var(--font-sm);
     color: var(--color-muted);
+}
+
+.albumTransfer {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.albumTransfer:empty { display: none; }
+
+.albumTransfer > button {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
+}
+
+.albumUpgradingBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full, 9999px);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--color-primaryLight);
+    background-color: color-mix(in srgb, var(--color-primaryLight) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primaryLight) 30%, transparent);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.albumUpgradingSpinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid color-mix(in srgb, var(--color-primaryLight) 30%, transparent);
+    border-top-color: var(--color-primaryLight);
+    border-radius: 50%;
+    animation: albumUpgradingSpin 700ms linear infinite;
+}
+
+@keyframes albumUpgradingSpin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .songs {
@@ -348,5 +340,74 @@
 .selectArtistPrompt p {
     font-size: var(--font-md, 14px);
     margin: 0;
+}
+
+.downloadErrorBanner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
+    font-size: var(--font-sm, 13px);
+    margin: 0 0 12px;
+}
+
+.downloadErrorDismiss {
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: var(--font-xs, 12px);
+    cursor: pointer;
+    opacity: 0.85;
+    padding: 2px 6px;
+    flex-shrink: 0;
+}
+
+.downloadErrorDismiss:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+.albumErrorPill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
+    font-size: var(--font-xs, 12px);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.albumErrorPill:hover {
+    background: color-mix(in srgb, var(--color-error) 18%, transparent);
+}
+
+.albumErrorList {
+    margin: 6px 0 8px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
+    background: color-mix(in srgb, var(--color-error) 8%, transparent);
+    color: var(--color-error);
+    font-size: var(--font-xs, 12px);
+    overflow: hidden;
+}
+
+.albumErrorItem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+}
+
+.albumErrorItem + .albumErrorItem {
+    border-top: 1px solid color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 

@@ -592,6 +592,34 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[ignore]
+    async fn live_youtube_visionos_stream_decodes_and_seeks() {
+        resolve::visionos::warm_up().await;
+        for id in ["xdIGp4Ge8yk", "8oCoGvy6RK4", "v9_uw4K6Nj0", "FTQbiNvZqaY", "dQw4w9WgXcQ"] {
+            let t0 = Instant::now();
+            let info = resolve::visionos::resolve(id).await.expect("visionos resolve");
+            let resolve_ms = t0.elapsed().as_millis();
+            let (first_ms, seek_ms, total) = tokio::task::spawn_blocking(move || {
+                let t1 = Instant::now();
+                let (mut source, total) = open_decoder(&info).expect("open");
+                let first = source.next().expect("first sample");
+                assert!(first.is_finite());
+                let first_ms = t1.elapsed().as_millis();
+                let t2 = Instant::now();
+                source.try_seek(Duration::from_secs(90)).expect("seek");
+                assert!(source.next().is_some());
+                (first_ms, t2.elapsed().as_millis(), total)
+            })
+            .await
+            .unwrap();
+            println!(
+                "{id}: resolve {resolve_ms} ms, open+first {first_ms} ms, seek {seek_ms} ms, total {} ms, dur {total:?}",
+                resolve_ms + first_ms
+            );
+        }
+    }
+
     /// Live check (network): SoundCloud track -> (progressive or HLS) stream -> decoder -> first sample -> seek.
     #[tokio::test]
     #[ignore]

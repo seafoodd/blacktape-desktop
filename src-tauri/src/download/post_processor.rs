@@ -59,7 +59,7 @@ pub fn process_and_move_track(
     let destination_path = target_album_dir.join(final_name);
     fs::create_dir_all(target_album_dir)
         .map_err(|e| format!("Failed creating target album dir: {e}"))?;
-    fs::rename(source_file, &destination_path)
+    move_file_with_fallback(source_file, &destination_path)
         .map_err(|e| format!("Failed moving file into library: {e}"))?;
     let tagged_file = Probe::open(&destination_path)
         .map_err(|e| e.to_string())?
@@ -192,4 +192,42 @@ fn resolve_cover_path(
         let _ = fs::write(&target_file, pic.data());
     }
     Some(target_file.to_string_lossy().to_string())
+}
+
+fn move_file_with_fallback(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    if let Err(err) = fs::copy(src, dst) {
+        let _ = fs::remove_file(dst);
+        return Err(err);
+    }
+    let _ = fs::remove_file(src);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn move_file_with_fallback_moves_bytes_and_removes_source() {
+        let root = std::env::temp_dir().join(format!(
+            "blacktape-post-proc-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let src = root.join("src.flac");
+        let dst = root.join("dst.flac");
+        fs::write(&src, b"audio-payload").unwrap();
+
+        move_file_with_fallback(&src, &dst).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"audio-payload");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

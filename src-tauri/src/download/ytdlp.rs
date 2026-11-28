@@ -146,7 +146,7 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     let process_start = Instant::now();
     let mut cmd = Command::new(binary_path);
     prepare_command(&mut cmd, app);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
 
     #[cfg(target_os = "windows")]
     {
@@ -154,7 +154,8 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
         cmd.creation_flags(FLAGS);
     }
 
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let child = cmd.spawn().map_err(|error| error.to_string())?;
+    let output = wait_with_deadline(child, None, Duration::from_secs(60)).await?;
 
     let duration = process_start.elapsed().as_secs_f32();
     tracing::debug!(duration_s = duration, status = %output.status, "yt-dlp process terminated");
@@ -197,13 +198,17 @@ pub async fn execute(app: &AppHandle, args: &[&str]) -> Result<String, String> {
 
 const MAX_CONCURRENT_DOWNLOADS: usize = 4;
 
-#[derive(Clone)]
+fn http_download_semaphore() -> Arc<Semaphore> {
+    static SEMAPHORE: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
+    Arc::clone(SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS))))
+}
+
 struct DownloadContext {
     app: AppHandle,
     task_id: String,
     binary_path: PathBuf,
-    /// The login window's session, if yt-dlp can read it (see `cookies::find`).
-    cookies: crate::download::cookies::CookieSource,
+    /// Only initialized when a track attempt actually uses YouTube.
+    youtube_sign_in: tokio::sync::OnceCell<Result<(), String>>,
     /// Where a run's private copy of a cookie file goes (see `CookieSource::args`).
     cookie_copies: PathBuf,
     /// Format the user picked for this download (see `quality::prefer_format`).
@@ -263,6 +268,11 @@ fn linux_ca_bundle(user_set: bool, exists: impl Fn(&Path) -> bool) -> Option<&'s
 /// What every yt-dlp process needs besides its own arguments: the app's JavaScript runtime for YouTube, ffmpeg for
 /// `--extract-audio`, and on Linux the system certificates.
 pub fn prepare_command(cmd: &mut Command, app: &AppHandle) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.as_std_mut().process_group(0);
+    }
     cmd.args(crate::download::deno::runtime_args(app));
     cmd.args(crate::download::ffmpeg::location_args(app));
     if cfg!(target_os = "linux") {
@@ -286,28 +296,31 @@ pub fn checked_url(url: &str) -> Result<&str, String> {
 
 /// The site a download url belongs to, from its host (a "youtube.com" elsewhere in the url does not count).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DownloadSite {
+pub(super) enum DownloadSite {
     Youtube,
     Bandcamp,
     Soundcloud,
     Other,
 }
 
-fn download_site(url: &str) -> DownloadSite {
-    let host = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
-        .unwrap_or_default();
-    let on = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-    if on("youtube.com") || on("youtu.be") {
-        DownloadSite::Youtube
-    } else if on("bandcamp.com") {
-        DownloadSite::Bandcamp
-    } else if crate::soundcloud::is_soundcloud_url(url) {
-        DownloadSite::Soundcloud
-    } else {
-        DownloadSite::Other
+pub(super) fn download_site(url: &str) -> DownloadSite {
+    match crate::platforms::platform_of_url(url) {
+        Some(crate::types::Platform::Youtube) => DownloadSite::Youtube,
+        Some(crate::types::Platform::Bandcamp) => DownloadSite::Bandcamp,
+        Some(crate::types::Platform::Soundcloud) => DownloadSite::Soundcloud,
+        _ => DownloadSite::Other,
     }
+}
+
+async fn sign_in_for_url(
+    url: &str,
+    session: &tokio::sync::OnceCell<Result<(), String>>,
+    ensure_session: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    if download_site(checked_url(url)?) == DownloadSite::Youtube {
+        session.get_or_init(|| ensure_session).await.clone()?;
+    }
+    Ok(())
 }
 
 /// yt-dlp's arguments to download one track: the url is checked and always comes last, after `--`. Pure.
@@ -365,15 +378,19 @@ fn download_args(
                 "--audio-quality",
                 "0",
             ]
-            .map(String::from)
-            .into_iter()
-            .chain(cookie_args.iter().cloned()),
+            .map(String::from),
         ),
         DownloadSite::Soundcloud => args.extend(soundcloud_format_args()),
         DownloadSite::Other => args.extend(["-f", "bestaudio/best"].map(String::from)),
     }
 
-    let mut args = crate::download::quality::prefer_format(args, format);
+    let site_hint = match download_site(url) {
+        DownloadSite::Youtube => Some("youtube"),
+        DownloadSite::Bandcamp => Some("bandcamp"),
+        DownloadSite::Soundcloud => Some("soundcloud"),
+        DownloadSite::Other => None,
+    };
+    let mut args = crate::download::quality::prefer_format_for_site(args, site_hint, format);
     args.push("--newline".to_string());
     args.push("--".to_string());
     args.push(url.to_string());
@@ -401,7 +418,8 @@ impl DownloadContext {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_millis();
-        let session_id = format!("{}_{}", session_prefix, timestamp);
+        let session_id = format!("{}_{}_{}", session_prefix, timestamp, uuid::Uuid::new_v4().simple());
+        let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
         let temp_root = PathBuf::from(output_dir).join(".temp");
         let _ = tokio::fs::create_dir_all(&temp_root).await;
@@ -426,8 +444,6 @@ impl DownloadContext {
             }
         }
 
-        let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let cookies = crate::download::cookies::find(&crate::auth::youtube::profile_dir(app)?);
         let cookie_copies = crate::download::cookies::copies_dir(&app_data_dir);
         let format = match app.try_state::<crate::download::TaskRegistry>() {
             Some(registry) => registry.format(task_id).await,
@@ -438,7 +454,7 @@ impl DownloadContext {
             app: app.clone(),
             task_id: task_id.to_string(),
             binary_path,
-            cookies,
+            youtube_sign_in: tokio::sync::OnceCell::new(),
             cookie_copies,
             format,
             temp_dir,
@@ -450,7 +466,7 @@ impl DownloadContext {
 
 /// yt-dlp format arguments for SoundCloud: progressive MP3 when SoundCloud still offers
 /// it, else the best HLS stream (usually AAC 160k). Go+ previews are filtered out in
-/// `download::soundcloud` before a track gets here.
+/// `crate::platforms::soundcloud::download` before a track gets here.
 pub fn soundcloud_format_args() -> Vec<String> {
     [
         "-f",
@@ -484,10 +500,32 @@ async fn download_track_internal(
     track_num: usize,
     total_tracks: usize,
 ) -> Option<PathBuf> {
+    let _permit = match acquire_download_slot(sign_in_for_url(
+        &track.url,
+        &ctx.youtube_sign_in,
+        super::youtube_sign_in::ensure_session(&ctx.app, &ctx.task_id),
+    ), http_download_semaphore()).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            ctx.record_failure(error);
+            return None;
+        }
+    };
     let output_template = ctx.temp_dir.join(format!("{}.%(ext)s", track_num));
     // `_cookie_copy` deletes this run's cookie file copy when the track is done
     let copy_path = ctx.cookie_copies.join(format!("{}_{}.txt", ctx.session_id, track_num));
-    let (cookie_args, _cookie_copy) = match ctx.cookies.args(&copy_path) {
+    let cookie_source = if download_site(&track.url) == DownloadSite::Youtube {
+        match crate::auth::youtube::profile_dir(&ctx.app) {
+            Ok(profile) => crate::download::cookies::find(&profile),
+            Err(error) => {
+                ctx.record_failure(error);
+                return None;
+            }
+        }
+    } else {
+        super::cookies::CookieSource::None
+    };
+    let (cookie_args, _cookie_copy) = match cookie_source.args(&copy_path) {
         Ok(cookies) => cookies,
         Err(err) => {
             tracing::warn!(
@@ -552,14 +590,16 @@ async fn download_track_internal(
                 error = %err,
                 "yt-dlp process failed to spawn"
             );
+            ctx.record_failure(format!("Could not start yt-dlp: {err}"));
             return None;
         }
     };
 
+    let track_index = track.source_track_index.unwrap_or(track_num - 1);
     let pid = child.id();
     if let (Some(registry), Some(p)) = (ctx.app.try_state::<crate::download::TaskRegistry>(), pid) {
-        registry.register_pid(&ctx.task_id, p).await;
-        if registry.is_cancelled(&ctx.task_id).await {
+        registry.register_track_pid(&ctx.task_id, track_index, p).await;
+        if registry.is_track_cancelled(&ctx.task_id, track_index).await {
             let _ = child.kill().await;
             return None;
         }
@@ -570,7 +610,6 @@ async fn download_track_internal(
     let app_handle = ctx.app.clone();
     let task_id = ctx.task_id.clone();
     let track_title = track.title.clone();
-    let track_index = track_num - 1;
 
     let stdout_task = tokio::spawn(async move {
         let mut lines_acc = Vec::new();
@@ -586,6 +625,9 @@ async fn download_track_internal(
                             if let Some(registry) =
                                 app_handle.try_state::<crate::download::TaskRegistry>()
                             {
+                                if registry.is_track_cancelled(&task_id, track_index).await {
+                                    continue;
+                                }
                                 registry
                                     .update_track_progress(
                                         &task_id,
@@ -629,7 +671,7 @@ async fn download_track_internal(
             if let (Some(registry), Some(p)) =
                 (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
             {
-                registry.unregister_pid(&ctx.task_id, p).await;
+                registry.unregister_track_pid(&ctx.task_id, track_index, p).await;
             }
             s
         }
@@ -637,7 +679,7 @@ async fn download_track_internal(
             if let (Some(registry), Some(p)) =
                 (ctx.app.try_state::<crate::download::TaskRegistry>(), pid)
             {
-                registry.unregister_pid(&ctx.task_id, p).await;
+                registry.unregister_track_pid(&ctx.task_id, track_index, p).await;
             }
             tracing::error!(
                 session = %ctx.session_id,
@@ -646,6 +688,7 @@ async fn download_track_internal(
                 error = %err,
                 "yt-dlp child wait error"
             );
+            ctx.record_failure(format!("Could not wait for yt-dlp: {err}"));
             return None;
         }
     };
@@ -789,7 +832,6 @@ pub async fn download_batch_streaming(
 
     let total_tracks = tracks.len();
     let completed_counter = Arc::new(AtomicUsize::new(0));
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
 
     struct AbortOnDropSet<T: 'static> {
         inner: tokio::task::JoinSet<T>,
@@ -825,26 +867,18 @@ pub async fn download_batch_streaming(
     let mut join_set = AbortOnDropSet::new();
 
     for (index, track) in tracks.iter().enumerate() {
-        let sem = Arc::clone(&semaphore);
         let completed = Arc::clone(&completed_counter);
         let track = track.clone();
         let app_handle = app.clone();
         let ctx = Arc::clone(&ctx);
         let task_id = task_id.to_string();
         let track_sender = track_sender.clone();
+        let emit_index = track.source_track_index.unwrap_or(index);
 
-        join_set.spawn(async move {
+        let task_id_outer = task_id.clone();
+        let abort_handle = join_set.spawn(async move {
             if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
-                if registry.is_cancelled(&task_id).await {
-                    return None;
-                }
-            }
-            let _permit = match sem.acquire().await {
-                Ok(p) => p,
-                Err(_) => return None,
-            };
-            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
-                if registry.is_cancelled(&task_id).await {
+                if registry.is_track_cancelled(&task_id, emit_index).await {
                     return None;
                 }
             }
@@ -853,10 +887,33 @@ pub async fn download_batch_streaming(
             let jitter = (index % 4) * 150 + 50;
             sleep(Duration::from_millis(jitter as u64)).await;
 
-            let downloaded_file = download_track_internal(&ctx, &track, track_num, total_tracks).await;
+            let downloaded = download_with_fallbacks(&track, |candidate| {
+                let ctx = Arc::clone(&ctx);
+                let app_handle = app_handle.clone();
+                let task_id = task_id.clone();
+                async move {
+                    if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                        if registry.is_track_cancelled(&task_id, emit_index).await {
+                            return None;
+                        }
+                    }
+                    download_track_internal(&ctx, &candidate, track_num, total_tracks).await
+                }
+            }).await;
 
-            if let Some(ref path) = downloaded_file {
+            if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                registry.clear_track_abort_handle(&task_id, emit_index).await;
+            }
+
+            if let Some((path, track)) = downloaded {
+                if let Some(registry) = app_handle.try_state::<crate::download::TaskRegistry>() {
+                    if registry.is_track_cancelled(&task_id, emit_index).await {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return None;
+                    }
+                }
                 let current = completed.fetch_add(1, Ordering::SeqCst) + 1;
+                let emit_index = track.source_track_index.unwrap_or(index);
                 tracing::info!(
                     session = %ctx.session_id,
                     track = track_num,
@@ -879,7 +936,7 @@ pub async fn download_batch_streaming(
                     "download-track-progress",
                     serde_json::json!({
                         "task_id": task_id,
-                        "track_index": index,
+                        "track_index": emit_index,
                         "track_title": track.title.clone(),
                         "percent": 100,
                     }),
@@ -889,7 +946,7 @@ pub async fn download_batch_streaming(
                     app_handle.try_state::<crate::download::TaskRegistry>()
                 {
                     registry
-                        .update_track_progress(&task_id, index, &track.title, 100)
+                        .update_track_progress(&task_id, emit_index, &track.title, 100)
                         .await;
                     registry
                         .update_task_progress(
@@ -905,10 +962,10 @@ pub async fn download_batch_streaming(
                 }
 
                 if let Some(ref sender) = track_sender {
-                    let _ = sender.send((path.clone(), track.clone(), index)).await;
+                    let _ = sender.send((path.clone(), track.clone(), emit_index)).await;
                 }
 
-                Some((path.clone(), track))
+                Some((path, track))
             } else {
                 tracing::error!(
                     session = %ctx.session_id,
@@ -921,6 +978,9 @@ pub async fn download_batch_streaming(
                 None
             }
         });
+        if let Some(registry) = app.try_state::<crate::download::TaskRegistry>() {
+            registry.set_track_abort_handle(&task_id_outer, emit_index, abort_handle).await;
+        }
     }
 
     drop(track_sender);
@@ -947,13 +1007,212 @@ pub async fn download_batch_streaming(
 
     // Nothing downloaded because every track failed: tell the user why instead of finishing silently.
     if downloaded.is_empty() {
-        let reasons = ctx.failures.lock().map(|f| f.clone()).unwrap_or_default();
-        if !reasons.is_empty() {
-            return Err(reasons.join("; "));
+        discard_failed_batch(&ctx.temp_dir).await;
+        let cancelled = match app.try_state::<crate::download::TaskRegistry>() {
+            Some(registry) => registry.is_cancelled(task_id).await,
+            None => false,
+        };
+        if cancelled {
+            return Err(empty_batch_error(true, &[]));
         }
+        if let Some(Err(error)) = ctx.youtube_sign_in.get() {
+            return Err(error.clone());
+        }
+        let reasons = ctx.failures.lock().map(|f| f.clone()).unwrap_or_default();
+        return Err(empty_batch_error(false, &reasons));
     }
 
     Ok(downloaded)
+}
+
+struct OwnedPreviewProcess {
+    child: tokio::process::Child,
+    #[cfg(unix)]
+    group: Option<u32>,
+    #[cfg(target_os = "windows")]
+    _job: std::os::windows::io::OwnedHandle,
+    completed: bool,
+}
+
+impl OwnedPreviewProcess {
+    fn new(child: tokio::process::Child) -> Result<Self, String> {
+        #[cfg(target_os = "windows")]
+        let job = match preview_process_job(&child) {
+            Ok(job) => job,
+            Err(error) => {
+                let mut child = child;
+                if let Some(pid) = child.id() { crate::download::TaskRegistry::kill_pid(pid); }
+                let _ = child.start_kill();
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            #[cfg(unix)]
+            group: child.id(),
+            child,
+            #[cfg(target_os = "windows")]
+            _job: job,
+            completed: false,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn preview_process_job(child: &tokio::process::Child) -> Result<std::os::windows::io::OwnedHandle, String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    // An unnamed job owns only this preview and its descendants. Closing its last handle
+    // terminates descendants even if their parent has exited while they still hold pipes.
+    let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if raw.is_null() { return Err(format!("Could not create preview process job: {}", std::io::Error::last_os_error())); }
+    // SAFETY: CreateJobObjectW returned a new, non-null handle owned by this scope.
+    let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: the handle is live; limits points to the structure of the stated size/class.
+    if unsafe { SetInformationJobObject(job.as_raw_handle(), JobObjectExtendedLimitInformation,
+        (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+        std::mem::size_of_val(&limits) as u32) } == 0 {
+        return Err(format!("Could not configure preview process job: {}", std::io::Error::last_os_error()));
+    }
+    let process = child.raw_handle().ok_or("Preview process handle unavailable")?;
+    // SAFETY: both handles are valid for the duration of this call. No other process is queried.
+    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) } == 0 {
+        return Err(format!("Could not own preview process tree: {}", std::io::Error::last_os_error()));
+    }
+    Ok(job)
+}
+
+impl Drop for OwnedPreviewProcess {
+    fn drop(&mut self) {
+        if !self.completed {
+            #[cfg(unix)]
+            if let Some(pid) = self.group {
+                // Retain the original group ID: Child::id() is gone after wait reaps the parent.
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{pid}")]).output();
+            }
+            let _ = self.child.start_kill();
+        }
+    }
+}
+
+async fn read_process_pipe<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        pipe.read_to_end(&mut bytes).await?;
+    }
+    Ok(bytes)
+}
+
+/// One deadline includes stdin and both output pipes. Dropping it stops only the owned process tree.
+pub(crate) async fn wait_with_deadline(
+    child: tokio::process::Child,
+    input: Option<Vec<u8>>,
+    limit: Duration,
+) -> Result<std::process::Output, String> {
+    use tokio::io::AsyncWriteExt;
+    let mut process = OwnedPreviewProcess::new(child)?;
+    let result = tokio::time::timeout(limit, async {
+        if let Some(input) = input {
+            let mut stdin = process.child.stdin.take().ok_or("yt-dlp stdin unavailable")?;
+            stdin.write_all(&input).await.map_err(|error| error.to_string())?;
+        }
+        let stdout = process.child.stdout.take();
+        let stderr = process.child.stderr.take();
+        let (status, stdout, stderr) = tokio::try_join!(
+            process.child.wait(), read_process_pipe(stdout), read_process_pipe(stderr)
+        ).map_err(|error| error.to_string())?;
+        Ok(std::process::Output { status, stdout, stderr })
+    }).await.map_err(|_| "yt-dlp timed out after its preview deadline".to_string())?;
+    process.completed = result.is_ok();
+    result
+}
+
+#[cfg(test)]
+#[path = "ytdlp_descendant_tests.rs"]
+mod descendant_tests;
+
+#[cfg(test)]
+#[path = "ytdlp_deadline_tests.rs"]
+mod deadline_tests;
+
+async fn download_with_fallbacks<F, Fut>(track: &TrackDownload, mut attempt: F) -> Option<(PathBuf, TrackDownload)>
+where
+    F: FnMut(TrackDownload) -> Fut,
+    Fut: std::future::Future<Output = Option<PathBuf>>,
+{
+    for (index, url) in std::iter::once(&track.url).chain(&track.fallback_urls).enumerate() {
+        if index > 0 && checked_url(url).is_err() {
+            continue;
+        }
+        let mut candidate = track.clone();
+        candidate.url = url.clone();
+        if index > 0 && candidate.url != track.url {
+            candidate.source_item_id = None;
+        }
+        if let Some(path) = attempt(candidate.clone()).await {
+            return Some((path, candidate));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+#[path = "ytdlp_fallback_tests.rs"]
+mod fallback_tests;
+
+async fn acquire_download_slot(
+    sign_in: impl std::future::Future<Output = Result<(), String>>,
+    semaphore: Arc<Semaphore>,
+) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+    sign_in.await?;
+    semaphore.acquire_owned().await.map_err(|_| "Download queue is closed".into())
+}
+
+#[cfg(test)]
+#[path = "ytdlp_slot_tests.rs"]
+mod slot_tests;
+
+fn empty_batch_error(cancelled: bool, reasons: &[String]) -> String {
+    if cancelled {
+        "Task cancelled".into()
+    } else if reasons.is_empty() {
+        "No tracks could be downloaded.".into()
+    } else {
+        reasons.join("; ")
+    }
+}
+
+#[cfg(test)]
+#[path = "ytdlp_batch_error_tests.rs"]
+mod batch_error_tests;
+
+async fn discard_failed_batch(temp_dir: &Path) {
+    if let Err(error) = tokio::fs::remove_dir_all(temp_dir).await {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(%error, "Failed removing temporary batch files");
+        }
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn removing_failed_batch_keeps_other_temporary_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let failed = root.path().join("batch_failed");
+    let other = root.path().join("batch_other");
+    tokio::fs::create_dir(&failed).await.unwrap();
+    tokio::fs::create_dir(&other).await.unwrap();
+    tokio::fs::write(failed.join("track.part"), b"partial").await.unwrap();
+    discard_failed_batch(&failed).await;
+    assert!(!failed.exists());
+    assert!(other.exists());
 }
 
 /// Helper function to match track index to the resulting file on disk
@@ -1050,6 +1309,46 @@ mod hardening_tests {
         assert_eq!(download_site("https://notyoutube.com/x"), DownloadSite::Other);
     }
 
+    #[tokio::test]
+    async fn only_actual_youtube_attempts_check_the_session() {
+        let session = tokio::sync::OnceCell::new();
+        for url in [
+            "https://artist.bandcamp.com/track/a",
+            "https://soundcloud.com/artist/track",
+            "https://example.test/youtube.com?next=https://youtube.com",
+        ] {
+            assert!(sign_in_for_url(url, &session, async { panic!("unexpected YouTube sign-in") }).await.is_ok());
+        }
+        for url in ["canonical:album:youtube", "resolve:song:1", "magnet:?xt=urn:btih:abc", "ftp://youtube.com/a"] {
+            assert!(sign_in_for_url(url, &session, async { panic!("unexpected YouTube sign-in") }).await.is_err());
+        }
+        assert!(session.get().is_none());
+
+        // YouTube can be the fallback URL of a track from a different platform.
+        assert!(sign_in_for_url("https://youtu.be/abc", &session, async { Ok(()) }).await.is_ok());
+        assert!(sign_in_for_url(YT, &session, async { panic!("session already checked") }).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn declining_youtube_applies_to_parallel_tracks_but_keeps_other_sources_available() {
+        let session = tokio::sync::OnceCell::new();
+        let attempts = AtomicUsize::new(0);
+        let check = || async {
+            attempts.fetch_add(1, Ordering::Relaxed);
+            tokio::task::yield_now().await;
+            Err(super::super::youtube_sign_in::CANCELLED.to_string())
+        };
+        let (first, next) = tokio::join!(
+            sign_in_for_url(YT, &session, check()),
+            sign_in_for_url("https://youtu.be/abc", &session, check()),
+        );
+        assert_eq!(first, Err(super::super::youtube_sign_in::CANCELLED.into()));
+        assert_eq!(next, first);
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert!(sign_in_for_url("https://artist.bandcamp.com/track/a", &session, check()).await.is_ok());
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn youtube_args_end_with_separator_and_url_and_trust_the_system_store() {
         let args = download_args(YT, TEMPLATE, &cookie_args(), None).unwrap();
@@ -1072,8 +1371,10 @@ mod hardening_tests {
 
     #[test]
     fn non_youtube_urls_never_get_browser_cookies() {
-        let args = download_args("https://evil.com/?youtube.com", TEMPLATE, &cookie_args(), None).unwrap();
-        assert!(!args.iter().any(|a| a == "--cookies-from-browser"));
+        for url in ["https://evil.com/?youtube.com", "https://artist.bandcamp.com/track/a", "https://soundcloud.com/artist/track"] {
+            let args = download_args(url, TEMPLATE, &cookie_args(), None).unwrap();
+            assert!(!args.iter().any(|a| a.starts_with("--cookies")));
+        }
     }
 
     #[test]
@@ -1090,7 +1391,7 @@ mod hardening_tests {
     #[test]
     fn a_cookie_file_is_passed_before_the_separator() {
         let cookies = vec!["--cookies".to_string(), "/data/cookie-copies/1.txt".to_string()];
-        let args = download_args("https://artist.bandcamp.com/track/a", TEMPLATE, &cookies, None).unwrap();
+        let args = download_args(YT, TEMPLATE, &cookies, None).unwrap();
         let at = args.iter().position(|a| a == "--cookies").unwrap();
         assert_eq!(args[at + 1], "/data/cookie-copies/1.txt");
         assert!(at < args.iter().position(|a| a == "--").unwrap());
@@ -1109,6 +1410,14 @@ mod hardening_tests {
         assert_eq!(args[buf_idx + 1], "16M");
         assert!(args.contains(&"--no-cache-dir".to_string()));
         assert_eq!(MAX_CONCURRENT_DOWNLOADS, 4);
+    }
+
+    #[test]
+    fn http_download_semaphore_is_shared_across_tasks() {
+        let a = http_download_semaphore();
+        let b = http_download_semaphore();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(a.available_permits(), MAX_CONCURRENT_DOWNLOADS);
     }
 
     #[tokio::test]

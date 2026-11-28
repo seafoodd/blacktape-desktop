@@ -1,9 +1,18 @@
-use crate::search::bandcamp::ItemType;
 use crate::types::Platform;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::error::Error;
 use std::future::Future;
 use std::time::Duration;
+use tokio::task::JoinSet;
+
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
+pub enum ItemType {
+    Album,
+    Artist,
+    Track,
+    Unknown,
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchSuggestion {
@@ -25,29 +34,227 @@ pub struct SearchSuggestion {
     pub platform: Platform,
 }
 
-pub mod bandcamp;
-pub mod soundcloud;
-pub mod bandcamp_full;
+pub struct SourceResults {
+    pub items: Vec<SearchSuggestion>,
+    pub complete: bool,
+}
+
+impl SourceResults {
+    pub fn complete(items: Vec<SearchSuggestion>) -> Self {
+        Self { items, complete: true }
+    }
+}
+
+pub(crate) mod cache;
+#[cfg(test)]
+mod cache_tests;
+
 pub mod full;
+pub mod progress;
 pub mod ranking;
-pub mod youtube;
-pub mod youtube_fast;
-pub mod youtube_full;
+use crate::platforms::youtube::{search as youtube, search_fast as youtube_fast};
+#[cfg(test)]
+mod simulation_tests;
 
 /// Time budget for the fast InnerTube path before the legacy rustypipe path takes over (D6).
 const FAST_PATH_TIMEOUT: Duration = Duration::from_millis(3500);
 
 type SearchResult = Result<Vec<SearchSuggestion>, Box<dyn Error + Send + Sync>>;
 
+/// Shorter queries are not sent to MusicBrainz from the search dropdown: they are mostly half-typed words.
+const MUSICBRAINZ_MIN_QUERY_CHARS: usize = 3;
+
+pub fn is_long_enough_for_musicbrainz(query: &str) -> bool {
+    query.trim().chars().count() >= MUSICBRAINZ_MIN_QUERY_CHARS
+}
+
+/// Publishes accumulated suggestions as sources finish, including MusicBrainz when it answers first.
+pub async fn collect_suggestions(
+    mut fast: JoinSet<SearchResult>,
+    mut slow: JoinSet<Vec<SearchSuggestion>>,
+    mut on_partial: impl FnMut(&[SearchSuggestion]),
+) -> Vec<SearchSuggestion> {
+    let mut found = Vec::new();
+    while !fast.is_empty() || !slow.is_empty() {
+        let before = found.len();
+        tokio::select! {
+            Some(result) = fast.join_next(), if !fast.is_empty() => {
+                match result {
+                    Ok(Ok(results)) => found.extend(results),
+                    Ok(Err(error)) => tracing::warn!("Platform search error: {error}"),
+                    Err(error) => tracing::error!("Search task join failed: {error}"),
+                }
+            }
+            Some(result) = slow.join_next(), if !slow.is_empty() => {
+                match result {
+                    Ok(results) => found.extend(results),
+                    Err(error) => tracing::error!("Search task join failed: {error}"),
+                }
+            }
+        }
+        if found.len() > before && (!fast.is_empty() || !slow.is_empty()) {
+            on_partial(&found);
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+#[path = "partial_tests.rs"]
+mod partial_tests;
+
+/// Fetches canonical album releases from MusicBrainz `release-group` API (under a strict timeout),
+/// preferring primary studio albums and high-edition canonical entries, deduplicating `(artist, title)`
+/// pairs, and converting them into `SearchSuggestion` items prefixed with `canonical:rg:<mbid>`.
+pub async fn fetch_canonical_album_suggestions_result(
+    client: &crate::metadata::MusicBrainzClient,
+    query: &str,
+    platform: Platform,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Vec<SearchSuggestion>, String> {
+    let answer = tokio::time::timeout(timeout, client.search_release_groups(query))
+        .await
+        .unwrap_or_else(|_| Err("MusicBrainz request timed out after 6s. Please try again.".to_string()));
+    let mut groups = match answer {
+        Ok(groups) => groups,
+        Err(error) => client.saved_release_groups(query).await.ok_or(error)?,
+    };
+    groups.retain(|rg| !crate::platforms::musicbrainz::is_bootleg_only_group(&rg.releases));
+    // Prefer full studio Albums over EPs over Singles, no secondary types, and high release counts.
+    groups.sort_by(|a, b| {
+        let primary_rank = |p: Option<&str>| match p {
+            Some(s) if s.eq_ignore_ascii_case("Album") => 2u8,
+            Some(s) if s.eq_ignore_ascii_case("EP") => 1u8,
+            _ => 0u8,
+        };
+        let a_primary = a.secondary_types.is_empty();
+        let b_primary = b.secondary_types.is_empty();
+        let a_type = primary_rank(a.primary_type.as_deref());
+        let b_type = primary_rank(b.primary_type.as_deref());
+        let a_weight = a.score.unwrap_or(0) + (a.count.unwrap_or(0).min(25) * 3);
+        let b_weight = b.score.unwrap_or(0) + (b.count.unwrap_or(0).min(25) * 3);
+        b_primary
+            .cmp(&a_primary)
+            .then_with(|| b_type.cmp(&a_type))
+            .then_with(|| b_weight.cmp(&a_weight))
+            .then_with(|| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)))
+    });
+    let has_album_or_ep = groups.iter().any(|rg| {
+        rg.primary_type
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case("Album") || p.eq_ignore_ascii_case("EP"))
+    });
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for rg in groups {
+        let count = rg.count.unwrap_or(0);
+        let is_single = rg
+            .primary_type
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case("Single"));
+        // Singles with only 1 edition are tracks, not multi-source studio albums: skip them when
+        // actual Albums/EPs exist so they never hijack top Album slots (e.g. "plastic death").
+        if is_single && count < 2 && has_album_or_ep {
+            continue;
+        }
+        let is_primary_studio = rg.secondary_types.is_empty()
+            && rg
+                .primary_type
+                .as_deref()
+                .map_or(true, |p| p.eq_ignore_ascii_case("Album") || p.eq_ignore_ascii_case("EP"));
+        let summary = rg.into_canonical_summary();
+        if summary.title.trim().is_empty() || summary.artist.trim().is_empty() {
+            continue;
+        }
+        let key = (
+            ranking::normalize(&summary.artist),
+            ranking::normalize(&summary.title),
+        );
+        if !key.0.is_empty() && !key.1.is_empty() && !seen.insert(key) {
+            continue;
+        }
+        // Encode edition prominence into internal view_count proxy (not displayed in UI) so
+        // widely released studio albums (>= 3 editions) defeat 1-edition homonyms and compilations.
+        let prominence_proxy = if count >= 3 && is_primary_studio {
+            Some((count as u64).saturating_mul(25_000))
+        } else if count >= 2 {
+            Some((count as u64).saturating_mul(2_000))
+        } else {
+            None
+        };
+        deduped.push(SearchSuggestion {
+            item_type: ItemType::Album,
+            name: summary.title,
+            band_name: summary.artist,
+            album_name: None,
+            item_url_path: format!("canonical:{}", summary.id),
+            img: summary.cover_url.unwrap_or_default(),
+            subscriber_count: None,
+            audience_kind: None,
+            album_url: None,
+            view_count: prominence_proxy,
+            year: summary.year.map(|y| y as i32),
+            duration: None,
+            platform,
+        });
+        if deduped.len() >= limit {
+            break;
+        }
+    }
+    Ok(deduped)
+}
+
+#[cfg(test)]
+pub async fn fetch_canonical_album_suggestions(
+    query: &str,
+    cache_dir: Option<std::path::PathBuf>,
+    platform: Platform,
+    limit: usize,
+    timeout: Duration,
+) -> Vec<SearchSuggestion> {
+    let client = crate::metadata::MusicBrainzClient::new(cache_dir);
+    fetch_canonical_album_suggestions_result(&client, query, platform, limit, timeout)
+        .await
+        .unwrap_or_default()
+}
+
 /// YouTube search with the fast InnerTube path first and the legacy rustypipe path as fallback (D6).
 /// The fast path is given `FAST_PATH_TIMEOUT`; see `with_fallback` for the exact rules.
 pub async fn search_youtube_with_fallback(query: &str) -> SearchResult {
     with_fallback(
-        youtube_fast::search(query),
-        youtube::search(query),
+        Box::pin(youtube_fast::search(query)),
+        Box::pin(youtube::search(query)),
         FAST_PATH_TIMEOUT,
     )
     .await
+    .map_err(|e| friendly_youtube_search_error(e.as_ref()).into())
+}
+
+/// Converts raw transport/rate-limit errors from YouTube search into user-facing messages
+/// without leaking internal InnerTube endpoint URLs.
+fn friendly_youtube_search_error(err: &(dyn Error + Send + Sync + 'static)) -> String {
+    if err.downcast_ref::<youtube_fast::RateLimitedError>().is_some() {
+        return err.to_string();
+    }
+    let msg = err.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("403")
+        || lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+    {
+        return "YouTube Music temporarily blocked search requests from this IP (rate limit). Try again later or switch VPN/network.".to_string();
+    }
+    if lower.contains("error sending request for url")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection")
+        || lower.contains("dns")
+    {
+        return "Couldn't reach YouTube Music (connection timed out or blocked). Try again or check your VPN/network.".to_string();
+    }
+    msg
 }
 
 /// Runs `fast` under `timeout`. Its result is returned as-is unless it is an error, a timeout, or
@@ -68,11 +275,12 @@ where
     slow.await
 }
 
-/// True when the fast path result is unusable: an error, or no item that is a Track, Album or Artist
-/// (an empty list, or only `Unknown` items). Non-empty partial results are NOT a fallback case.
+/// True when the fast path result is unusable: an error (other than an IP rate limit), or no item
+/// that is a Track, Album or Artist (an empty list, or only `Unknown` items). Non-empty partial
+/// results and rate-limit blocks are NOT fallback cases.
 fn should_fallback(result: &SearchResult) -> bool {
     match result {
-        Err(_) => true,
+        Err(e) => e.downcast_ref::<youtube_fast::RateLimitedError>().is_none(),
         Ok(items) => !items.iter().any(|item| {
             matches!(
                 item.item_type,
@@ -269,5 +477,147 @@ mod fallback_tests {
             Duration::from_secs(1),
         ));
         assert!(result.expect("ok").is_empty());
+    }
+
+    #[test]
+    fn rate_limited_error_does_not_poll_fallback() {
+        let rt = runtime();
+        let slow_polled = Arc::new(AtomicBool::new(false));
+        let flag = slow_polled.clone();
+        let result = rt.block_on(with_fallback(
+            async { Err(Box::new(youtube_fast::RateLimitedError) as Box<dyn Error + Send + Sync>) },
+            async move {
+                flag.store(true, Ordering::SeqCst);
+                ok_items(vec![suggestion(ItemType::Track, "Slow")])
+            },
+            Duration::from_secs(1),
+        ));
+        assert!(!slow_polled.load(Ordering::SeqCst));
+        let msg = result.err().expect("rate limit error").to_string();
+        assert!(msg.contains("rate limit"));
+    }
+
+    #[test]
+    fn friendly_youtube_search_error_hides_raw_innertube_url() {
+        let raw: Box<dyn Error + Send + Sync> =
+            "error sending request for url (https://music.youtube.com/youtubei/v1/search?prettyPrint=false)".into();
+        let friendly = friendly_youtube_search_error(raw.as_ref());
+        assert!(!friendly.contains("youtubei"));
+        assert!(friendly.contains("Couldn't reach YouTube Music"));
+
+        let forbidden: Box<dyn Error + Send + Sync> = "HTTP status client error (403 Forbidden)".into();
+        assert!(friendly_youtube_search_error(forbidden.as_ref()).contains("rate limit"));
+    }
+}
+
+#[cfg(test)]
+mod collect_suggestions_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::oneshot;
+
+    fn suggestion(item_type: ItemType, name: &str) -> SearchSuggestion {
+        SearchSuggestion {
+            item_type,
+            name: name.to_string(),
+            band_name: "Artist".to_string(),
+            album_name: None,
+            item_url_path: String::new(),
+            img: String::new(),
+            subscriber_count: None,
+            audience_kind: None,
+            album_url: None,
+            view_count: None,
+            year: None,
+            duration: None,
+            platform: Platform::Youtube,
+        }
+    }
+
+    #[test]
+    fn musicbrainz_needs_three_characters_after_trim() {
+        assert!(!is_long_enough_for_musicbrainz("ab"));
+        assert!(!is_long_enough_for_musicbrainz("  ab  "));
+        assert!(is_long_enough_for_musicbrainz("abc"));
+        assert!(is_long_enough_for_musicbrainz("мир"));
+        assert!(!is_long_enough_for_musicbrainz("ок"));
+    }
+
+    #[tokio::test]
+    async fn partial_callback_runs_while_slow_source_is_pending() {
+        let (release_slow, slow_waits) = oneshot::channel::<()>();
+        let mut release_slow = Some(release_slow);
+        let mut fast: JoinSet<SearchResult> = JoinSet::new();
+        fast.spawn(async { Ok(vec![suggestion(ItemType::Track, "Fast")]) });
+        let mut slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
+        slow.spawn(async move {
+            // Only finishes once on_partial has run, so the callback is guaranteed to see it pending.
+            slow_waits.await.expect("on_partial must release the slow source");
+            vec![suggestion(ItemType::Album, "Slow")]
+        });
+
+        let partial_names = Arc::new(Mutex::new(Vec::new()));
+        let partial_names_in_callback = partial_names.clone();
+        let found = collect_suggestions(fast, slow, move |partial| {
+            *partial_names_in_callback.lock().unwrap() =
+                partial.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+            let _ = release_slow.take().expect("callback should run once").send(());
+        })
+        .await;
+
+        assert_eq!(*partial_names.lock().unwrap(), vec!["Fast".to_string()]);
+        let mut names: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["Fast", "Slow"]);
+    }
+
+    #[tokio::test]
+    async fn partial_callback_not_called_without_slow_source() {
+        let mut fast: JoinSet<SearchResult> = JoinSet::new();
+        fast.spawn(async { Ok(vec![suggestion(ItemType::Track, "Fast")]) });
+        let slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in_callback = called.clone();
+
+        let found = collect_suggestions(fast, slow, move |_| {
+            called_in_callback.store(true, Ordering::SeqCst);
+        })
+        .await;
+
+        assert!(!called.load(Ordering::SeqCst));
+        assert_eq!(found.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn partial_callback_not_called_when_all_sources_return_nothing() {
+        let mut fast: JoinSet<SearchResult> = JoinSet::new();
+        fast.spawn(async { Ok(vec![]) });
+        fast.spawn(async { Err("fast source down".into()) });
+        let mut slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
+        slow.spawn(async { Vec::new() });
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in_callback = called.clone();
+
+        let found = collect_suggestions(fast, slow, move |_| {
+            called_in_callback.store(true, Ordering::SeqCst);
+        })
+        .await;
+
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failing_fast_source_keeps_results_of_other_sources() {
+        let mut fast: JoinSet<SearchResult> = JoinSet::new();
+        fast.spawn(async { Err("boom".into()) });
+        fast.spawn(async { Ok(vec![suggestion(ItemType::Artist, "Survivor")]) });
+        let slow: JoinSet<Vec<SearchSuggestion>> = JoinSet::new();
+
+        let found = collect_suggestions(fast, slow, |_| {}).await;
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Survivor");
     }
 }

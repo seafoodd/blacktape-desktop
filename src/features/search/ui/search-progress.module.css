@@ -1,0 +1,176 @@
+.progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.summary {
+    margin: 0;
+    font-size: var(--font-sm);
+    color: var(--color-muted);
+}
+
+.sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    color: var(--color-muted);
+    /* the running time must not make the chips jitter */
+    font-variant-numeric: tabular-nums;
+}
+
+.name {
+    color: var(--color-text);
+}
+
+.retry {
+    padding: 2px 5px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.retry:hover, .retry:focus-visible {
+    background: var(--color-border);
+}
+
+.retry:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-muted);
+}
+
+.waiting .dot,
+.unknown .dot {
+    opacity: 0.4;
+}
+
+.running .dot {
+    background-color: var(--color-primary);
+    animation: blink 800ms ease-in-out infinite alternate;
+}
+
+.done .dot {
+    background-color: var(--color-success);
+}
+
+.failed .dot {
+    background-color: var(--color-error);
+}
+
+.failed {
+    border-color: color-mix(in srgb, var(--color-error) 60%, transparent);
+}
+
+@keyframes blink {
+    to {
+        opacity: 0.3;
+    }
+}
+
+/* Inside the search field, left of the filter button. */
+.pulse {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 40px;
+    display: flex;
+    align-items: center;
+    pointer-events: auto;
+}
+
+.counter {
+    display: flex;
+    gap: 6px;
+    padding: 0 8px;
+    border-left: 1px solid var(--color-border);
+    font-size: var(--font-sm);
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
+
+.details {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: max-content;
+    max-width: 360px;
+    overflow-wrap: anywhere;
+    padding: 10px 12px;
+    flex-direction: column;
+    gap: 6px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 121;
+}
+
+.details ul {
+    flex-direction: column;
+}
+
+.pulse:hover .details,
+.pulse:focus-within .details {
+    display: flex;
+}
+
+.line {
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    pointer-events: none;
+}
+
+.segment {
+    flex: 1;
+    height: 2px;
+    background-color: var(--color-muted);
+}
+
+.segment.waiting,
+.segment.unknown {
+    opacity: 0.4;
+}
+
+.segment.running {
+    background-color: var(--color-primary);
+    animation: blink 800ms ease-in-out infinite alternate;
+}
+
+.segment.done {
+    background-color: var(--color-success);
+}
+
+.segment.failed {
+    background-color: var(--color-error);
+}

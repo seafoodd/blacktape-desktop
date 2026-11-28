@@ -20,6 +20,7 @@
  * leaves `hasMore` true, so "Show more" simply retries.
  */
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import {
   ItemType,
   useLibraryStore,
@@ -31,8 +32,17 @@ import {
   type ArtistProfile,
   type FullSearchPage,
   type SearchCursor,
+  type SearchFullArgs,
   type SearchKind,
 } from "@/shared/lib/search/searchFull.ts";
+import {
+  applyProgress,
+  closeProgress,
+  type SourceProgress,
+  type SourceProgressEvent,
+  type SearchSource,
+  SOURCE_NAMES,
+} from "@/shared/lib/search/searchProgress.ts";
 import {
   createLatestGuard,
   type LatestGuard,
@@ -57,6 +67,8 @@ export type SectionStatus =
   | "error";
 
 export interface SectionState {
+  retryCursors?: Partial<Record<SearchSource, SearchCursor>>;
+  warningSources?: Record<string, SearchSource>;
   items: SearchSuggestion[];
   /** Copies of `items` on other platforms (see `itemsForPlatform`). */
   copies: ItemCopy[];
@@ -66,6 +78,8 @@ export interface SectionState {
   hasMore: boolean;
   /** Platform warnings of the last response, e.g. "YouTube unavailable". */
   warnings: string[];
+  /** What each source did, or is doing, for the last request of this section. */
+  progress: SourceProgress[];
 }
 
 export type ProfileStatus = "idle" | "loading" | "ready" | "error";
@@ -88,11 +102,14 @@ export interface SearchPageState {
   open: (query: string) => void;
   /** Re-run the whole search for the current query (e.g. after an error). */
   retry: () => void;
+  retrySource: (kind: SearchKind, source: SearchSource) => Promise<void>;
   /** "Show more" for one section; no-op unless status is "ready" and hasMore. */
   loadMore: (kind: SearchKind) => Promise<void>;
   setFilters: (patch: Partial<SearchPageFilters>) => void;
   resetFilters: () => void;
   setSort: (sort: SearchPageSort) => void;
+  invalidatePending: () => void;
+  resumeIncomplete: () => void;
 }
 
 export const emptySection = (): SectionState => ({
@@ -103,6 +120,7 @@ export const emptySection = (): SectionState => ({
   nextCursor: null,
   hasMore: false,
   warnings: [],
+  progress: [],
 });
 
 const SEARCH_PLATFORMS: Platform[] = ["youtube", "bandcamp", "soundcloud"];
@@ -145,32 +163,152 @@ const idleProfile = (): ProfileState => ({
   data: null,
 });
 
+function formatSearchError(raw: string, source?: string): string {
+  if (source && source !== "youtube") {
+    const label = source === "musicbrainz" ? "MusicBrainz" : source === "soundcloud" ? "SoundCloud" : "Bandcamp";
+    return raw.startsWith(label) ? raw : `${label}: ${raw}`;
+  }
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("403") ||
+    lower.includes("429") ||
+    lower.includes("too many requests")
+  ) {
+    return "YouTube Music temporarily blocked search requests from this IP (rate limit). Try again later or switch VPN/network.";
+  }
+  if (
+    lower.includes("music.youtube.com/youtubei") ||
+    lower.includes("error sending request for url") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout")
+  ) {
+    return "Couldn't reach YouTube Music (rate-limited or connection timed out). Try again in a moment or switch VPN/network.";
+  }
+  return raw;
+}
+
 function errorMessage(err: unknown): string {
-  if (typeof err === "string" && err.trim() !== "") return err;
-  if (err instanceof Error && err.message !== "") return err.message;
+  if (typeof err === "string" && err.trim() !== "") return formatSearchError(err);
+  if (err instanceof Error && err.message !== "") return formatSearchError(err.message);
   if (
     typeof err === "object" &&
     err !== null &&
     typeof (err as { message?: unknown }).message === "string" &&
     (err as { message: string }).message !== ""
   ) {
-    return (err as { message: string }).message;
+    return formatSearchError((err as { message: string }).message);
   }
   return "Search failed";
 }
 
-const readySection = (page: FullSearchPage): SectionState => {
+let lastProgressRequest = 0;
+
+/** `searchFull` that hands over what its sources are doing while it runs. */
+async function searchWithProgress(
+  args: SearchFullArgs,
+  onProgress: (sources: SourceProgress[]) => void,
+  onPartial?: (page: FullSearchPage) => void,
+): Promise<FullSearchPage> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return searchFull(args);
+  const requestId = ++lastProgressRequest;
+  let sources: SourceProgress[] = [];
+  let finished = false;
+  onProgress(sources);
+  let stop: (() => void) | undefined;
+  let stopPartial: (() => void) | undefined;
+  try {
+    stop = await listen<{ requestId: number; progress: SourceProgressEvent }>(
+      "search-full-progress",
+      (ev) => {
+        if (finished || ev.payload.requestId !== requestId) return;
+        sources = applyProgress(sources, ev.payload.progress, Date.now());
+        onProgress(sources);
+      },
+    );
+    if (onPartial) {
+      stopPartial = await listen<{ requestId: number; kind: SearchKind; page: FullSearchPage }>(
+        "search-full-partial",
+        ({ payload }) => {
+          if (!finished && payload.requestId === requestId && payload.kind === args.kind) onPartial(payload.page);
+        },
+      );
+    }
+  } catch (err) {
+    finished = true;
+    stop?.();
+    stopPartial?.();
+    // The search matters more than its progress.
+    console.error("Failed to listen for search progress:", err);
+    return searchFull(args);
+  }
+  try {
+    return await searchFull({ ...args, requestId });
+  } finally {
+    finished = true;
+    stop?.();
+    stopPartial?.();
+    onProgress(closeProgress(sources));
+  }
+}
+
+/** The state of a section that has its page; `progress` is kept as the request left it. */
+const readySection = (page: FullSearchPage): Omit<SectionState, "progress"> => {
   const nextCursor = page.next_cursor ?? null;
+  const warnings = (page.warnings ?? []).map((warning) => formatSearchError(warning.message, warning.source ?? warning.platform));
+  const warningSources: Record<string, SearchSource> = {};
+  for (const [index, warning] of (page.warnings ?? []).entries()) {
+    const source = warning.source ?? warning.platform;
+    if (source in SOURCE_NAMES) warningSources[warnings[index]] = source as SearchSource;
+  }
+  const retryCursors: SectionState["retryCursors"] = {};
+  for (const source of ["youtube", "soundcloud"] as const) {
+    if (nextCursor?.[source] != null && page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) {
+      retryCursors[source] = { [source]: nextCursor[source] };
+    }
+  }
   return {
+    retryCursors,
+    warningSources,
     items: page.items ?? [],
     copies: page.copies ?? [],
     status: "ready",
     error: null,
     nextCursor,
     hasMore: Boolean(page.has_more) && nextCursor !== null,
-    warnings: (page.warnings ?? []).map((w) => w.message),
+    warnings,
   };
 };
+
+function mergeWarnings(previous: SectionState, next: Pick<SectionState, "warnings" | "warningSources">, recovered: SearchSource[]) {
+  const warnings = [...new Set([
+    ...previous.warnings.filter(message => !recovered.some(source =>
+      previous.warningSources?.[message] === source || (!previous.warningSources?.[message] && message.toLowerCase().includes(SOURCE_NAMES[source].toLowerCase())))),
+    ...next.warnings,
+  ])];
+  const sources = { ...previous.warningSources, ...next.warningSources };
+  return { warnings, warningSources: Object.fromEntries(warnings.flatMap(message => sources[message] ? [[message, sources[message]]] : [])) };
+}
+
+function mergeProgress(previous: SourceProgress[], updates: SourceProgress[]): SourceProgress[] {
+  return [...previous.map((entry) => updates.find((update) => update.source === entry.source) ?? entry),
+    ...updates.filter((update) => !previous.some((entry) => entry.source === update.source))];
+}
+
+function paginationState(page: FullSearchPage, previous: SearchCursor, retries: SectionState["retryCursors"]) {
+  const retryCursors = { ...retries };
+  const cursor = { ...page.next_cursor };
+  for (const source of ["youtube", "soundcloud"] as const) {
+    if (previous[source] == null) continue;
+    if (page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) {
+      retryCursors[source] = { [source]: previous[source] };
+      if (source === "youtube") cursor.youtube = previous.youtube;
+      else cursor.soundcloud = previous.soundcloud;
+    } else delete retryCursors[source];
+  }
+  const hasMore = cursor.youtube != null || cursor.soundcloud != null;
+  return { retryCursors, nextCursor: hasMore ? cursor : null, hasMore };
+}
 
 export const useSearchPageStore = create<SearchPageState>((set, get) => {
   const setSection = (kind: SearchKind, patch: Partial<SectionState>): void =>
@@ -206,11 +344,19 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
     token: number,
   ): Promise<void> => {
     try {
-      const page = await searchFull({
-        query,
-        kind,
-        platforms: SEARCH_PLATFORMS,
-      });
+      const page = await searchWithProgress(
+        { query, kind, platforms: SEARCH_PLATFORMS },
+        (progress) => {
+          if (searchGuard.isLatest(token)) setSection(kind, { progress });
+        },
+        (page) => {
+          if (!searchGuard.isLatest(token)) return;
+          setSection(kind, {
+            items: page.items ?? [], copies: page.copies ?? [],
+            warnings: (page.warnings ?? []).map((warning) => formatSearchError(warning.message, warning.source ?? warning.platform)),
+          });
+        },
+      );
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, readySection(page));
       if (kind === ItemType.Artist) startProfile(query, page.items ?? []);
@@ -218,9 +364,9 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
     } catch (err) {
       if (!searchGuard.isLatest(token)) return;
       setSection(kind, {
-        ...emptySection(),
-        status: "error",
+        status: get().sections[kind].items.length ? "ready" : "error",
         error: errorMessage(err),
+        progress: get().sections[kind].progress,
       });
     }
   };
@@ -261,6 +407,47 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       runSearch(query);
     },
 
+    retrySource: async (kind, source) => {
+      const state = get();
+      const section = state.sections[kind];
+      if (section.status === "loading" || section.status === "loadingMore" || !section.progress.some((s) => s.source === source && (s.state === "failed" || s.state === "unknown"))) return;
+      const guard = loadMoreGuards[kind];
+      const token = guard.begin();
+      const initialProgress = section.progress.map((s) => s.source === source ? { ...s, state: "waiting" as const, elapsedMs: null, count: null, startedAt: null } : s);
+      setSection(kind, { status: "loadingMore", error: null, progress: initialProgress });
+      try {
+        const page = await searchWithProgress(
+          { query: state.query, kind, platforms: SEARCH_PLATFORMS, sources: [source], ...(section.retryCursors?.[source] ? { cursor: section.retryCursors[source] } : {}) },
+          (updates) => {
+            if (!guard.isLatest(token)) return;
+            setSection(kind, { progress: initialProgress.map((entry) => updates.find((u) => u.source === entry.source) ?? entry) });
+          },
+        );
+        if (!guard.isLatest(token)) return;
+        const next = readySection(page);
+        const retryCursors = { ...section.retryCursors };
+        if (next.retryCursors?.[source]) retryCursors[source] = next.retryCursors[source];
+        if (!page.warnings.some((warning) => (warning.source ?? warning.platform) === source)) delete retryCursors[source];
+        const cursor = { ...section.nextCursor };
+        if (source === "youtube") cursor.youtube = next.nextCursor?.youtube ?? null;
+        if (source === "soundcloud") cursor.soundcloud = next.nextCursor?.soundcloud ?? null;
+        const hasMore = Boolean(cursor.youtube || cursor.soundcloud != null);
+        setSection(kind, {
+          ...next,
+          retryCursors,
+          items: mergePages(section.items, next.items),
+          copies: [...section.copies, ...next.copies],
+          ...mergeWarnings(section, next, [source]),
+          progress: closeProgress(get().sections[kind].progress),
+          nextCursor: hasMore ? cursor : null, hasMore,
+        });
+        if (kind === ItemType.Artist && !state.profile.artist) startProfile(state.query, page.items ?? []);
+      } catch (err) {
+        if (!guard.isLatest(token)) return;
+        setSection(kind, { status: section.items.length ? "ready" : "error", error: errorMessage(err) });
+      }
+    },
+
     loadMore: async (kind) => {
       const state = get();
       const section = state.sections[kind];
@@ -273,30 +460,77 @@ export const useSearchPageStore = create<SearchPageState>((set, get) => {
       const token = guard.begin();
       setSection(kind, { status: "loadingMore", error: null });
       try {
-        const page = await searchFull({
-          query,
-          kind,
-          platforms: SEARCH_PLATFORMS,
-          cursor,
-        });
+        const page = await searchWithProgress(
+          { query, kind, platforms: SEARCH_PLATFORMS, cursor },
+          (progress) => {
+            if (guard.isLatest(token)) setSection(kind, { progress: mergeProgress(section.progress, progress) });
+          },
+        );
         if (!guard.isLatest(token)) return;
         const current = get().sections[kind];
         const next = readySection(page);
         setSection(kind, {
           ...next,
+          ...paginationState(page, cursor, section.retryCursors),
           items: mergePages(current.items, next.items),
           copies: [...current.copies, ...next.copies],
-          // keep the first page's platform warnings (e.g. "Bandcamp unavailable")
-          warnings: [...new Set([...current.warnings, ...next.warnings])],
+          ...mergeWarnings(current, next, (["youtube", "soundcloud"] as const).filter(source =>
+            cursor[source] != null && !page.warnings.some(warning => (warning.source ?? warning.platform) === source))),
         });
       } catch (err) {
         if (!guard.isLatest(token)) return;
-        setSection(kind, { status: "ready", error: errorMessage(err) });
+        const retryCursors = { ...section.retryCursors };
+        if (cursor.youtube != null) retryCursors.youtube = { youtube: cursor.youtube };
+        if (cursor.soundcloud != null) retryCursors.soundcloud = { soundcloud: cursor.soundcloud };
+        setSection(kind, { status: "ready", error: errorMessage(err), retryCursors });
       }
     },
 
     setFilters: (patch) => set((s) => ({ filters: { ...s.filters, ...patch } })),
     resetFilters: () => set({ filters: DEFAULT_FILTERS }),
     setSort: (sort) => set({ sort }),
+
+    invalidatePending: () => {
+      searchGuard.begin();
+      profileGuard.begin();
+      for (const kind of KINDS) loadMoreGuards[kind].begin();
+    },
+
+    resumeIncomplete: () => {
+      const { query, sections, profile } = get();
+      const q = query.trim();
+      if (!q) return;
+
+      const loadingKinds = KINDS.filter((k) => sections[k]?.status === "loading");
+      if (loadingKinds.length > 0) {
+        const token = searchGuard.begin();
+        for (const kind of loadingKinds) {
+          void loadFirstPage(kind, q, token);
+        }
+      }
+
+      for (const kind of KINDS) {
+        if (sections[kind]?.status === "loadingMore") {
+          // its progress can no longer arrive: nothing in it may keep counting
+          setSection(kind, { status: "ready", progress: closeProgress(sections[kind].progress) });
+        }
+      }
+
+      if (profile.status === "loading" && profile.artist) {
+        const artist = profile.artist;
+        const token = profileGuard.begin();
+        getArtistProfile(artist.platform, artist.item_url_path).then(
+          (data) => {
+            if (!profileGuard.isLatest(token)) return;
+            set({ profile: { artist, status: "ready", data } });
+            warmPreviewStreams(data.top_songs ?? []);
+          },
+          () => {
+            if (!profileGuard.isLatest(token)) return;
+            set({ profile: { artist, status: "error", data: null } });
+          },
+        );
+      }
+    },
   };
 });

@@ -87,6 +87,7 @@ export function parseSavedNavEntry(raw: string | null): NavEntry | null {
       "ALBUM_PREVIEW",
       "PLAYLIST",
       "TRASH",
+      "FAVORITES",
     ];
     if (!validViews.includes(parsed.view)) return null;
 

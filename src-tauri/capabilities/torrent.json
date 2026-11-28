@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "torrent",
+  "description": "Search and inspect torrent metadata from the main library window",
+  "windows": ["main"],
+  "permissions": [
+    "torrent:allow-search-torrent-releases",
+    "torrent:allow-inspect-torrent-release",
+    "torrent:allow-resolve-torrent-album",
+    "torrent:allow-cancel-torrent-inspection",
+    "torrent:allow-is-rutracker-enabled"
+  ]
+}

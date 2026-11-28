@@ -10,6 +10,8 @@ import {
 import type { Platform } from "@/shared/types.ts";
 import type { SearchPageFilters } from "@/features/search/model/searchPageFilters.ts";
 import { formatCompactNumber } from "@/shared/lib/search/number.ts";
+import { isRunning } from "@/shared/lib/library/downloadMatch.ts";
+import { SOURCE_NAMES, type SearchSource } from "@/shared/lib/search/searchProgress.ts";
 
 /** Download progress keyed by the item url (`item_url_path`), first/active download wins. */
 export type DownloadMap = ReadonlyMap<string, DownloadProgress>;
@@ -131,7 +133,7 @@ export function buildDownloadMap(
   const map = new Map<string, DownloadProgress>();
   for (const download of list) {
     const existing = map.get(download.url);
-    if (!existing || (!isDownloadBusy(existing) && isDownloadBusy(download))) {
+    if (!existing || (!isRunning(existing) && isRunning(download)) || (!isDownloadBusy(existing) && isDownloadBusy(download))) {
       map.set(download.url, download);
     }
   }
@@ -180,6 +182,11 @@ export function uniqueWarnings(list: readonly string[]): string[] {
     out.push(message);
   }
   return out;
+}
+
+export function warningSource(message: string): SearchSource | null {
+  const lower = message.toLowerCase();
+  return (Object.keys(SOURCE_NAMES) as SearchSource[]).find(source => lower.includes(SOURCE_NAMES[source].toLowerCase())) ?? null;
 }
 
 /** Joins the present parts with a middle dot. */

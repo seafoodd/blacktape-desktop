@@ -1,5 +1,21 @@
 import { Platform } from "@/shared/types.ts";
 
+/** A known HTTP(S) hostname wins over the caller's platform hint. */
+export function platformForUrl(raw: string, fallback: Platform): Platform {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return fallback;
+    const host = url.hostname.toLowerCase().replace(/\.+$/, "");
+    const onDomain = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+    if (onDomain("youtube.com") || onDomain("youtu.be")) return "youtube";
+    if (onDomain("bandcamp.com")) return "bandcamp";
+    if (onDomain("soundcloud.com") || onDomain("snd.sc")) return "soundcloud";
+  } catch {
+    // Invalid URLs keep the caller's platform hint.
+  }
+  return fallback;
+}
+
 /** Values of the platform filter pills (search dropdown and search results page). */
 export type PlatformFilter = "All" | "Youtube" | "Bandcamp" | "Soundcloud";
 
@@ -24,8 +40,11 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 };
 
 /** Human-readable platform name; unknown values are returned as-is. */
-export const platformLabel = (platform: Platform | string): string =>
-  PLATFORM_LABELS[platform.toLowerCase() as Platform] ?? platform;
+export const platformLabel = (platform: Platform | string): string => {
+  const lower = platform.toLowerCase();
+  if (lower === "torrent") return "Torrent";
+  return PLATFORM_LABELS[lower as Platform] ?? platform;
+};
 
 /** Label of a filter pill ("All" -> "All Platforms"). */
 export const platformFilterLabel = (filter: PlatformFilter): string =>

@@ -26,7 +26,6 @@
 .main {
     flex: 1;
     overflow-y: auto;
-    scrollbar-width: thin;
     scroll-behavior: smooth;
     padding: 0;
     min-width: calc(100vw / 2);

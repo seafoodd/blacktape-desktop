@@ -18,6 +18,7 @@ import { useRemoteTrackMenu } from "@/shared/hooks/useRemoteTrackMenu.ts";
 import { isStreamingUrl, useStreamStore } from "@/features/preview/model/streamStore.ts";
 import { missingDownloadParams, useMissingTracksStore } from "@/features/library/model/missingTracksStore.ts";
 import { DownloadSplitButton } from "@/shared/ui/download-split-button/DownloadSplitButton.tsx";
+import { TrackDownloadProgress } from "@/shared/ui/track-download-progress/TrackDownloadProgress.tsx";
 import { openQualityMenu } from "@/features/download-quality/ui/QualityModal.tsx";
 import {
   missingRemoteTrack,
@@ -36,6 +37,9 @@ interface MissingTrackRowProps {
   percent?: number;
   /** A running download (started elsewhere, e.g. from the search) fetches this song. */
   downloading?: boolean;
+  /** The owning download task; cancellation stops the specific track when `downloadTrackIndex` is set. */
+  downloadTaskId?: string;
+  downloadTrackIndex?: number;
   /** A song that was just removed: shown dimmed in its place, no actions. */
   ghost?: boolean;
   /** The platform has no stream for this song: no download or preview, but "Find another source". */
@@ -66,6 +70,8 @@ const MissingTrackRow = ({
   track,
   percent = 0,
   downloading = false,
+  downloadTaskId,
+  downloadTrackIndex,
   ghost = false,
   unavailable = false,
   failure,
@@ -93,6 +99,14 @@ const MissingTrackRow = ({
   const isCurrent = isStreamingUrl(currentSong, isStreaming, remote.url);
   const playing = isCurrent && isPlaying;
   const title = decodeHtmlEntities(track.title);
+  const chooseQuality = () => openQualityMenu(
+    missingDownloadParams(missing, [track.url]),
+    {
+      displayTitle: title,
+      scopeTracks: [track],
+      start: (format, overrides) => void downloadOne(album, track, format, overrides),
+    },
+  );
 
   const play = () => {
     if (onPlay) return onPlay();
@@ -110,6 +124,7 @@ const MissingTrackRow = ({
         [styles.selectedBottom]: selected && !selectedBelow,
       })}
       data-song-row
+      tabIndex={busy ? 0 : undefined}
       aria-selected={selected}
       onClick={(e) => onSelect?.(e)}
       onDoubleClick={play}
@@ -118,6 +133,8 @@ const MissingTrackRow = ({
         openMenu(e, remote, {
           list: queue,
           downloadState: "none",
+          onDownload: () => void downloadOne(album, track),
+          onDownloadAs: chooseQuality,
           extraItems:
             trashId === undefined ? undefined : [{ label: "Restore from trash", action: () => void restoreTrash([trashId]) }],
         });
@@ -185,14 +202,8 @@ const MissingTrackRow = ({
             <MdErrorOutline size={18} />
           </button>
         ) : busy ? (
-          <span
-            className={clsx(
-              styles.percent,
-              percent >= 100 ? styles.percentCompleted : percent > 0 ? styles.percentActive : styles.percentPending,
-            )}
-            aria-live="polite"
-          >
-            {percent}%
+          <span className={styles.percent}>
+            <TrackDownloadProgress taskId={downloadTaskId} trackIndex={downloadTrackIndex} percent={percent} />
           </span>
         ) : (
           <span className={styles.downloadButton} onDoubleClick={(e) => e.stopPropagation()}>
@@ -201,12 +212,7 @@ const MissingTrackRow = ({
               className={styles.downloadSplit}
               title={`Download ${title}`}
               onDownload={() => void downloadOne(album, track)}
-              onChooseQuality={() =>
-                openQualityMenu(
-                  { ...missingDownloadParams(missing, [track.url]), title },
-                  { start: (format) => void downloadOne(album, track, format) },
-                )
-              }
+              onChooseQuality={chooseQuality}
             />
           </span>
         )}

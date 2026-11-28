@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::future::Future;
+use crate::platforms::http::{backoff, retrying, Failure};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -257,58 +257,11 @@ pub fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// One failed attempt: `retry` when trying again may help (network down, timeout, a 5xx or 429 from the server).
-pub struct Failure {
-    pub message: String,
-    pub retry: bool,
-}
-
-impl Failure {
-    fn fatal(message: impl Into<String>) -> Self {
-        Failure { message: message.into(), retry: false }
-    }
-}
-
-impl From<reqwest::Error> for Failure {
-    fn from(e: reqwest::Error) -> Self {
-        let retry = match e.status() {
-            Some(status) => status.is_server_error() || status.as_u16() == 429,
-            // a connection lost while the body streams is reported as a decode error
-            None => e.is_timeout() || e.is_connect() || e.is_body() || e.is_request() || e.is_decode(),
-        };
-        Failure { message: e.to_string(), retry }
-    }
-}
-
 const ATTEMPTS: u32 = 3;
 
-/// The pause before attempt `n + 1` (n counts from 1): 1 s, then 3 s. Pure.
-fn backoff(n: u32) -> Duration {
-    Duration::from_secs(3u64.pow(n.saturating_sub(1)))
-}
-
-/// Runs `attempt` up to `attempts` times while it fails with a retryable error, pausing `pause(n)` between them.
-async fn retrying<T, F, Fut>(attempts: u32, pause: impl Fn(u32) -> Duration, mut attempt: F) -> Result<T, String>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, Failure>>,
-{
-    let mut n = 1;
-    loop {
-        match attempt().await {
-            Ok(value) => return Ok(value),
-            Err(f) if f.retry && n < attempts => {
-                tracing::warn!(attempt = n, error = %f.message, "Tool download attempt failed, retrying");
-                tokio::time::sleep(pause(n)).await;
-                n += 1;
-            }
-            Err(f) => return Err(f.message),
-        }
-    }
-}
-
 async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response, Failure> {
-    Ok(client.get(url).send().await?.error_for_status()?)
+    let response = client.get(url).send().await?;
+    if response.status().is_success() { Ok(response) } else { Err(Failure::from_response(&response)) }
 }
 
 pub async fn get_json<T: serde::de::DeserializeOwned>(client: &reqwest::Client, url: &str) -> Result<T, String> {
@@ -333,7 +286,7 @@ pub fn check_url(url: &str, prefix: &str) -> Result<(), String> {
     if allowed {
         Ok(())
     } else {
-        Err(format!("unexpected download url {url}"))
+        Err("unexpected download URL".into())
     }
 }
 
@@ -684,7 +637,7 @@ mod tests {
     }
 
     fn fail(retry: bool) -> Failure {
-        Failure { message: format!("retry={retry}"), retry }
+        Failure { message: format!("retry={retry}"), retry, retry_after: None }
     }
 
     #[tokio::test]

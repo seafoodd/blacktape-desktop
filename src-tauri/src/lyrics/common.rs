@@ -62,19 +62,8 @@ pub fn err_string(e: reqwest::Error) -> String {
 }
 
 /// Reads a response body, refusing anything larger than `max` bytes.
-pub async fn read_body_limited(mut res: reqwest::Response, max: usize) -> Result<String, String> {
-    if let Some(len) = res.content_length() {
-        if len as usize > max {
-            return Err("response too large".to_string());
-        }
-    }
-    let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = res.chunk().await.map_err(err_string)? {
-        if buf.len() + chunk.len() > max {
-            return Err("response too large".to_string());
-        }
-        buf.extend_from_slice(&chunk);
-    }
+pub async fn read_body_limited(res: reqwest::Response, max: usize) -> Result<String, String> {
+    let buf = crate::platforms::http::read_bytes_limited(res, max).await?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 

@@ -21,8 +21,10 @@ describe("welcomeModalHelper", () => {
     expect(stepSubtitle(1)).toBe("Fast, local music player and streamer");
     expect(stepSubtitle(2)).toBe("Crash reports & anonymous diagnostics");
 
-    expect(stepBadge(1)).toContain("Step 1 of 2");
-    expect(stepBadge(2)).toContain("Step 2 of 2");
+    expect(stepBadge(1)).toContain("Step 1 of 3");
+    expect(stepBadge(2)).toContain("Step 2 of 3");
+    expect(stepBadge(3)).toBe("Step 3 of 3 · Downloads");
+    expect(stepTitle(3)).toBe("Default Download Quality");
   });
 
   it("provides privacy bullet points", () => {

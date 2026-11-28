@@ -1,0 +1,61 @@
+.modal {
+    width: 420px;
+    max-width: 100%;
+}
+
+.icon {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: #ff4545;
+    font-size: 24px;
+    margin-bottom: 12px;
+}
+
+.title {
+    color: var(--color-text);
+    font-size: var(--font-xl);
+    font-weight: 600;
+}
+
+.modal p {
+    color: var(--color-muted);
+    font-size: var(--font-md);
+    line-height: 1.5;
+    margin-top: 8px;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.secondary,
+.primary {
+    padding: 8px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--font-md);
+    cursor: pointer;
+}
+
+.actions button:disabled {
+    opacity: 0.65;
+    cursor: default;
+}
+
+.secondary {
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+.primary {
+    background: var(--color-primary);
+    color: white;
+}

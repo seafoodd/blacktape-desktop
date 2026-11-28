@@ -3,7 +3,7 @@ import { songQuality } from "@/shared/ui/quality-badge/songQuality.ts";
 import type { QualityTier } from "@/shared/types.ts";
 import styles from "./quality-badge.module.css";
 
-/** File format and quality tier of a library song ("MP3 · Low", "FLAC" in green). */
+/** File format and quality tier of a library song. */
 export const QualityBadge = ({
   song,
   className,

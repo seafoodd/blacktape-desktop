@@ -1,9 +1,10 @@
+import { useDownloadStore } from "@/shared/store/downloadStore.ts";
+import { CancelDownloadButton } from "@/shared/ui/cancel-download-button/CancelDownloadButton.tsx";
 import type { MouseEvent, ReactNode } from "react";
 import clsx from "clsx";
 import { FaCheckCircle } from "react-icons/fa";
 import {
   ItemType,
-  useLibraryStore,
   type DownloadProgress,
   type SearchSuggestion,
 } from "@/shared/store/libraryStore.ts";
@@ -28,7 +29,7 @@ interface DownloadButtonProps {
  * running, a check when completed; failed and cancelled downloads show the button again.
  */
 export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps) => {
-  const startDownload = useLibraryStore((s) => s.startDownload);
+  const startDownload = useDownloadStore((s) => s.startDownload);
   const busy = isDownloadBusy(progress);
   const overlay = variant === "overlay";
   // Items already in the library show a check instead of a button that would only download them again.
@@ -60,11 +61,9 @@ export const DownloadButton = ({ item, progress, variant }: DownloadButtonProps)
           <FaCheckCircle size={18} />
         </span>
       ) : (
-        <span
-          className={clsx(styles.progressText, overlay ? styles.progressBadge : styles.progressRow)}
-          aria-live="polite"
-        >
-          {downloadPercent(progress)}%
+        <span className={clsx(styles.activeDownload, overlay && styles.activeDownloadOverlay)}>
+          <span className={styles.progressText} role="status">{downloadPercent(progress)}%</span>
+          <CancelDownloadButton taskId={progress.id} />
         </span>
       );
   } else if (inLibrary) {

@@ -20,6 +20,16 @@ pub fn normalize_url_key(url: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    if let Some(inner) = trimmed.strip_prefix("canonical:") {
+        let inner = inner.trim();
+        if inner.is_empty() {
+            return None;
+        }
+        if inner.starts_with("http://") || inner.starts_with("https://") {
+            return normalize_url_key(inner);
+        }
+        return Some(format!("canonical:{}", inner.to_lowercase()));
+    }
     let with_scheme = if trimmed.contains("://") {
         trimmed.to_string()
     } else if trimmed.starts_with("//") {
@@ -336,5 +346,18 @@ mod tests {
     fn item_id_key_rejects_empty_ids() {
         assert_eq!(item_id_key(Platform::Youtube, ""), None);
         assert_eq!(item_id_key(Platform::Youtube, "   "), None);
+    }
+
+    #[test]
+    fn canonical_urls_normalize_cleanly() {
+        assert_eq!(
+            key("canonical:rg:deee6f92-2662-3095-8aea-6892b10b8265").as_deref(),
+            Some("canonical:rg:deee6f92-2662-3095-8aea-6892b10b8265")
+        );
+        assert_eq!(
+            key("canonical:https://music.youtube.com/browse/MPREb_123"),
+            key("https://music.youtube.com/browse/MPREb_123")
+        );
+        assert_eq!(key("canonical:"), None);
     }
 }

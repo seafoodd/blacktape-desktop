@@ -1,6 +1,6 @@
 [package]
 name = "blacktape-desktop"
-version = "0.7.0"
+version = "0.8.0"
 description = "A desktop music player that can download and organize music from different platforms."
 authors = ["seafood"]
 license = "GPL-3.0-only"
@@ -19,6 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 rustypipe = "0.11.4"
 tauri = { version = "2", features = ["protocol-asset", "test", "macos-private-api"] }
 tauri-plugin-opener = "2"
@@ -31,9 +32,12 @@ tauri-plugin-dialog = "2.6.0"
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 discord-rich-presence = "1.1.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart", "stream", "gzip"] }
-tokio = "1.51.1"
+librqbit = { version = "=8.1.1", default-features = false, features = ["default-tls", "disable-upload"] }
+librqbit-bencode = { version = "=3.1.0", default-features = false }
+tokio = { version = "1.51.1", features = ["net", "io-util"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "json", "macros"] }
 sha2 = "0.10"
+sha1 = "0.10"
 regex = "1.12.3"
 rayon = "1.12.0"
 jwalk = "0.8.1"
@@ -41,6 +45,7 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 strsim = "0.11.1"
 unicode-normalization = "0.1"
 html-escape = "0.2.13"
+httpdate = "1"
 url = "2.5.8"
 percent-encoding = "2.3.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
@@ -52,7 +57,8 @@ zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 flate2 = "1.1.9"
 tauri-plugin-sentry = "0.9.0"
 sentry = { version = "0.49", features = ["tracing"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -131,7 +137,7 @@ incremental = true   # Cache unchanged crates between bench runs
 panic = "abort"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-process = "2.4.0"

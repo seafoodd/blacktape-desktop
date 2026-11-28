@@ -3,7 +3,7 @@
  * and "missing" rows, used by the shared remote-track menu and the stream actions. Pure helpers.
  */
 import { ItemType, type SearchSuggestion } from "@/shared/store/libraryStore.ts";
-import type { AlbumPreview, AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
+import { platformForTrackUrl, type AlbumPreview, type AlbumTrackInfo } from "@/shared/lib/remote/albumPreview.ts";
 import type { StreamRequest } from "@/shared/lib/remote/stream.ts";
 import type { Platform } from "@/shared/types.ts";
 
@@ -38,7 +38,7 @@ export function albumTrackToRemoteTrack(
   track: AlbumTrackInfo,
 ): RemoteTrack {
   return {
-    platform: preview.platform,
+    platform: platformForTrackUrl(track.url, preview.platform, track),
     url: track.url,
     title: track.title,
     artist: track.artists[0] || preview.artist,

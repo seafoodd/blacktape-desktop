@@ -145,6 +145,16 @@ describe("playerPersistence", () => {
         playlistId: undefined,
         previewItem: undefined,
       });
+
+      expect(
+        parseSavedNavEntry(JSON.stringify({ view: "FAVORITES" })),
+      ).toEqual({
+        view: "FAVORITES",
+        artistName: undefined,
+        searchQuery: undefined,
+        playlistId: undefined,
+        previewItem: undefined,
+      });
     });
 
     it("rejects invalid view names or malformed data", () => {

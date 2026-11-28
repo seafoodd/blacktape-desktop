@@ -39,9 +39,10 @@ export function explainFailure(message: string, platform: string): FailureExplan
       hint: "Check the connection and try again in a moment.",
     };
   }
+  const reason = text.slice(0, 239);
   return {
     kind: "other",
-    reason: text.length > 0 ? text.slice(0, 240) : "The download failed.",
+    reason: reason.length > 0 ? (/[.!?…]$/.test(reason) ? reason : `${reason}.`) : "The download failed.",
     hint: "Try again, or pick another version or source for this song.",
   };
 }

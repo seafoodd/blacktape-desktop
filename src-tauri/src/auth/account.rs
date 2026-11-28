@@ -17,10 +17,31 @@ use url::Url;
 /// Sent with the provider after a sign-in or sign-out, so every open window can refresh its status.
 pub const ACCOUNT_CHANGED_EVENT: &str = "account-changed";
 
-const CHECK_WINDOW: &str = "youtube-account-check";
 const CLEAR_WINDOW: &str = "youtube-account-clear";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const PING_URL: &str = "https://www.youtube.com/generate_204";
+
+fn check_window_label() -> String {
+    // WebView teardown can finish after destroy() returns.
+    format!("youtube-account-check-{}", uuid::Uuid::new_v4().simple())
+}
+
+struct AccountCheckWindow(tauri::WebviewWindow);
+
+impl Drop for AccountCheckWindow {
+    fn drop(&mut self) {
+        let _ = self.0.destroy();
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn repeated_checks_cannot_reuse_a_label_during_teardown() {
+    let first = check_window_label();
+    let second = check_window_label();
+    assert!(first.starts_with("youtube-account-check-"));
+    assert_ne!(first, second);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -183,10 +204,6 @@ async fn check_youtube(app: &AppHandle) -> AccountStatus {
     if let Err(e) = youtube_reachable().await {
         return AccountStatus::new(provider, AccountState::Error, Some(&e));
     }
-    if let Some(stale) = app.get_webview_window(CHECK_WINDOW) {
-        let _ = stale.destroy();
-    }
-
     let url = match Url::parse("https://www.youtube.com/") {
         Ok(url) => url,
         Err(e) => return AccountStatus::new(provider, AccountState::Error, Some(&e.to_string())),
@@ -198,7 +215,7 @@ async fn check_youtube(app: &AppHandle) -> AccountStatus {
     let stuck_on_sign_in = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stuck_load = Arc::clone(&stuck_on_sign_in);
 
-    let built = WebviewWindowBuilder::new(app, CHECK_WINDOW, WebviewUrl::External(url))
+    let built = WebviewWindowBuilder::new(app, check_window_label(), WebviewUrl::External(url))
         .data_directory(profile)
         .user_agent(BROWSER_USER_AGENT)
         .title("Blacktape | Checking YouTube account")
@@ -231,8 +248,8 @@ async fn check_youtube(app: &AppHandle) -> AccountStatus {
         })
         .build();
 
-    let window = match built {
-        Ok(window) => window,
+    let _window = match built {
+        Ok(window) => AccountCheckWindow(window),
         Err(e) => {
             return AccountStatus::new(
                 provider,
@@ -243,7 +260,6 @@ async fn check_youtube(app: &AppHandle) -> AccountStatus {
     };
 
     let result = tokio::time::timeout(CHECK_TIMEOUT, rx).await;
-    let _ = window.destroy();
 
     match result {
         Ok(Ok(report)) => status_from_report(provider, report),
@@ -256,6 +272,17 @@ async fn check_youtube(app: &AppHandle) -> AccountStatus {
             AccountState::Error,
             Some("YouTube did not finish loading in 20 seconds. Check your connection and try again."),
         ),
+    }
+}
+
+pub(crate) async fn youtube_download_session_ready(app: &AppHandle) -> Result<bool, String> {
+    let auth_lock = app.state::<AuthLock>();
+    let _guard = auth_lock.0.lock().await;
+    let status = check_youtube(app).await;
+    match status.state {
+        AccountState::Connected => Ok(true),
+        AccountState::Disconnected => Ok(false),
+        AccountState::Error => Err(status.message.unwrap_or_else(|| "Could not check the YouTube account.".into())),
     }
 }
 
@@ -305,16 +332,35 @@ pub async fn account_status(
     auth_lock: State<'_, AuthLock>,
     provider: AccountProvider,
 ) -> Result<AccountStatus, String> {
-    // A download may be signing in right now; the check must not wait for that window.
-    let Ok(_guard) = auth_lock.0.try_lock() else {
+    let Some(_guard) = lock_status_check(&auth_lock, || app.get_webview_window(LOGIN_WINDOW).is_some()).await else {
         return Ok(busy_status(provider));
     };
-    if app.get_webview_window(LOGIN_WINDOW).is_some() {
-        return Ok(busy_status(provider));
-    }
     Ok(match provider {
         AccountProvider::Youtube => check_youtube(&app).await,
     })
+}
+
+async fn lock_status_check(
+    lock: &AuthLock,
+    login_open: impl Fn() -> bool,
+) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+    if login_open() {
+        return None;
+    }
+    let guard = lock.0.lock().await;
+    (!login_open()).then_some(guard)
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn three_polling_checks_wait_for_the_shared_profile() {
+    let lock = AuthLock(tokio::sync::Mutex::new(()));
+    let run_check = || async {
+        let _guard = lock_status_check(&lock, || false).await.expect("status checks should queue");
+        tokio::task::yield_now().await;
+    };
+    tokio::join!(run_check(), run_check(), run_check());
+    assert!(lock_status_check(&lock, || true).await.is_none());
 }
 
 #[tauri::command]

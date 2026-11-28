@@ -48,6 +48,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+struct LoginWindowGuard(WebviewWindow);
+
+impl Drop for LoginWindowGuard {
+    fn drop(&mut self) {
+        let _ = self.0.destroy();
+    }
+}
+
 #[command]
 pub async fn launch_youtube_login(
     app: AppHandle,
@@ -206,6 +214,7 @@ pub async fn launch_youtube_login(
             }
         }
     });
+    let _login_window_guard = LoginWindowGuard(login_window);
 
     // Pause until window is closed or cookies are saved
     let _ = rx.await;

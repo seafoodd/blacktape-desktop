@@ -6,6 +6,8 @@ import {
 import type { SearchKind } from "@/shared/lib/search/searchFull.ts";
 import { StreamActionRow } from "@/features/preview/ui/StreamActionRow.tsx";
 import type { SectionState } from "@/features/search/model/searchPageStore.ts";
+import { SourceChips } from "@/features/search/ui/SearchProgress.tsx";
+import { useSearchPageStore } from "@/features/search/model/searchPageStore.ts";
 import styles from "./search-results.module.css";
 import {
   AlbumCard,
@@ -168,6 +170,7 @@ export const ResultSection = ({
           {countText !== null && <span className={styles.sectionCount}>{countText}</span>}
         </div>
       </div>
+      <SourceChips sources={section.progress} onRetry={(source) => { void useSearchPageStore.getState().retrySource(kind, source); }} />
       {body}
     </section>
   );
